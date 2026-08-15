@@ -1,6 +1,6 @@
 import type { LogicalModel, LogicalModelBinding, LogicalModelCapability, LogicalModelCapabilityProfile, SystemDefaultModels, SystemModelChannel } from "@/lib/auth/store";
 import { resolveGlobalAiOpcPreset } from "@/lib/globalaiopc-catalog";
-import { inferModelCapability, normalizeModelId } from "@/lib/model-capability";
+import { inferModelCapability, isCreativeGenerationModel, normalizeModelId } from "@/lib/model-capability";
 import { channelConnectionReady, protocolCatalogCapability, resolveChannelModelConfig } from "@/lib/channel-protocol-registry";
 
 const CAPABILITY_DEFAULT_KEYS = {
@@ -31,7 +31,7 @@ export function synchronizeLogicalModelsWithChannels(existingModels: LogicalMode
     channels.forEach((channel, channelIndex) => {
         channel.models.forEach((upstreamModel) => {
             const id = rawModelName(upstreamModel);
-            if (!id) return;
+            if (!id || !isCreativeGenerationModel(id)) return;
             const key = normalizeModelName(id);
             const detected = resolveChannelModelCapability(channel, upstreamModel);
             const model = catalog.get(key) || { upstreamModel: id, capability: detected.capability, authoritative: detected.authoritative, bindings: [] };
@@ -69,7 +69,7 @@ export function synchronizeLogicalModelsWithChannels(existingModels: LogicalMode
             .sort((left, right) => left.priority - right.priority || left.id.localeCompare(right.id));
         return {
             id,
-            name: catalogModel.upstreamModel,
+            name: text(existing?.name, 120) || catalogModel.upstreamModel,
             capability: catalogModel.authoritative || !existing ? catalogModel.capability : normalizeCapability(existing.capability),
             enabled: existing?.enabled !== false,
             bindings,
@@ -155,7 +155,7 @@ function resolveChannelModelCapability(channel: Pick<SystemModelChannel, "advanc
 }
 
 export function channelDetectedCapabilities(channel: Pick<SystemModelChannel, "advancedConfig" | "models">) {
-    return new Set(channel.models.map((model) => channelModelCapability(channel, model)));
+    return new Set(channel.models.filter(isCreativeGenerationModel).map((model) => channelModelCapability(channel, model)));
 }
 
 export function resolveLogicalModelCapabilityProfile(binding: Pick<LogicalModelBinding, "capabilityProfile">, capability: LogicalModelCapability, channel?: Pick<SystemModelChannel, "advancedConfig">, upstreamModel = "") {

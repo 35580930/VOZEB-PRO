@@ -2,6 +2,7 @@ import type { SystemChannelAdvancedConfig } from "@/lib/auth/store";
 import type { LogicalModelCapability } from "@/lib/auth/store";
 import { channelProtocolDefinition, protocolModelConfig } from "@/lib/channel-protocol-registry";
 import { hasProviderReadSignatureShape, isReferenceAssetUrl } from "@/lib/reference-asset-url";
+import type { VideoGenerationReference, VideoReferenceRole } from "@/lib/video-reference-contract";
 
 type TemplateValues = Record<string, unknown>;
 
@@ -97,6 +98,36 @@ export function assertReferenceCapabilities(config: SystemChannelAdvancedConfig 
     if (!config || !references.length) return;
     const unsupported = references.find((reference) => (reference.type === "image" ? !config.supportsReferenceImage : reference.type === "video" ? !config.supportsReferenceVideo : reference.type === "audio" ? !config.supportsReferenceAudio : false));
     if (unsupported) throw new Error(`当前渠道未启用${unsupported.type === "image" ? "参考图" : unsupported.type === "video" ? "参考视频" : "参考音频"}能力`);
+}
+
+export function assertVideoReferenceRoles(config: SystemChannelAdvancedConfig | undefined, references: readonly VideoGenerationReference[], declaredRoles?: readonly VideoReferenceRole[]) {
+    const requestedRoles = Array.from(new Set(references.map((reference) => reference.role).filter((role): role is "first_frame" | "last_frame" => role === "first_frame" || role === "last_frame")));
+    if (!requestedRoles.length) return;
+    const protocol = config?.protocol || "auto";
+    const supported = new Set<VideoReferenceRole>(
+        declaredRoles ||
+            (protocol === "seedance" || protocol === "volcengine-video" || protocol === "seedance-special"
+                ? ["reference", "first_frame", "last_frame"]
+                : protocol === "yumeng"
+                  ? templateVideoReferenceRoles(config?.requestTemplate)
+                  : protocol === "openai" || protocol === "newapi" || protocol === "sub2api"
+                    ? ["reference", "first_frame"]
+                    : protocol === "custom" || protocol === "compatible" || protocol === "auto"
+                      ? templateVideoReferenceRoles(config?.requestTemplate)
+                      : ["reference"]),
+    );
+    const unsupported = requestedRoles.find((role) => !supported.has(role));
+    if (unsupported) throw new Error(unsupported === "last_frame" ? "当前视频模型不支持尾帧输入" : "当前视频模型不支持显式首帧输入");
+}
+
+export function templateVideoReferenceRoles(template: string | undefined): VideoReferenceRole[] {
+    const value = template || "";
+    const structured = /\{\{\s*references\s*\}\}/i.test(value);
+    return [
+        "reference" as const,
+        ...(structured || /\{\{\s*(?:first_frame|first_frame_url)\s*\}\}/i.test(value) ? (["first_frame"] as const) : []),
+        ...(structured || /\{\{\s*(?:last_frame|last_frame_url)\s*\}\}/i.test(value) ? (["last_frame"] as const) : []),
+    ];
 }
 
 export function providerTaskPath(path: string, taskId: string) {
@@ -257,6 +288,10 @@ const REFERENCE_FIELD_KEYS = new Set([
     "referenceimages",
     "firstframeurl",
     "firstframeimage",
+    "firstimage",
+    "lastframeurl",
+    "lastframeimage",
+    "lastimage",
     "video",
     "videos",
     "inputvideo",
@@ -290,8 +325,12 @@ const VIDEO_REFERENCE_VALUE_KEYS: Record<string, string> = {
     imageurl: "image",
     inputimage: "image",
     referenceimage: "image",
-    firstframeurl: "image",
-    firstframeimage: "image",
+    firstframeurl: "first_frame",
+    firstframeimage: "first_frame",
+    firstimage: "first_frame",
+    lastframeurl: "last_frame",
+    lastframeimage: "last_frame",
+    lastimage: "last_frame",
     images: "images",
     imageurls: "images",
     inputimages: "images",

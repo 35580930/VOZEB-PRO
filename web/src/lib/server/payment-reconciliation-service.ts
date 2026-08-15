@@ -109,7 +109,7 @@ export async function reconcileBillingStatement(input: ReconcileBillingStatement
     async function findLocalRecordForStatementRow(row: PaymentStatementRow) {
         const order = await findLocalOrder(row);
         if (!order) return undefined;
-        const payments = (await repos.billing.listPayments({ orderId: order.id, page: 1, pageSize: 100 })).items;
+        const payments = await repos.billing.listPaymentsByOrderId(order.id);
         return { order, payments };
     }
 
@@ -118,13 +118,11 @@ export async function reconcileBillingStatement(input: ReconcileBillingStatement
             const exact = await repos.billing.getOrderByOrderNo(row.orderNo);
             if (exact && localOrderMatchesStatement(exact, row)) return exact;
         }
-        for (const identifier of statementIdentifiers(row)) {
-            const result = await repos.billing.listOrders({ keyword: identifier, page: 1, pageSize: 10 });
-            const exact = result.items.find((order) => localOrderMatchesStatement(order, row));
-            if (exact) return exact;
-            const payment = await repos.billing.getPaymentByProviderIdentifier(row.provider, identifier);
-            if (payment) return repos.billing.getOrderById(payment.orderId);
-        }
+        const identifiers = statementIdentifiers(row);
+        const order = await repos.billing.getOrderByProviderIdentifiers(row.provider, identifiers);
+        if (order && localOrderMatchesStatement(order, row)) return order;
+        const payment = await repos.billing.getPaymentByProviderIdentifiers(row.provider, identifiers);
+        if (payment) return repos.billing.getOrderById(payment.orderId);
         return undefined;
     }
 }

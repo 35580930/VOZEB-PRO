@@ -1,6 +1,7 @@
 "use client";
 
 import { create } from "zustand";
+import type { AdminPermission } from "@/lib/admin-permissions";
 
 export type LocalUser = {
     id: string;
@@ -11,6 +12,7 @@ export type LocalUser = {
     bio: string;
     avatarUrl?: string;
     role: "admin" | "user";
+    adminPermissions: AdminPermission[];
     status: "active" | "disabled";
     planId: string;
     planName: string;
@@ -19,6 +21,7 @@ export type LocalUser = {
     permanentPointsBalance?: number;
     dailyPointsBalance?: number;
     dailyPointsExpiresAt?: string;
+    mfaEnabled: boolean;
 };
 
 type UserStore = {

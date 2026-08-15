@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const memory = vi.hoisted(() => ({ value: undefined as unknown }));
 
@@ -16,15 +16,21 @@ vi.mock("@/lib/server/data-adapter", () => ({
     }),
 }));
 
-import { consumeUserPoints, createUserByAdmin, listPointRecordsPage, listPublicUsersPage, refundUserPoints } from "./store";
+import { consumeUserPoints, createFirstAdmin, createUserByAdmin, listPointRecordsPage, listPublicUsersPage, refundUserPoints } from "./store";
+
+const INSTALL_TOKEN = "install-token-".padEnd(48, "x");
 
 describe("refundUserPoints idempotency", () => {
     beforeEach(() => {
         memory.value = undefined;
+        vi.stubEnv("VOZEB_PRO_INSTALL_TOKEN", INSTALL_TOKEN);
     });
 
+    afterEach(() => vi.unstubAllEnvs());
+
     it("applies a task refund only once for the same idempotency key", async () => {
-        const user = await createUserByAdmin({ username: "tester", password: "password123", pointsBalance: 5 });
+        const admin = await createFirstAdmin({ username: "admin", password: "password123", installToken: INSTALL_TOKEN });
+        const user = await createUserByAdmin({ actorId: admin.id, username: "tester", password: "password123", pointsBalance: 5 });
         const consumption = await consumeUserPoints(user.id, "audio-model", 5, "audio", "audio-task:one:consume");
 
         await refundUserPoints(user.id, "audio-model", 5, "audio", 5, "audio-task:one:refund", consumption.recordId);

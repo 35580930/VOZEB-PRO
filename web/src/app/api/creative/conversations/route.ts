@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 
 import { getCurrentUser } from "@/lib/auth/session";
 import { readJsonBody } from "@/lib/auth/request";
-import { createConversationForUser, CreativeRuntimeServiceError, deleteConversationsForUser, listConversationsForUser, listWorkbenchSessionsForUser } from "@/lib/server/creative-runtime-service";
+import { createConversationForUser, CreativeRuntimeServiceError, deleteConversationsForUser, listConversationsForUser } from "@/lib/server/creative-runtime-service";
 
 export async function GET(request: Request) {
     const user = await getCurrentUser();
@@ -10,13 +10,10 @@ export async function GET(request: Request) {
     try {
         const url = new URL(request.url);
         const limit = Math.max(1, Math.min(100, Number(url.searchParams.get("limit")) || 50));
-        if (url.searchParams.get("view") === "workbench") {
-            const sessions = await listWorkbenchSessionsForUser(user.id, url.searchParams.get("workspace"), limit + 1);
-            return NextResponse.json({ code: 0, data: { sessions: sessions.slice(0, limit), hasMore: sessions.length > limit }, msg: "OK" });
-        }
         const conversations = await listConversationsForUser(user.id, {
             surface: url.searchParams.get("surface"),
             source: url.searchParams.get("source"),
+            projectId: url.searchParams.get("projectId"),
             status: url.searchParams.get("status"),
             limit: String(limit + 1),
             offset: url.searchParams.get("offset"),

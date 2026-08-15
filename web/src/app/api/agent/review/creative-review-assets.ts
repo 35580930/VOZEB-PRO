@@ -2,7 +2,7 @@ const MAX_REVIEW_SOURCE_LENGTH = 8_000_000;
 
 export function normalizeCreativeReviewAssets(value: unknown, workspace: "image" | "video") {
     if (!Array.isArray(value)) return [];
-    return value.slice(0, 6).flatMap((item) => {
+    return value.flatMap((item) => {
         if (!item || typeof item !== "object" || Array.isArray(item)) return [];
         const record = item as Record<string, unknown>;
         const id = typeof record.id === "string" ? record.id.trim().slice(0, 120) : "";

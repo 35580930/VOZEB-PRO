@@ -22,7 +22,7 @@ vi.mock("@/lib/server/database", () => ({
 vi.mock("@/lib/server/points-wallet-service", () => ({ adjustPermanentPointsInPostgresTransaction: mocks.adjustPoints }));
 
 import { BillingInputError } from "@/lib/server/billing-errors";
-import { recordReferralVisit, saveReferralProgram, settleDueReferralRewards, updateReferralRelationshipRisk } from "./referral-service";
+import { getOrCreateReferralCode, getReferralCenter, recordReferralVisit, saveReferralProgram, settleDueReferralRewards, updateReferralRelationshipRisk } from "./referral-service";
 
 describe("referral program settings", () => {
     beforeEach(() => {
@@ -83,6 +83,60 @@ describe("referral visit tracking", () => {
         await expect(recordReferralVisit("abcd2388", { countClick: false })).resolves.toMatchObject({ code: "ABCD2388" });
         expect(getCodeByCode).toHaveBeenCalledWith("ABCD2388");
         expect(recordClick).not.toHaveBeenCalled();
+    });
+});
+
+describe("referral code creation", () => {
+    beforeEach(() => {
+        vi.clearAllMocks();
+        mocks.assertReady.mockResolvedValue(undefined);
+        mocks.transaction.mockImplementation(async (handler) => handler({ query: vi.fn() }));
+    });
+
+    it("derives one stable code from the unique public account id without collision retries", async () => {
+        const createCode = vi.fn(async (record) => record);
+        const referrals = { getCodeByUserId: vi.fn(async () => null), createCode };
+        mocks.makeRepositories.mockReturnValue({ referrals, users: { getById: vi.fn(async () => ({ id: "user-one", accountId: "0001", status: "active" })) } });
+
+        await expect(getOrCreateReferralCode("user-one")).resolves.toMatchObject({ code: "VZ0001" });
+
+        expect(createCode).toHaveBeenCalledTimes(1);
+        expect(createCode).toHaveBeenCalledWith(expect.objectContaining({ userId: "user-one", code: "VZ0001" }));
+    });
+
+    it("returns the concurrently created code after the single insert loses the user uniqueness race", async () => {
+        const concurrent = { id: "code-one", userId: "user-one", code: "VZ0001", enabled: true };
+        const getCodeByUserId = vi.fn().mockResolvedValueOnce(null).mockResolvedValueOnce(concurrent);
+        const createCode = vi.fn(async () => null);
+        mocks.makeRepositories.mockReturnValue({ referrals: { getCodeByUserId, createCode }, users: { getById: vi.fn(async () => ({ id: "user-one", accountId: "0001", status: "active" })) } });
+
+        await expect(getOrCreateReferralCode("user-one")).resolves.toBe(concurrent);
+        expect(createCode).toHaveBeenCalledTimes(1);
+        expect(getCodeByUserId).toHaveBeenCalledTimes(2);
+    });
+});
+
+describe("referral center pagination", () => {
+    beforeEach(() => {
+        vi.clearAllMocks();
+        mocks.assertReady.mockResolvedValue(undefined);
+    });
+
+    it("queries invitation progress and rewards with independent server pages", async () => {
+        const referrals = {
+            getProgram: vi.fn(async () => ({ enabled: true, inviterPoints: 10, inviteeRewardType: "points", inviteePoints: 5, minimumPaidCents: 100, coolingOffDays: 1 })),
+            getCodeByUserId: vi.fn(async () => ({ code: "INVITE88" })),
+            getUserStats: vi.fn(async () => ({ clicks: 1, registrations: 1, qualified: 1, pending: 0, settled: 1, revoked: 0 })),
+            listRelationships: vi.fn(async () => ({ items: [], total: 17, page: 2, pageSize: 8 })),
+            listRewards: vi.fn(async () => ({ items: [], total: 25, page: 3, pageSize: 8 })),
+        };
+        mocks.makeRepositories.mockReturnValue({ referrals, users: { getById: vi.fn(async () => ({ id: "user-one", status: "active" })) } });
+        mocks.transaction.mockImplementation(async (handler) => handler({ query: vi.fn() }));
+
+        await expect(getReferralCenter("user-one", "https://example.com", { referralsPage: 2, rewardsPage: 3, pageSize: 8 })).resolves.toMatchObject({ referralsTotal: 17, referralsPage: 2, rewardsTotal: 25, rewardsPage: 3 });
+
+        expect(referrals.listRelationships).toHaveBeenCalledWith({ inviterUserId: "user-one", page: 2, pageSize: 8 });
+        expect(referrals.listRewards).toHaveBeenCalledWith({ beneficiaryUserId: "user-one", page: 3, pageSize: 8 });
     });
 });
 

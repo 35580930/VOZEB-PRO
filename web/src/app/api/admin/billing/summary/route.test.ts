@@ -15,7 +15,13 @@ import { GET } from "./route";
 describe("admin billing summary route", () => {
     beforeEach(() => {
         vi.clearAllMocks();
-        mocks.getAdminBillingSummary.mockResolvedValue({ orders: { total: 0 }, payments: {}, providers: [], reconciliation: {} });
+        mocks.getAdminBillingSummary.mockResolvedValue({
+            orders: { total: 12 },
+            payments: {},
+            commerce: { convertedOrders: 8, promotionOrders: 6, promotionConvertedOrders: 5, promotionDiscountCents: 1600, couponOrders: 4, couponConvertedOrders: 3, couponDiscountCents: 900 },
+            providers: [],
+            reconciliation: {},
+        });
     });
 
     it("requires an administrator", async () => {
@@ -28,11 +34,13 @@ describe("admin billing summary route", () => {
     });
 
     it("passes an optional date window to the summary service", async () => {
-        mocks.getCurrentUser.mockResolvedValue({ id: "admin-one", role: "admin" });
+        mocks.getCurrentUser.mockResolvedValue({ id: "admin-one", role: "admin", status: "active", adminPermissions: ["billing.read"] });
 
         const response = await GET(new NextRequest("http://localhost/api/admin/billing/summary?startDate=2026-07-01&endDate=2026-07-31"));
+        const payload = await response.json();
 
         expect(response.status).toBe(200);
         expect(mocks.getAdminBillingSummary).toHaveBeenCalledWith({ startDate: "2026-07-01", endDate: "2026-07-31" });
+        expect(payload.summary.commerce).toEqual({ convertedOrders: 8, promotionOrders: 6, promotionConvertedOrders: 5, promotionDiscountCents: 1600, couponOrders: 4, couponConvertedOrders: 3, couponDiscountCents: 900 });
     });
 });

@@ -20,6 +20,8 @@ import {
     type GenerationConcurrencySettings,
     type GenerationDefaultSettings,
     type GenerationPointMultipliers,
+    type GenerationCostControlSettings,
+    type DataLifecycleSettings,
     type EntitlementPlanLimits,
     type EntitlementPlan,
     type EntitlementSettings,
@@ -31,8 +33,6 @@ import {
     type StoredCdkCode,
     type PublicAnnouncement,
     type SiteSettings,
-    type SiteShowcaseMode,
-    type SiteShowcaseItem,
     type SiteFriendLink,
     type SiteSocialKey,
     type SiteSocialSettings,
@@ -90,9 +90,9 @@ export const DEFAULT_SITE_SETTINGS: SiteSettings = {
     seoKeywords: "MOCREAI,AI Agent,AI 绘图,AI 视频,画布,短剧,提示词库,素材管理",
     footerCopyright: "© 2026 MOCREAI. All rights reserved.",
     termsUrl: "/terms",
+    termsVersion: "1.0",
     privacyUrl: "/privacy",
-    homeShowcaseMode: "random",
-    homeShowcaseItems: [],
+    privacyVersion: "1.0",
     friendLinks: DEFAULT_SITE_FRIEND_LINKS,
     socials: DEFAULT_SITE_SOCIALS,
 };
@@ -110,6 +110,18 @@ export const DEFAULT_GENERATION_POINT_MULTIPLIERS: GenerationPointMultipliers = 
     imageQuality: { auto: 1, low: 1, medium: 1, high: 1 },
     videoQuality: { "480": 1, "720": 1, "1080": 1 },
     videoSeconds: { "-1": 1, "5": 1, "10": 1 },
+};
+export const DEFAULT_GENERATION_COST_CONTROL: GenerationCostControlSettings = {
+    maxPointsPerTask: 0,
+    dailyUserPointSpend: 0,
+    dailyTotalPointSpend: 0,
+};
+export const DEFAULT_DATA_LIFECYCLE: DataLifecycleSettings = {
+    cleanupExpiredSessions: true,
+    cleanupExpiredEmailCodes: true,
+    cleanupExpiredGenerationTasks: true,
+    cleanupExpiredTemporaryMedia: true,
+    maintenanceBatchSize: 100,
 };
 export const DEFAULT_ENTITLEMENT_LIMITS: EntitlementPlanLimits = {
     dailyPointSpend: 0,
@@ -144,6 +156,8 @@ export const DEFAULT_SETTINGS: AuthSettings = {
     allowUserApiConfig: false,
     modelPointCosts: {},
     generationPointMultipliers: DEFAULT_GENERATION_POINT_MULTIPLIERS,
+    generationCostControl: DEFAULT_GENERATION_COST_CONTROL,
+    dataLifecycle: DEFAULT_DATA_LIFECYCLE,
     entitlements: DEFAULT_ENTITLEMENT_SETTINGS,
     generationConcurrency: { agent: 2, image: 4, video: 1, audio: 2, text: 4, render: 1 },
     generationDefaults: {
@@ -155,7 +169,6 @@ export const DEFAULT_SETTINGS: AuthSettings = {
         videoSeconds: 5,
         audioVoice: "alloy",
         audioFormat: "mp3",
-        workbenchSmartPlanning: { image: true, video: true },
     },
     systemChannels: [],
     logicalModels: [],

@@ -1,3 +1,4 @@
+import { hasAdminPermission } from "@/lib/admin-permissions";
 import { apiError, apiSuccess } from "@/app/api/_shared/api-response";
 
 import { ACCOUNT_DELETION_REQUEST_STATUSES, type AccountDeletionRequestStatus } from "@/lib/account-deletion-contract";
@@ -10,7 +11,7 @@ export const dynamic = "force-dynamic";
 export async function GET(request: Request) {
     const currentUser = await getCurrentUser();
     if (!currentUser) return apiError(401, "请先登录");
-    if (currentUser.role !== "admin") return apiError(403, "需要管理员权限");
+    if (!hasAdminPermission(currentUser, "users.manage")) return apiError(403, "需要管理员权限");
 
     const params = new URL(request.url).searchParams;
     const statusValue = params.get("status");

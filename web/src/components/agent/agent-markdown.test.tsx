@@ -21,4 +21,13 @@ describe("AgentMarkdown", () => {
         expect(markup).toContain("&lt;script&gt;alert(1)&lt;/script&gt;");
         expect(markup).not.toContain("<script>");
     });
+
+    it("preserves emoji and provides color emoji font fallbacks", () => {
+        const markup = renderToStaticMarkup(<AgentMarkdown>{"表情保持完整：😊❤️🚀"}</AgentMarkdown>);
+
+        expect(markup).toContain("表情保持完整：😊❤️🚀");
+        expect(markup).toContain("Apple Color Emoji");
+        expect(markup).toContain("Segoe UI Emoji");
+        expect(markup).toContain("Noto Color Emoji");
+    });
 });

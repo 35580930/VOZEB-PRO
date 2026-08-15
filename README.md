@@ -1,14 +1,14 @@
 <p align="center">
-  <img src="web/public/logo.svg?v=0.0.5" width="108" alt="VOZEB PRO logo">
+  <img src="web/public/logo.svg?v=0.0.6" width="108" alt="VOZEB PRO logo">
 </p>
 
 <h1 align="center">VOZEB PRO</h1>
 
-<p align="center">面向 Agent、图片、视频、Canvas 与短剧生产的开源 AI 创作工作台</p>
+<p align="center">面向统一创作 Agent、Canvas 与短剧生产的开源 AI 创作平台</p>
 
 <p align="center">
   <a href="https://github.com/csyqlz/VOZEB-PRO"><img src="https://img.shields.io/github/stars/csyqlz/VOZEB-PRO?style=flat-square&logo=github" alt="GitHub stars"></a>
-  <a href="VERSION"><img src="https://img.shields.io/badge/version-v0.0.5-2563eb?style=flat-square" alt="Version"></a>
+  <a href="VERSION"><img src="https://img.shields.io/badge/version-v0.0.6-2563eb?style=flat-square" alt="Version"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-AGPL--3.0-f97316?style=flat-square" alt="License"></a>
   <a href="https://nextjs.org/"><img src="https://img.shields.io/badge/Next.js-16.2-000000?style=flat-square&logo=nextdotjs" alt="Next.js"></a>
   <a href="https://www.postgresql.org/"><img src="https://img.shields.io/badge/PostgreSQL-16-4169e1?style=flat-square&logo=postgresql" alt="PostgreSQL"></a>
@@ -17,8 +17,8 @@
 <p align="center">
   <a href="https://www.vozeb.com">演示站</a> ·
   <a href="docs/index.md">文档索引</a> ·
-  <a href="docs/content/docs/overview/configuration.mdx">0.0.5 发布说明</a> ·
-  <a href="docs/content/docs/overview/project-structure.mdx">项目结构</a> ·
+  <a href="docs/content/docs/overview/configuration.mdx">0.0.6 发布说明</a> ·
+  <a href="#目录与文件用途">目录与文件用途</a> ·
   <a href="docs/content/docs/overview/page-gallery.mdx">页面图册</a> ·
   <a href="https://linux.do">LINUX DO</a> ·
   <a href="CONTRIBUTING.md">参与贡献</a> ·
@@ -27,13 +27,11 @@
 
 ![VOZEB PRO 首页](docs/public/screenshots/pages/01-home.webp)
 
-VOZEB PRO 把统一创作 Agent、图片与视频工作台、画布、短剧生产、素材库和商业运营后台放在同一套 Next.js 全栈应用中。PostgreSQL 保存账号与业务数据；媒体可写入服务器本地目录或 S3 兼容对象存储；模型、支付和存储密钥只在服务端使用。
+VOZEB PRO 把统一创作 Agent、画布、短剧生产、素材库和商业运营后台放在同一套 Next.js 全栈应用中。PostgreSQL 保存账号与业务数据；媒体可写入服务器本地目录或 S3 兼容对象存储；模型、支付和存储密钥只在服务端使用。
 
 ## 核心功能
 
-- **统一 Agent**：文字、图片、视频和音频素材在同一会话中创作，支持 Skill、智能规划、手动逻辑模型、服务端历史和稳定资产。
-- **图片工作台**：文生图、图生图、参考图编辑、多结果、历史恢复、失败重试、WebP 预览和原件下载。
-- **视频工作台**：文生视频、图生视频、多类型参考素材、时长/比例/清晰度参数、异步续取和结果管理。
+- **统一创作 Agent**：文字问答、图片、视频和音频在同一会话中完成，支持参考素材、首帧/首尾帧、Skill、智能规划、手动逻辑模型、比例/画质/时长/数量、自定义像素、多结果、历史恢复、失败重试、WebP 预览和原件下载。
 - **画布**：文本、图片、视频、音频与生成节点，支持拖拽、连线、缩放、撤销重做、导入导出和 Agent Run。
 - **短剧生产线**：剧本、内容审核、角色/场景/道具、分镜、镜头视频、配音、字幕、版本和 FFmpeg 合成。
 - **作品广场**：作品草稿、版本审核、发布分享、广场检索、作者主页、点赞关注、下架重发和内容治理。
@@ -86,9 +84,7 @@ flowchart LR
 flowchart TB
     USER["用户工作区<br/>加载用户、积分、模型和站点配置"]
 
-    USER --> CREATE["统一 Agent /create<br/>多模态创作与服务端会话"]
-    USER --> IMAGE["图片工作台 /image<br/>文生图、图生图和参考图编辑"]
-    USER --> VIDEO["视频工作台 /video<br/>文生视频和图生视频"]
+    USER --> CREATE["统一创作 Agent /create<br/>文本、图片、视频、音频与服务端会话"]
 
     USER --> CANVAS["Canvas 项目 /canvas<br/>创建、搜索、重命名和删除"]
     CANVAS --> CANVAS_ID["Canvas 编辑器 /canvas/:id"]
@@ -104,13 +100,8 @@ flowchart TB
     USER --> BILLING["充值中心 /billing"]
 
     PROMPTS --> CREATE
-    PROMPTS --> IMAGE
-    PROMPTS --> VIDEO
-
     MY_PROMPTS --> CREATE
     ASSETS --> CREATE
-    ASSETS --> IMAGE
-    ASSETS --> VIDEO
     ASSETS --> CANVAS_ID
     ASSETS --> DRAMA_ID
 ```
@@ -118,23 +109,14 @@ flowchart TB
 </details>
 
 <details>
-<summary><strong>03｜Agent、图片和视频生成流程</strong></summary>
+<summary><strong>03｜统一创作 Agent 生成流程</strong></summary>
 
 ```mermaid
 flowchart TB
-    START["用户输入文字或参考素材"] --> ENTRY{"选择创作入口"}
-
-    ENTRY -->|统一创作| AGENT["统一 Agent"]
-    ENTRY -->|图片生成| IMAGE["图片工作台"]
-    ENTRY -->|视频生成| VIDEO["视频工作台"]
-
-    AGENT --> SKILL["选择 Skill、智能规划或逻辑模型"]
-    IMAGE --> IMAGE_PARAM["设置参考图、比例、质量和数量"]
-    VIDEO --> VIDEO_PARAM["设置参考素材、时长、比例和清晰度"]
-
-    SKILL --> CHECK["能力、素材、参数与积分校验"]
-    IMAGE_PARAM --> CHECK
-    VIDEO_PARAM --> CHECK
+    START["用户输入文字或参考素材"] --> AGENT["统一创作 Agent /create"]
+    AGENT --> CONTROL["选择 Skill、智能规划或逻辑模型"]
+    CONTROL --> PARAM["设置图片、视频或音频生成偏好"]
+    PARAM --> CHECK["能力、素材、参数与积分校验"]
 
     CHECK --> ROUTER["逻辑模型路由"]
     ROUTER --> CREATE_TASK["创建幂等生成任务"]
@@ -203,9 +185,8 @@ flowchart LR
 
     EDITOR --> SCRIPT["第一阶段：生成或编辑剧本"]
     SCRIPT --> REVIEW["第二阶段：内容审核和人工确认"]
-    REVIEW --> ASSETS["第三阶段：角色、场景和道具"]
-    ASSETS --> STORYBOARD["第四阶段：分镜和镜头设计"]
-    STORYBOARD --> SHOTS["第五阶段：生成镜头图片和视频"]
+    REVIEW --> STORYBOARD["第三阶段：分镜和镜头设计"]
+    STORYBOARD --> SHOTS["第四阶段：生成镜头图片和视频"]
 
     SHOTS --> AUDIO["生成配音、音效和背景音乐"]
     AUDIO --> SUBTITLE["生成并校对字幕"]
@@ -226,15 +207,15 @@ flowchart LR
 ```mermaid
 flowchart TB
     PROMPTS["公共提示词 /prompts"] --> FIND["分类、标签和关键词检索"]
-    FIND --> USE["用于 Agent、图片或视频创作"]
+    FIND --> USE["用于统一 Agent 创作"]
 
     MY["我的提示词 /my-prompts"] --> MANAGE["创建、编辑、分类、标签和删除"]
     MANAGE --> SAVE_ASSET["保存为文本素材"]
     MANAGE --> USE
 
-    ASSETS["我的素材 /assets"] --> FILTER["按图片、视频、音频、文本和附件筛选"]
+    ASSETS["我的素材 /assets"] --> FILTER["按图片、视频、音频和文本筛选"]
     FILTER --> PREVIEW["预览或下载"]
-    FILTER --> CONTINUE["发送到 Agent、工作台、Canvas 或短剧"]
+    FILTER --> CONTINUE["发送到 Agent、Canvas 或短剧"]
     FILTER --> DELETE["检查业务引用后删除"]
 
     HELP["帮助中心 /help"] --> GUIDE["查看 Agent、图片、视频、Canvas、短剧和账户说明"]
@@ -317,7 +298,7 @@ flowchart TB
 
     UPSTREAM --> CHANNELS["模型渠道<br/>协议、Base URL、API Key 和模型目录"]
     CHANNELS --> LOGICAL["同步逻辑模型、优先级和默认模型"]
-    LOGICAL --> VERIFY["在用户工作台发起真实业务请求"]
+    LOGICAL --> VERIFY["在统一 Agent、Canvas 或短剧入口发起真实业务请求"]
     UPSTREAM --> SKILLS["Agent Skills<br/>分类、触发规则、能力约束和启停"]
 
     SYSTEM --> SITE["站点资料<br/>名称、Logo、SEO、首页内容和友情链接"]
@@ -397,14 +378,14 @@ VOZEB PRO 调用外部 AI 模型，不要求 GPU。服务器主要承担 Web、P
 | -------------------------- | -------- | -------------- | --------- | ------------------------------------------------------------------- |
 | 最低可启动                 | 1 核     | 1GB + 1GB swap | 10GB SSD  | 使用发布镜像、外部 PostgreSQL 和外部 S3/OSS；只适合安装体验和低并发 |
 | 标准小型部署               | 2 核     | 2GB + 1GB swap | 20GB SSD  | 应用与 PostgreSQL 同机，适合少量用户；不要在服务器现场构建镜像      |
-| 推荐日常使用               | 2–4 核   | 4GB            | 40GB+ SSD | 适合图片/视频工作台、Canvas、后台和少量并发                         |
+| 推荐日常使用               | 2–4 核   | 4GB            | 40GB+ SSD | 适合统一 Agent、Canvas、后台和少量并发                              |
 | 短剧合成或频繁本地视频处理 | 4 核以上 | 8GB 以上       | 80GB+ SSD | FFmpeg、长视频下载、转码和字幕合成会明显占用 CPU、内存和临时磁盘    |
 
 最低环境还需要：64 位 Linux、Docker 与 Compose v2、PostgreSQL 16、可用域名和 HTTPS、能够访问模型上游的出站网络。源码开发或现场构建建议至少 2GB 内存，4GB 更稳妥；本地保存视频时请按实际媒体量扩大磁盘。完整说明见[低内存服务器部署](docs/content/docs/overview/low-memory.mdx)。
 
 ## 快速开始
 
-> 安装过 0.0.2 的用户必须先删除旧数据库或数据库卷，再重新安装 0.0.5，并通过 `/install` 重新初始化数据库；不支持沿用旧数据库或原地升级。
+> 安装过 0.0.2 的用户必须先删除旧数据库或数据库卷，再重新安装 0.0.6，并通过 `/install` 重新初始化数据库；不支持沿用旧数据库或原地升级。
 
 ### Docker Compose
 
@@ -424,20 +405,24 @@ POSTGRES_PASSWORD=replace-with-a-strong-password
 VOZEB_PRO_ENCRYPTION_KEY=replace-with-openssl-rand-hex-32
 VOZEB_PRO_INSTALL_TOKEN=replace-with-one-time-openssl-rand-hex-32
 VOZEB_PRO_MAINTENANCE_TOKEN=replace-with-another-openssl-rand-hex-32
+VOZEB_PRO_WORKER_TOKEN=replace-with-a-distinct-openssl-rand-hex-32
 ```
 
-分别生成加密密钥、一次性安装令牌和维护令牌，再写入 `.env` 并启动：
+为四个变量分别执行一次下面的命令，并保存每次不同的输出。维护令牌与 Worker 令牌必须不同：
 
 ```bash
 openssl rand -hex 32
-openssl rand -hex 32
-openssl rand -hex 32
+```
+
+写入 `.env` 后启动：
+
+```bash
 docker compose pull
 docker compose up -d
 docker compose ps
 ```
 
-`VOZEB_PRO_INSTALL_TOKEN` 只用于初始化数据库和创建首个管理员，必须从服务器 `.env` 粘贴到安装向导；安装完成后可从环境变量中移除。`VOZEB_PRO_MAINTENANCE_TOKEN` 是 App 与生成 Worker 共用的服务器维护密钥，Worker 不读取包含数据库、支付和安装令牌的完整 `.env`。完整变量说明见[配置说明](docs/content/docs/overview/configuration.mdx)。
+`VOZEB_PRO_INSTALL_TOKEN` 只用于初始化数据库和创建首个管理员，必须从服务器 `.env` 粘贴到安装向导；安装完成后可从环境变量中移除。`VOZEB_PRO_MAINTENANCE_TOKEN` 只授权外部计划维护任务，`VOZEB_PRO_WORKER_TOKEN` 只授权 App 与生成 Worker 的内部任务领取、心跳和回调。Worker 不读取包含数据库、支付、安装令牌或外部维护令牌的完整 `.env`。完整变量说明见[配置说明](docs/content/docs/overview/configuration.mdx)。
 
 打开 `https://你的域名/install`，依次检查数据库、初始化表结构并创建首个管理员。
 
@@ -485,19 +470,19 @@ pnpm run dev
 
 1. 在 `/install` 完成数据库初始化和首个管理员创建。
 2. 在后台“模型渠道”按五步向导选择协议、配置连接、获取模型、同步逻辑模型并确认启用；无鉴权协议无需 API Key，未知上游可生成自定义协议草稿。
-3. 设置默认逻辑模型，并在用户端文本、图片、视频和音频工作台发起真实业务请求验证。
+3. 设置默认逻辑模型，并在 `/create` 统一 Agent 中分别发起文本、图片、视频和音频真实业务请求验证。
 4. 配置套餐、积分规则和可选支付渠道。
 5. 配置 SMTP、注册策略、本地媒体或 S3 兼容对象存储。
 6. 在“初始化配置”检查上线项，再验证真实生成、退款和备份恢复。
 
-## 项目文件
+## 目录与文件用途
 
 | 路径                                        | 文件里是什么                                                               |
 | ------------------------------------------- | -------------------------------------------------------------------------- |
 | `web/src/app/`                              | Next.js 页面、布局、安装页、用户工作区、管理后台和本站 API Route Handler   |
 | `web/src/lib/server/`                       | Agent 编排、模型路由、生成任务、计费、媒体、对象存储、支付和服务端安全逻辑 |
 | `web/src/lib/server/database/`              | PostgreSQL 表结构、参数化 Repository、查询映射和文件 Provider 回退         |
-| `web/src/components/` / `web/src/hooks/`    | 跨页面 UI、工作台控制器、素材选择、复制下载和会话交互                      |
+| `web/src/components/` / `web/src/hooks/`    | 跨页面 UI、创作控件、素材选择、复制下载和会话交互                          |
 | `web/src/services/api/` / `web/src/stores/` | 浏览器访问本站 API 的类型化客户端，以及用户、主题、配置和素材瞬时状态      |
 | `web/scripts/`                              | 低内存生产构建、standalone 启动、生成 Worker、管理员密码重置和发布检查脚本 |
 | `web/public/`                               | 站点 Logo、浏览器图标和模型品牌图标                                        |
@@ -518,20 +503,20 @@ pnpm run dev
 
 <table>
   <tr>
+    <td width="50%"><img src="docs/public/screenshots/pages/02-create.webp" alt="统一创作 Agent"></td>
     <td width="50%"><img src="docs/public/screenshots/pages/03a-canvas-editor.webp" alt="Canvas 编辑器"></td>
+  </tr>
+  <tr>
     <td width="50%"><img src="docs/public/screenshots/pages/04a-drama-editor.webp" alt="短剧生产编辑器"></td>
-  </tr>
-  <tr>
-    <td width="50%"><img src="docs/public/screenshots/pages/05-image-workbench.webp" alt="图片工作台"></td>
-    <td width="50%"><img src="docs/public/screenshots/pages/06-video-workbench.webp" alt="视频工作台"></td>
-  </tr>
-  <tr>
     <td width="50%"><img src="docs/public/screenshots/pages/20-admin-overview.webp" alt="经营看板"></td>
+  </tr>
+  <tr>
     <td width="50%"><img src="docs/public/screenshots/pages/34-admin-channels.webp" alt="模型渠道"></td>
+    <td width="50%"><img src="docs/public/screenshots/pages/07-prompts.webp" alt="提示词库"></td>
   </tr>
 </table>
 
-用户端、公开页和管理后台共 42 张功能截图见[页面功能图册](docs/content/docs/overview/page-gallery.mdx)。
+用户端、公开页和管理后台共 40 张功能截图见[页面功能图册](docs/content/docs/overview/page-gallery.mdx)。
 
 ## 数据与安全
 
@@ -558,7 +543,7 @@ pnpm run build
 ## 文档与协议
 
 - [功能总览](docs/content/docs/overview/features.mdx)
-- [项目结构与流程](docs/content/docs/overview/project-structure.mdx)
+- [目录与文件用途](docs/content/docs/overview/project-structure.mdx)
 - [配置说明](docs/content/docs/overview/configuration.mdx)
 - [数据库结构](docs/content/docs/backend/backend-database.mdx)
 - [待测试](docs/content/docs/progress/pending-test.mdx)
@@ -575,12 +560,11 @@ pnpm run build
     <td>
       <strong>VOZEB 开源交流</strong><br>
       QQ 群：<code>1049777515</code> · <a href="https://qm.qq.com/q/9MVLTxuRd6">点击加入群聊</a><br><br>
-      欢迎交流部署、模型渠道适配、工作台使用、Bug 复现和代码贡献。请勿在群内发送 API Key、数据库密码、支付密钥、服务器私钥或未经脱敏的生产日志。
+      欢迎交流部署、模型渠道适配、创作功能使用、Bug 复现和代码贡献。请勿在群内发送 API Key、数据库密码、支付密钥、服务器私钥或未经脱敏的生产日志。
     </td>
   </tr>
 </table>
 
 ## 致谢
 
-- 感谢原创开源作者 **basketikun** 对画布创作工作流、Canvas Agent 和 Codex 插件能力的开源贡献。
 - 感谢 [LINUX DO](https://linux.do) 社区、相关提示词开源仓库、Codex / Claude Code 生态，以及项目使用的所有开源工具与基础设施。

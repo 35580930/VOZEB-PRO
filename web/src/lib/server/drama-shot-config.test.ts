@@ -11,8 +11,8 @@ describe("resolveDramaShotDuration", () => {
         expect(resolveDramaShotDuration(6, 10)).toBe(6);
     });
 
-    it("clamps durations to the supported range", () => {
-        expect(resolveDramaShotDuration(60, 10)).toBe(20);
-        expect(resolveDramaShotDuration(0, 30)).toBe(20);
+    it("keeps durations above the former platform ceiling", () => {
+        expect(resolveDramaShotDuration(60, 10)).toBe(60);
+        expect(resolveDramaShotDuration(0, 30)).toBe(30);
     });
 });

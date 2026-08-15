@@ -16,7 +16,7 @@ import { GET } from "./route";
 describe("GET /api/admin/generation-assets", () => {
     beforeEach(() => {
         vi.clearAllMocks();
-        mocks.getCurrentUser.mockResolvedValue({ id: "admin", role: "admin" });
+        mocks.getCurrentUser.mockResolvedValue({ id: "admin", role: "admin", status: "active", adminPermissions: ["generation.read"] });
         mocks.findPublicUserIdsByKeyword.mockResolvedValue([]);
         mocks.getLocalMediaAssetSummary.mockResolvedValue({ totalFiles: 2, totalBytes: 30, permanentFiles: 2, permanentBytes: 30, temporaryFiles: 0, temporaryBytes: 0, expiredTemporaryFiles: 0 });
     });

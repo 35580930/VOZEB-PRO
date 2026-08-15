@@ -1,5 +1,5 @@
 import { agnesModelCatalog, agnesModelConfigs } from "@/lib/agnes-model-catalog";
-import { capabilityFromHint, inferModelCapability, normalizeModelId, type ModelCatalogEntry, type ModelCatalogSource } from "@/lib/model-capability";
+import { capabilityFromHint, inferModelCapability, isCreativeGenerationModel, normalizeModelId, type ModelCatalogEntry, type ModelCatalogSource } from "@/lib/model-capability";
 import type { LogicalModelCapability } from "@/lib/auth/store-types";
 import type { SystemChannelModelConfig, SystemChannelProtocol } from "@/lib/auth/store-types";
 import { protocolCatalogCapability } from "@/lib/channel-protocol-registry";
@@ -75,32 +75,37 @@ export function parseModels(payload: ModelsResponse) {
 
 export function parseModelCatalog(payload: unknown, source: ModelCatalogSource = "provider", protocol?: SystemChannelProtocol) {
     return mergeModelCatalogEntries(
-        ...collectModelValues(payload).map(({ id, metadata }) => [
-            {
-                id,
-                capability: resolveCatalogCapability(id, metadata, protocol),
-                source,
-            },
-        ]),
+        ...collectModelValues(payload)
+            .filter(({ id }) => isCreativeGenerationModel(id))
+            .map(({ id, metadata }) => [
+                {
+                    id,
+                    capability: resolveCatalogCapability(id, metadata, protocol),
+                    source,
+                },
+            ]),
     );
 }
 
 export function parseModelConfigs(payload: unknown, protocol?: SystemChannelProtocol) {
     return Object.fromEntries(
-        collectModelValues(payload).map(({ id, metadata }) => {
-            const capability = resolveCatalogCapability(id, metadata, protocol);
-            return [normalizeModelId(id), { ...modelConfigFromMetadata(metadata, capability), source: "provider" as const }] as const;
-        }),
+        collectModelValues(payload)
+            .filter(({ id }) => isCreativeGenerationModel(id))
+            .map(({ id, metadata }) => {
+                const capability = resolveCatalogCapability(id, metadata, protocol);
+                return [normalizeModelId(id), { ...modelConfigFromMetadata(metadata, capability), source: "provider" as const }] as const;
+            }),
     ) as Record<string, SystemChannelModelConfig>;
 }
 
-export function configuredModelCatalog(models: unknown, capabilities: unknown): ModelCatalogEntry[] {
+export function configuredModelCatalog(models: unknown, capabilities: unknown, configs?: Record<string, SystemChannelModelConfig>): ModelCatalogEntry[] {
     const capabilityMap = normalizeCapabilityMap(capabilities);
     if (!Array.isArray(models)) return [];
     return mergeModelCatalogEntries(
         models.flatMap((value) => {
             if (typeof value !== "string" || !value.trim()) return [];
             const id = value.trim().replace(/^models\//i, "");
+            if (!isCreativeGenerationModel(id) && configs?.[normalizeModelId(id)]?.source !== "manual") return [];
             return [{ id, capability: capabilityMap[normalizeModelId(id)] || inferModelCapability(id), source: "configured" as const }];
         }),
     );
@@ -312,6 +317,8 @@ function isChannelProtocol(value: unknown): value is SystemChannelProtocol {
     return (
         value === "auto" ||
         value === "openai" ||
+        value === "yumeng" ||
+        value === "gemini" ||
         value === "sub2api" ||
         value === "newapi" ||
         value === "vozeb-recommended" ||

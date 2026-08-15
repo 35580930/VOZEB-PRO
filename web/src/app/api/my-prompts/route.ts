@@ -20,6 +20,7 @@ export async function GET(request: NextRequest) {
         category: params.get("category") || "",
         page: Math.max(1, Number(params.get("page")) || 1),
         pageSize: Math.max(1, Math.min(100, Number(params.get("pageSize")) || 20)),
+        includeFacets: params.get("includeFacets") !== "0",
     });
     return NextResponse.json(result);
 }

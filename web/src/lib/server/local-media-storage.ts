@@ -90,8 +90,8 @@ async function listRegisteredLocalMediaAssets(input: { page?: number; pageSize?:
     };
 }
 
-export async function cleanupExpiredLocalMediaAssets() {
-    const registered = await listExpiredLocalMediaRegistrations();
+export async function cleanupExpiredLocalMediaAssets(limit?: number) {
+    const registered = await listExpiredLocalMediaRegistrations(limit);
     const registeredResult = await deleteRegisteredMediaAssets(registered);
     if (getDatabaseProvider() === "postgres") return registeredResult;
     const registeredKeys = new Set(registered.map((asset) => asset.storageKey));
@@ -137,6 +137,10 @@ export async function deleteLocalMediaAssets(ids: string[]) {
 export async function deleteUserLocalMediaAssets(userId: string, storageKeys: string[]) {
     const registrations = await getLocalMediaRegistrations(storageKeys);
     return deleteRegisteredMediaAssets(registrations.filter((item) => item.ownerUserId === userId));
+}
+
+export async function deleteRegisteredLocalMediaSnapshots(registrations: LocalMediaRegistration[]) {
+    return deleteRegisteredMediaAssets(registrations);
 }
 
 export async function deleteLocalMediaAssetsByStorageKeys(storageKeys: string[], scope?: "generation" | "reference") {

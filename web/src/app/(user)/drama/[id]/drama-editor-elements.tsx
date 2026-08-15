@@ -14,6 +14,66 @@ const statusToneClass: Record<string, string> = {
     cancelled: "!border-border !bg-muted/60 !text-muted-foreground",
 };
 
+const stageToneClass = {
+    neutral: "border-border bg-muted/55 text-muted-foreground",
+    ready: "border-emerald-200 bg-emerald-50 text-emerald-700 dark:border-emerald-900/70 dark:bg-emerald-950/35 dark:text-emerald-300",
+    attention: "border-amber-200 bg-amber-50 text-amber-700 dark:border-amber-900/70 dark:bg-amber-950/35 dark:text-amber-300",
+    running: "border-sky-200 bg-sky-50 text-sky-700 dark:border-sky-900/70 dark:bg-sky-950/35 dark:text-sky-300",
+} as const;
+
+export function DramaStageHeader({
+    step,
+    title,
+    description,
+    status,
+    tone = "neutral",
+    metrics = [],
+    action,
+    secondaryAction,
+    className = "",
+}: {
+    step: string;
+    title: string;
+    description: string;
+    status: string;
+    tone?: keyof typeof stageToneClass;
+    metrics?: Array<{ label: string; value: ReactNode }>;
+    action?: ReactNode;
+    secondaryAction?: ReactNode;
+    className?: string;
+}) {
+    return (
+        <header className={`border-b border-border/80 pb-3 ${className}`} data-drama-stage-header>
+            <div className="flex min-w-0 flex-col gap-2.5 sm:flex-row sm:items-center sm:justify-between sm:gap-4">
+                <div className="min-w-0 flex-1">
+                    <div className="flex min-w-0 items-center gap-2">
+                        <span className="shrink-0 text-[11px] font-semibold tabular-nums text-muted-foreground">{step}</span>
+                        <h2 className="truncate text-base font-semibold leading-6 sm:text-[17px]">{title}</h2>
+                        <span className={`inline-flex h-5 shrink-0 items-center rounded border px-1.5 text-[11px] font-medium ${stageToneClass[tone]}`}>{status}</span>
+                    </div>
+                    <p className="sr-only">{description}</p>
+                    {metrics.length ? (
+                        <dl className="mt-1.5 flex min-w-0 flex-wrap items-center gap-y-1 text-[11px] leading-4 text-muted-foreground" data-drama-stage-metrics>
+                            {metrics.map((item, index) => (
+                                <div key={item.label} className={`flex min-w-0 items-baseline gap-1.5 pr-3 ${index ? "border-l border-border/80 pl-3" : ""}`}>
+                                    <dt className="whitespace-nowrap">{item.label}</dt>
+                                    <dd className="whitespace-nowrap font-medium tabular-nums text-foreground">{item.value}</dd>
+                                </div>
+                            ))}
+                        </dl>
+                    ) : null}
+                </div>
+                {action || secondaryAction ? (
+                    <div className="flex w-full shrink-0 flex-col-reverse gap-1.5 sm:w-auto sm:flex-row sm:items-center">
+                        {secondaryAction}
+                        {action}
+                    </div>
+                ) : null}
+            </div>
+        </header>
+    );
+}
+
 export function SectionTitle({ title, description, className = "" }: { title: string; description: string; className?: string }) {
     return (
         <div className={`mb-4 sm:mb-8 ${className}`}>

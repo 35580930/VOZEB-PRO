@@ -76,7 +76,12 @@ export type WorkPublicationSourceSummary = {
     updatedAt: string;
 };
 
-export type WorkPublicationSourceGroups = Record<WorkPublicationSourceType, WorkPublicationSourceSummary[]>;
+export type WorkPublicationSourcePage = {
+    items: WorkPublicationSourceSummary[];
+    total: number;
+    page: number;
+    pageSize: number;
+};
 
 export type WorkPublicationMediaCandidate = {
     storageKey: string;
@@ -152,8 +157,8 @@ export function getWorkPublication(id: string) {
     return requestWorkPublication<{ work: WorkPublication }>(`/api/works/${encodeURIComponent(id)}`).then((data) => data.work);
 }
 
-export function listWorkPublicationSources() {
-    return requestWorkPublication<{ sources: WorkPublicationSourceGroups }>("/api/works/sources").then((data) => data.sources);
+export function listWorkPublicationSources(input: { sourceType: WorkPublicationSourceType; page?: number; pageSize?: number; keyword?: string }) {
+    return requestWorkPublication<WorkPublicationSourcePage>(`/api/works/sources?${searchParams(input)}`);
 }
 
 export function getWorkPublicationSource(sourceType: WorkPublicationSourceType, sourceId: string) {

@@ -10,7 +10,7 @@ import { GET } from "./route";
 describe("administrator object storage image preview API", () => {
     beforeEach(() => {
         vi.clearAllMocks();
-        mocks.user.mockResolvedValue({ id: "admin", role: "admin" });
+        mocks.user.mockResolvedValue({ id: "admin", role: "admin", status: "active", adminPermissions: ["system.manage"] });
         mocks.preview.mockResolvedValue("https://oss.example.com/preview.webp?signature=test");
     });
 

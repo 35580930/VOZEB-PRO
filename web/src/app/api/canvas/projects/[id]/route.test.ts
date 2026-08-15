@@ -34,4 +34,14 @@ describe("canvas project detail route", () => {
         expect(mocks.updateProject).toHaveBeenCalledWith("user-one", "canvas-one", body);
         expect(response.status).toBe(200);
     });
+
+    it("returns a compact acknowledgement for a mutation batch", async () => {
+        const mutation = { mutationId: "mutation-one", baseUpdatedAt: "2026-08-01T00:00:00.000Z", title: "增量标题" };
+        mocks.updateProject.mockResolvedValue({ projectId: "canvas-one", updatedAt: "2026-08-01T00:00:00.001Z", mutationId: mutation.mutationId });
+
+        const response = await PATCH(new Request("http://localhost/api/canvas/projects/canvas-one", { method: "PATCH", body: JSON.stringify({ mutation }) }), { params: Promise.resolve({ id: "canvas-one" }) });
+
+        expect(mocks.updateProject).toHaveBeenCalledWith("user-one", "canvas-one", { mutation });
+        expect(await response.json()).toEqual({ code: 0, data: { ack: { projectId: "canvas-one", updatedAt: "2026-08-01T00:00:00.001Z", mutationId: "mutation-one" } }, msg: "画布项目已保存" });
+    });
 });

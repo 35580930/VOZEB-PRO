@@ -16,8 +16,6 @@ import type { GenerationLogAsset, GenerationLogDatabase, GenerationLogKind, Gene
 
 const LOG_DATA_FILE = "generation-logs.json";
 const ASSET_ROOT = GENERATION_MEDIA_ROOT;
-export const MAX_LOGS = 20000;
-export const MAX_GENERATION_LOG_ASSETS = 200;
 const MAX_SERVER_IMAGE_BYTES = 20 * 1024 * 1024;
 const MAX_SERVER_VIDEO_BYTES = 300 * 1024 * 1024;
 const SERVER_ASSET_DOWNLOAD_TIMEOUT_MS = 15000;
@@ -26,8 +24,8 @@ let mutationQueue = Promise.resolve();
 
 export function sourceLabel(source: string) {
     if (source === "agent") return "Agent 工作台";
-    if (source === "image-workbench") return "生图工作台";
-    if (source === "video-workbench") return "视频创作台";
+    if (source === "image-workbench") return "图片生成";
+    if (source === "video-workbench") return "视频生成";
     if (source === "canvas") return "画布";
     if (source === "drama") return "短剧";
     return "未知入口";
@@ -53,9 +51,8 @@ type GenerationAssetContext = { ownerUserId: string; source: string; conversatio
 
 export async function normalizeAssets(assets: Array<Partial<GenerationLogAsset> & { url?: string; targetSize?: string }>, context: GenerationAssetContext) {
     const normalized: GenerationLogAsset[] = [];
-    const limitedAssets = assets.slice(0, MAX_GENERATION_LOG_ASSETS);
-    for (const [assetIndex, asset] of limitedAssets.entries()) {
-        const assetContext = { ...context, targetSize: asset.targetSize, assetIndex, assetCount: limitedAssets.length };
+    for (const [assetIndex, asset] of assets.entries()) {
+        const assetContext = { ...context, targetSize: asset.targetSize, assetIndex, assetCount: assets.length };
         const type = asset.type === "video" ? "video" : "image";
         const sourceUrl = (asset.url || "").trim();
         const remoteUrl = normalizeRemoteUrl(asset.remoteUrl || (isRemoteAssetUrl(sourceUrl) ? sourceUrl : ""));
@@ -288,7 +285,7 @@ export async function writeGenerationLogDb(db: GenerationLogDatabase) {
 /** Full generation snapshot for the explicit administrator backup transaction only. */
 export async function readPostgresGenerationLogDb(executor: QueryExecutor): Promise<GenerationLogDatabase> {
     const query: QueryExecutor["query"] = executor.query.bind(executor);
-    const [logResult, assetResult] = await Promise.all([query("SELECT * FROM generation_logs ORDER BY created_at DESC LIMIT $1", [MAX_LOGS]), query("SELECT * FROM generation_log_assets ORDER BY generation_log_id ASC, sort_order ASC")]);
+    const [logResult, assetResult] = await Promise.all([query("SELECT * FROM generation_logs ORDER BY created_at DESC"), query("SELECT * FROM generation_log_assets ORDER BY generation_log_id ASC, sort_order ASC")]);
     const assetsByLogId = new Map<string, GenerationLogAsset[]>();
     for (const row of assetResult.rows) {
         const logId = dbText(row.generation_log_id);
@@ -470,7 +467,7 @@ export function dbOptionalIso(value: unknown) {
 export function normalizeDb(db: Partial<GenerationLogDatabase>): GenerationLogDatabase {
     return {
         version: 1,
-        logs: Array.isArray(db.logs) ? db.logs.map(normalizeStoredLog).filter(Boolean).slice(0, MAX_LOGS) : [],
+        logs: Array.isArray(db.logs) ? db.logs.map(normalizeStoredLog).filter(Boolean) : [],
     };
 }
 
@@ -494,12 +491,7 @@ export function normalizeStoredLog(log: Partial<StoredGenerationLog>): StoredGen
         count: normalizePositiveInteger(log.count, 1),
         successCount: normalizeNonNegativeInteger(log.successCount, status === "success" ? 1 : 0),
         failCount: normalizeNonNegativeInteger(log.failCount, status === "failed" ? 1 : 0),
-        assets: Array.isArray(log.assets)
-            ? log.assets
-                  .map(normalizeStoredAsset)
-                  .filter((asset): asset is GenerationLogAsset => Boolean(asset?.url))
-                  .slice(0, MAX_GENERATION_LOG_ASSETS)
-            : [],
+        assets: Array.isArray(log.assets) ? log.assets.map(normalizeStoredAsset).filter((asset): asset is GenerationLogAsset => Boolean(asset?.url)) : [],
         requestSnapshot: normalizeGenerationLogRequestSnapshot(log.requestSnapshot),
         taskId: normalizeOptionalText(log.taskId, undefined, 160),
         error: normalizeOptionalText(log.error, undefined, 1000),
@@ -514,8 +506,8 @@ export function normalizeGenerationLogRequestSnapshot(value: unknown): Generatio
     if (!source || Number(source.version) !== 1) return undefined;
     const userPrompt = normalizeOptionalText(source.userPrompt, undefined, 4000);
     const parameters = normalizeSnapshotParameters(source.parameters);
-    const references = Array.isArray(source.references) ? source.references.flatMap(normalizeSnapshotReference).slice(0, 32) : [];
-    const slots = Array.isArray(source.slots) ? source.slots.flatMap(normalizeSnapshotSlot).slice(0, MAX_GENERATION_LOG_ASSETS) : [];
+    const references = Array.isArray(source.references) ? source.references.flatMap(normalizeSnapshotReference) : [];
+    const slots = Array.isArray(source.slots) ? source.slots.flatMap(normalizeSnapshotSlot) : [];
     if (!userPrompt && !Object.keys(parameters).length && !references.length && !slots.length) return undefined;
     return { version: 1, ...(userPrompt ? { userPrompt } : {}), parameters, references, slots };
 }
@@ -572,7 +564,7 @@ function normalizeSnapshotSlot(value: unknown): GenerationLogSlotSnapshot[] {
             status,
             prompt: normalizeOptionalText(source.prompt, undefined, 5000),
             parameters: normalizeSnapshotParameters(source.parameters),
-            referenceIds: Array.isArray(source.referenceIds) ? Array.from(new Set(source.referenceIds.map((item) => normalizeOptionalText(item, undefined, 160)).filter((item): item is string => Boolean(item)))).slice(0, 32) : undefined,
+            referenceIds: Array.isArray(source.referenceIds) ? Array.from(new Set(source.referenceIds.map((item) => normalizeOptionalText(item, undefined, 160)).filter((item): item is string => Boolean(item)))) : undefined,
             assetIndex: toOptionalNumber(source.assetIndex),
             clientRequestId: normalizeOptionalText(source.clientRequestId, undefined, 200),
             taskId: normalizeOptionalText(source.taskId, undefined, 200),

@@ -33,6 +33,13 @@ export async function getAuthSettings() {
     return (await readAuthDb()).settings;
 }
 
+export async function getFreshAuthSettings() {
+    if (!isPostgresDatabaseEnabled()) return (await readAuthDb()).settings;
+    const settings = await readPostgresAuthSettings();
+    updatePostgresCache(settings);
+    return settings;
+}
+
 export async function setAuthSettings(patch: Partial<AuthSettings>) {
     const settings = isPostgresDatabaseEnabled()
         ? await updatePostgresAuthSettings(patch)

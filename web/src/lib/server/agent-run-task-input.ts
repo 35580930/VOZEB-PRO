@@ -1,9 +1,10 @@
 import type { AuthSettings } from "@/lib/auth/store";
+import { typedReferenceAliases } from "@/lib/creative-asset-references";
 import { closestImageAspectRatio, normalizeImageSizeValue, parseImageDimensions } from "@/lib/image-size";
 import type { AgentRun, AgentRunReference, AgentRunTask } from "@/lib/server/agent-run-store";
 import type { AgentPlan } from "@/lib/server/agent-run-validation";
 
-import { selectedCanvasNodeIds } from "./agent-run-surface-policy";
+import { selectedCanvasNodeIds } from "./agent-run-canvas-snapshot";
 import { agentCanvasOutputNodeIds, agentCanvasTaskNodeId } from "./agent-run-canvas-node-ids";
 
 export type CanvasTaskReferenceNode = {
@@ -17,6 +18,13 @@ export type CanvasTaskReferenceNode = {
     size?: string;
 };
 
+export type CanvasSelectedReferenceNode = CanvasTaskReferenceNode & {
+    nodeId: string;
+    alias: string;
+    type: AgentRunReference["type"];
+    url: string;
+};
+
 export function canvasSnapshotNodes(snapshot: unknown) {
     const map = new Map<string, CanvasTaskReferenceNode>();
     const nodes = snapshot && typeof snapshot === "object" && Array.isArray((snapshot as { nodes?: unknown }).nodes) ? (snapshot as { nodes: Array<Record<string, unknown>> }).nodes : [];
@@ -26,9 +34,10 @@ export function canvasSnapshotNodes(snapshot: unknown) {
         const content = [metadata.content, metadata.prompt].find((item) => typeof item === "string" && item);
         const url = [metadata.remoteUrl, metadata.serverUrl, metadata.url, metadata.dataUrl].find((item) => typeof item === "string" && item) as string | undefined;
         const type = node.type === "panorama" ? "image" : node.type === "text" || node.type === "image" || node.type === "video" || node.type === "audio" ? node.type : undefined;
+        const title = String(node.title || node.type || "节点");
         map.set(node.id, {
-            title: String(node.title || node.type || "节点").slice(0, 200),
-            summary: `${String(node.title || node.type || "节点").slice(0, 200)}${content ? `；内容：${String(content).slice(0, 2000)}` : ""}${url && !url.startsWith("data:") ? `；素材：${url.slice(0, 2000)}` : ""}`,
+            title,
+            summary: `${title}${content ? `；内容：${String(content)}` : ""}${url && !url.startsWith("data:") ? `；素材：${url}` : ""}`,
             url,
             type,
             content: typeof content === "string" ? content : undefined,
@@ -38,6 +47,32 @@ export function canvasSnapshotNodes(snapshot: unknown) {
         });
     }
     return map;
+}
+
+export function selectedCanvasReferenceNodes(snapshot: unknown): CanvasSelectedReferenceNode[] {
+    const nodes = canvasSnapshotNodes(snapshot);
+    const selectedNodeIds = selectedCanvasNodeIds(snapshot);
+    const candidates = selectedNodeIds.flatMap((nodeId) => {
+        const node = nodes.get(nodeId);
+        return node?.url && isMediaReferenceType(node.type) ? [{ id: nodeId, type: node.type }] : [];
+    });
+    const aliases = typedReferenceAliases(candidates, selectedNodeIds);
+    return selectedNodeIds.flatMap((nodeId) => {
+        const node = nodes.get(nodeId);
+        const alias = aliases.get(nodeId);
+        return node?.url && alias && isMediaReferenceType(node.type) ? [{ ...node, nodeId, alias, type: node.type, url: node.url }] : [];
+    });
+}
+
+export function canvasReferenceContext(references: readonly CanvasSelectedReferenceNode[]) {
+    return references.map((reference) => `引用别名：@${reference.alias}；画布节点 ID：${reference.nodeId}；类型：${reference.type}；标题：${reference.title}`).join("\n");
+}
+
+export function canvasReferenceSupportsTask(referenceType: AgentRunReference["type"], taskType: AgentRunTask["type"]) {
+    if (taskType === "image") return referenceType === "image";
+    if (taskType === "video") return referenceType === "image" || referenceType === "video" || referenceType === "audio";
+    if (taskType === "audio") return referenceType === "audio";
+    return false;
 }
 
 export function resolveCanvasTaskTargetNodeId(plannedTargetNodeId: string | undefined, taskType: AgentRunTask["type"], selectedNodeIds: Set<string>, nodes: Map<string, CanvasTaskReferenceNode>) {
@@ -173,9 +208,14 @@ export function prepareFailedAgentTaskRetry(run: AgentRun, task: AgentRunTask, s
     const selected = new Set(selectedCanvasNodeIds(run.snapshot).filter((id) => nodes.has(id)));
     const targetNodeId = resolveCanvasTaskTargetNodeId(task.targetNodeId, task.type, selected, nodes);
     const target = targetNodeId ? nodes.get(targetNodeId) : undefined;
-    const references = target?.url && isMediaReferenceType(target.type) ? ([{ url: target.url, type: target.type }] satisfies AgentRunReference[]) : task.references;
+    const selectedReferences = selectedCanvasReferenceNodes(run.snapshot).filter((reference) => canvasReferenceSupportsTask(reference.type, task.type));
+    const references = selectedReferences.length
+        ? (selectedReferences.map((reference) => ({ nodeId: reference.nodeId, url: reference.url, type: reference.type })) satisfies AgentRunReference[])
+        : target?.url && isMediaReferenceType(target.type)
+          ? ([{ nodeId: targetNodeId, url: target.url, type: target.type }] satisfies AgentRunReference[])
+          : task.references;
     const primaryReference = references?.[0];
-    const context = target ? `基于画布已有节点进行局部修改：${target.summary}` : "";
+    const context = [target ? `基于画布已有节点进行局部修改：${target.summary}` : "", selectedReferences.length ? `使用本轮画布引用：\n${canvasReferenceContext(selectedReferences)}` : ""].filter(Boolean).join("\n\n");
     return {
         ...task,
         targetNodeId: target ? targetNodeId : task.targetNodeId,
@@ -188,7 +228,7 @@ export function prepareFailedAgentTaskRetry(run: AgentRun, task: AgentRunTask, s
             configuredImageSize: agentSurfaceImageSize(run.surface, run.snapshot),
             plannedRatio: task.ratio,
             globalSize: settings.generationDefaults.imageSize,
-            reference: target,
+            reference: target || selectedReferences.find((reference) => reference.type === "image"),
         }),
         prompt: context && !task.prompt.includes(context) ? `${task.prompt}\n\n${context}` : task.prompt,
     };

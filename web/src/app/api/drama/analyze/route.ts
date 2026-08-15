@@ -9,27 +9,15 @@ import { resolveLogicalModelCandidates } from "@/lib/server/logical-model-router
 import { checkRateLimit } from "@/lib/server/security";
 import { hasSystemAiCharge, readSystemAiBilling, systemAiBillingHeaders, systemAiIdempotencyKey, type SystemAiBilling } from "@/lib/server/system-ai-billing";
 import { rankTextPlanningCandidates, requestStructuredText, type TextPlanningCandidate } from "@/lib/server/text-planning-runtime";
+import { dramaAnalysisText, normalizeDramaVisualInput, type DramaAnalyzeBody } from "@/lib/server/drama-analysis-input";
 
 export const runtime = "nodejs";
-
-type AnalyzeBody = {
-    phase?: "content" | "visual";
-    script?: string;
-    summary?: string;
-    style?: string;
-    episode?: unknown;
-    characters?: unknown;
-    scenes?: unknown;
-    props?: unknown;
-    clues?: unknown;
-    shots?: unknown;
-};
 
 export async function POST(request: Request) {
     const user = await getCurrentUser();
     if (!user) return NextResponse.json({ code: 401, data: null, msg: "请先登录" }, { status: 401 });
     if (!(await checkRateLimit(`drama-analyze:${user.id}`, { maxRequests: 10, windowMs: 60_000 })).allowed) return NextResponse.json({ code: 429, data: null, msg: "剧本解析过于频繁，请稍后重试" }, { status: 429 });
-    let body: AnalyzeBody;
+    let body: DramaAnalyzeBody;
     try {
         body = await readJsonBody(request, 8 * 1024 * 1024);
     } catch (error) {
@@ -37,11 +25,10 @@ export async function POST(request: Request) {
         throw error;
     }
     const phase = body.phase === "visual" ? "visual" : "content";
-    const script = cleanText(body.script, 30_000);
+    const script = dramaAnalysisText(body.script);
     if (phase === "content" && !script) return NextResponse.json({ code: 400, data: null, msg: "请先填写剧本" }, { status: 400 });
-    if (typeof body.script === "string" && body.script.trim().length > 30_000) return NextResponse.json({ code: 400, data: null, msg: "单次解析剧本不能超过 30000 字" }, { status: 400 });
 
-    const visualInput = phase === "visual" ? normalizeVisualInput(body) : null;
+    const visualInput = phase === "visual" ? normalizeDramaVisualInput(body) : null;
     if (phase === "visual" && !visualInput?.shotIds.length) return NextResponse.json({ code: 400, data: null, msg: "请先完成内容审核" }, { status: 400 });
 
     const settings = await getAuthSettings();
@@ -52,7 +39,7 @@ export async function POST(request: Request) {
     let refundedPointsRemaining: number | undefined;
     try {
         const tool = phase === "visual" ? dramaVisualTool : dramaContentTool;
-        const input = phase === "visual" ? visualInput!.payload : { script, summary: cleanText(body.summary, 2000) };
+        const input = phase === "visual" ? visualInput!.payload : { script, summary: dramaAnalysisText(body.summary) };
         const schemaInstruction = `即使渠道没有传递工具定义，也必须只返回符合以下 JSON Schema 的对象，不能返回输入对象，不能把 script 或 summary 作为顶层字段：${JSON.stringify(tool.parameters)}`;
         const messages = [
             {
@@ -133,72 +120,6 @@ async function requestFunctionCall(
     return readCallResult(call.arguments, call.headers);
 }
 
-function normalizeVisualInput(body: AnalyzeBody) {
-    const shots = array(body.shots)
-        .slice(0, 80)
-        .flatMap((value) => {
-            const shot = object(value);
-            const id = cleanText(shot.id, 160);
-            if (!id) return [];
-            return [
-                {
-                    id,
-                    title: cleanText(shot.title, 160),
-                    description: cleanText(shot.description, 4000),
-                    sourceText: cleanText(shot.sourceText, 8000),
-                    shotBoundary: cleanText(shot.shotBoundary, 500),
-                    dialogue: cleanText(shot.dialogue, 4000),
-                    narration: cleanText(shot.narration, 4000),
-                    utterances: array(shot.utterances).slice(0, 100),
-                    duration: Math.max(1, Math.min(20, Number(shot.duration) || 5)),
-                    characterIds: texts(shot.characterIds, 50),
-                    sceneId: cleanText(shot.sceneId, 160),
-                    propIds: texts(shot.propIds, 50),
-                    clueIds: texts(shot.clueIds, 50),
-                },
-            ];
-        });
-    return {
-        shotIds: shots.map((shot) => shot.id),
-        payload: {
-            project: { summary: cleanText(body.summary, 2000), style: cleanText(body.style, 500) },
-            episode: object(body.episode),
-            assets: {
-                characters: normalizeVisualAssets(body.characters),
-                scenes: normalizeVisualAssets(body.scenes),
-                props: normalizeVisualAssets(body.props),
-                clues: normalizeVisualAssets(body.clues),
-            },
-            shots,
-        },
-    };
-}
-
-function normalizeVisualAssets(value: unknown) {
-    return array(value)
-        .slice(0, 200)
-        .flatMap((item) => {
-            const asset = object(item);
-            const name = cleanText(asset.name, 120);
-            if (!name) return [];
-            const profile = object(asset.profile);
-            return [
-                {
-                    id: cleanText(asset.id, 160),
-                    name,
-                    description: cleanText(asset.description, 2000),
-                    profile: {
-                        visualIdentity: cleanText(profile.visualIdentity, 2000),
-                        styling: cleanText(profile.styling, 2000),
-                        colorPalette: cleanText(profile.colorPalette, 500),
-                        consistencyRules: cleanText(profile.consistencyRules, 2000),
-                    },
-                    payoff: cleanText(asset.payoff, 2000),
-                },
-            ];
-        });
-}
-
 function readCallResult(args: string, headers: Headers) {
     const remaining = Number(headers.get("x-vozeb-pro-points-remaining"));
     return {
@@ -220,23 +141,4 @@ function describeArgumentsText(value: string) {
 async function refund(userId: string, model: string, source: Headers | SystemAiBilling) {
     const billing = source instanceof Headers ? readSystemAiBilling(source) : source;
     return hasSystemAiCharge(billing) ? refundUserPoints(userId, model, billing.pointsCost, "text", 1, undefined, billing.pointsRecordId) : null;
-}
-
-function texts(value: unknown, limit: number) {
-    return array(value)
-        .map((item) => cleanText(item, 160))
-        .filter(Boolean)
-        .slice(0, limit);
-}
-
-function cleanText(value: unknown, max: number) {
-    return typeof value === "string" ? value.trim().slice(0, max) : "";
-}
-
-function object(value: unknown) {
-    return value && typeof value === "object" && !Array.isArray(value) ? (value as Record<string, unknown>) : {};
-}
-
-function array(value: unknown): unknown[] {
-    return Array.isArray(value) ? value : [];
 }

@@ -45,7 +45,7 @@ describe("parseChannelExampleConfig", () => {
 
     it.each([
         ["https://api.code2alita.com/v1/video/generations", "sub2api"],
-        ["https://api.globalaiopc.com/v1/video/generations", "globalaiopc"],
+        ["https://api.globalaiopc.com/v1/video/generations", "custom"],
         ["https://ark.cn-beijing.volces.com/api/v3/video/generations", "volcengine-video"],
     ])("recognizes the exact provider host in %s", (url, protocol) => {
         const channel = { id: "one", name: "测试", baseUrl: "", apiKey: "", apiFormat: "openai", models: [], enabled: false } satisfies SystemModelChannel;
@@ -57,5 +57,18 @@ describe("parseChannelExampleConfig", () => {
         const channel = { id: "one", name: "测试", baseUrl: "", apiKey: "", apiFormat: "openai", models: [], enabled: false } satisfies SystemModelChannel;
         const result = parseChannelExampleConfig(`curl https://${hostname}/v1/video/generations -d {"model":"video-v1","prompt":"test"}`, channel, advanced);
         expect(result?.patch.advancedConfig?.protocol).toBe("compatible");
+    });
+
+    it.each([
+        ['{"model":"seedream_5.0Pro","prompt":"test","resolution":"2K"}', "seedream_5.0Pro"],
+        ['{"model":"seedance-2.5","prompt":"test","duration":5}', "seedance-2.5"],
+    ])("recognizes a Yumeng v2 model-center example", (body, model) => {
+        const channel = { id: "one", name: "测试", baseUrl: "", apiKey: "", apiFormat: "openai", models: [], enabled: false } satisfies SystemModelChannel;
+        const result = parseChannelExampleConfig(`curl https://zcbservice.aizfw.cn/kyyReactApiServer/v2/model-center/tasks -d '${body}'`, channel, advanced);
+
+        expect(result?.patch.advancedConfig?.protocol).toBe("yumeng");
+        expect(result?.patch.baseUrl).toBeUndefined();
+        expect(result?.patch.advancedConfig?.createPath).toBe("/kyyReactApiServer/v2/model-center/tasks");
+        expect(result?.patch.models).toContain(model);
     });
 });

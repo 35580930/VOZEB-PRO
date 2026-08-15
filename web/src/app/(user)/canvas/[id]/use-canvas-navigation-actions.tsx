@@ -1,19 +1,17 @@
 "use client";
 
-import dynamic from "next/dynamic";
 import { useCallback } from "react";
 
+import { resolveSiteTitle } from "@/lib/site-brand";
+import { usePublicSessionStore } from "@/stores/use-public-session-store";
 import { useCanvasStore } from "../stores/use-canvas-store";
-
-const CanvasAssistantPanel = dynamic(() => import("../components/canvas-assistant-panel").then((mod) => mod.CanvasAssistantPanel), { ssr: false });
-const loadAssetPickerModal = () => import("../components/asset-picker-modal").then((mod) => mod.AssetPickerModal);
-const AssetPickerModal = dynamic(loadAssetPickerModal, { ssr: false, loading: () => null });
 
 import { CanvasHistoryEntry } from "./canvas-page-elements";
 
 import type { CanvasPageState } from "./use-canvas-page-state";
 
 export function useCanvasNavigationActions({ state }: { state: CanvasPageState }) {
+    const siteTitle = usePublicSessionStore((current) => resolveSiteTitle(current.payload?.settings?.site?.title));
     const {
         message,
         router,
@@ -115,12 +113,12 @@ export function useCanvasNavigationActions({ state }: { state: CanvasPageState }
 
     const createAndOpenProject = useCallback(async () => {
         try {
-            const id = await createProject(`MOCREAI 画布 ${useCanvasStore.getState().summaries.length + 1}`);
+            const id = await createProject(`${siteTitle} 画布 ${useCanvasStore.getState().summaries.length + 1}`);
             router.push(`/canvas/${id}`);
         } catch (error) {
             message.error(error instanceof Error ? error.message : "画布创建失败");
         }
-    }, [createProject, message, router]);
+    }, [createProject, message, router, siteTitle]);
 
     const deleteCurrentProject = useCallback(async () => {
         try {

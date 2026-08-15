@@ -8,7 +8,10 @@ export type AdminBackupImportResult = {
 export const ADMIN_BACKUP_MAX_BYTES = 30 * 1024 * 1024;
 
 export async function downloadAdminBackup() {
-    const response = await fetch("/api/admin/backup", { cache: "no-store" });
+    const response = await fetch("/api/admin/backup/export", {
+        method: "POST",
+        cache: "no-store",
+    });
     if (!response.ok) throw new Error(await readBackupError(response, "导出备份失败"));
     return {
         blob: await response.blob(),

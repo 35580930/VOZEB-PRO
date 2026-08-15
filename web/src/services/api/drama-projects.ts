@@ -23,6 +23,10 @@ export function deleteDramaProject(id: string) {
     return request<{ deleted: boolean }>(`/api/drama/projects/${encodeURIComponent(id)}`, { method: "DELETE" });
 }
 
+export function deleteDramaAgentConversation(projectId: string, conversationId: string) {
+    return request<{ deleted: boolean; activeConversationId: string; project: DramaProject }>(`/api/drama/projects/${encodeURIComponent(projectId)}/agent-conversations/${encodeURIComponent(conversationId)}`, { method: "DELETE" });
+}
+
 export function createDramaProjectVersion(project: DramaProject, reason: string) {
     return request<{ version: DramaProjectVersion }>(`/api/drama/projects/${encodeURIComponent(project.id)}/versions`, {
         method: "POST",

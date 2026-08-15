@@ -16,7 +16,7 @@ export default defineConfig({
     timeout: 120_000,
     forbidOnly: Boolean(process.env.CI),
     retries: process.env.CI ? 1 : 0,
-    workers: process.env.CI ? 1 : undefined,
+    workers: process.env.CI || !databaseUrl ? 1 : undefined,
     reporter: process.env.CI ? [["github"], ["html", { open: "never", outputFolder: "playwright-report" }]] : "list",
     use: {
         baseURL,
@@ -26,30 +26,35 @@ export default defineConfig({
     },
     projects: [
         { name: "setup", testMatch: /installation\.spec\.ts/ },
-        { name: "chromium", testMatch: [/(?:core|responsive)\.spec\.ts/], dependencies: ["setup"], use: { ...devices["Desktop Chrome"], storageState } },
-        { name: "mobile-390", testMatch: /responsive\.spec\.ts/, dependencies: ["setup"], use: { ...devices["iPhone 13"], browserName: "chromium", viewport: { width: 390, height: 844 }, storageState } },
-        { name: "mobile-430", testMatch: /responsive\.spec\.ts/, dependencies: ["setup"], use: { ...devices["iPhone 14 Pro Max"], browserName: "chromium", viewport: { width: 430, height: 932 }, storageState } },
+        { name: "chromium", testMatch: [/(?:all-pages|canvas|commerce|core|creative-video-result|home|responsive)\.spec\.ts/], dependencies: ["setup"], use: { ...devices["Desktop Chrome"], storageState } },
+        { name: "mobile-390", testMatch: /(?:all-pages|commerce|creative-video-result|home|responsive)\.spec\.ts/, dependencies: ["setup"], use: { ...devices["iPhone 13"], browserName: "chromium", viewport: { width: 390, height: 844 }, storageState } },
+        {
+            name: "mobile-430",
+            testMatch: /(?:all-pages|commerce|creative-video-result|home|responsive)\.spec\.ts/,
+            dependencies: ["setup"],
+            use: { ...devices["iPhone 14 Pro Max"], browserName: "chromium", viewport: { width: 430, height: 932 }, storageState },
+        },
     ],
     webServer: [
         {
             command: "node scripts/protocol-fixture-server.mjs",
             url: `http://127.0.0.1:${protocolFixturePort}/health`,
             timeout: 30_000,
-            reuseExistingServer: !process.env.CI,
+            reuseExistingServer: false,
             env: { ...process.env, VOZEB_PRO_PROTOCOL_FIXTURE_PORT: String(protocolFixturePort) },
         },
         {
             command: "node scripts/payment-fixture-server.mjs",
             url: `http://127.0.0.1:${paymentFixturePort}/health`,
             timeout: 30_000,
-            reuseExistingServer: !process.env.CI,
+            reuseExistingServer: false,
             env: { ...process.env, VOZEB_PRO_PAYMENT_FIXTURE_PORT: String(paymentFixturePort) },
         },
         {
             command: "pnpm run start",
             url: `${baseURL}/api/auth/session`,
             timeout: 120_000,
-            reuseExistingServer: !process.env.CI,
+            reuseExistingServer: false,
             env: {
                 ...process.env,
                 PORT: String(port),
@@ -59,6 +64,7 @@ export default defineConfig({
                 VOZEB_PRO_ENCRYPTION_KEY: "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
                 VOZEB_PRO_INSTALL_TOKEN: "vozeb-pro-e2e-install-token-32chars",
                 VOZEB_PRO_MAINTENANCE_TOKEN: "vozeb-pro-e2e-maintenance-token-32chars",
+                VOZEB_PRO_WORKER_TOKEN: "vozeb-pro-e2e-worker-token-separate-32chars",
                 VOZEB_PRO_ALLOW_PRIVATE_UPSTREAMS: "1",
                 VOZEB_PRO_PRIVATE_UPSTREAM_HOSTS: "127.0.0.1",
                 ...(databaseUrl ? { DATABASE_URL: databaseUrl } : {}),

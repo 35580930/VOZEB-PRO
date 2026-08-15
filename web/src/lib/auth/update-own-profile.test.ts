@@ -23,6 +23,7 @@ const user = {
     displayName: "旧昵称",
     bio: "旧简介",
     role: "user" as const,
+    adminPermissions: [],
     status: "active" as const,
     planId: "free",
     pointsBalance: 0,

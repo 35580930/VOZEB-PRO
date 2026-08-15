@@ -8,7 +8,7 @@ export function isCanvasAgentNearLatest({ scrollHeight, scrollTop, clientHeight 
     return scrollHeight - scrollTop - clientHeight <= LATEST_MESSAGE_THRESHOLD;
 }
 
-export function useCanvasAgentMessageScroll(active: boolean, contentKey: string) {
+export function useCanvasAgentMessageScroll(active: boolean, contentKey: string, position: "top" | "latest" = "latest") {
     const scrollRef = useRef<HTMLDivElement>(null);
     const followLatestRef = useRef(true);
     const forceLatestRef = useRef(true);
@@ -29,9 +29,18 @@ export function useCanvasAgentMessageScroll(active: boolean, contentKey: string)
     }, []);
 
     useLayoutEffect(() => {
-        if (!active || (!forceLatestRef.current && !followLatestRef.current)) return;
+        const container = scrollRef.current;
+        if (!active || !container) return;
+        if (position === "top") {
+            forceLatestRef.current = false;
+            followLatestRef.current = true;
+            setShowLatestButton(false);
+            container.scrollTo({ top: 0 });
+            return;
+        }
+        if (!forceLatestRef.current && !followLatestRef.current) return;
         scrollToLatest();
-    }, [active, contentKey, scrollToLatest]);
+    }, [active, contentKey, position, scrollToLatest]);
 
     const handleScroll = useCallback((event: UIEvent<HTMLDivElement>) => {
         const nearLatest = isCanvasAgentNearLatest(event.currentTarget);

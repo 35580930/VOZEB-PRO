@@ -1,6 +1,7 @@
 import { after, NextResponse } from "next/server";
 
 import { getCurrentUser } from "@/lib/auth/session";
+import { readJsonBodyResult } from "@/lib/auth/request";
 import { canReconcileVideoTask, getVideoTask, transitionVideoTask } from "@/lib/server/video-task-store";
 import { resolveInternalOrigin } from "@/lib/server/internal-origin";
 import { pointsResponseHeaders } from "@/lib/server/points-response";
@@ -29,7 +30,10 @@ export async function GET(request: Request, { params }: { params: Promise<{ id: 
     const shouldRefund = Boolean(task.upstream.pointsRecordId && !task.upstream.refunded && task.status === "error");
     const settledTask = shouldRefund ? await refundVideoTask(task) : task;
     const refreshedUser = shouldRefund ? await getCurrentUser(request) : user;
-    return NextResponse.json({ task: { ...publicTask(settledTask), needsReview: executionPhase === "needs_review", executionPhase } }, { headers: pointsResponseHeaders(refreshedUser) });
+    return NextResponse.json(
+        { task: { ...publicTask(settledTask), needsReview: executionPhase === "needs_review", reviewReason: executionPhase === "needs_review" ? schedule?.resultPayload?.reviewReason || task.reviewReason : undefined, executionPhase } },
+        { headers: pointsResponseHeaders(refreshedUser) },
+    );
 }
 
 export async function PATCH(request: Request, { params }: { params: Promise<{ id: string }> }) {
@@ -39,7 +43,9 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ id
     if (!user || !task || (task.userId !== user.id && user.role !== "admin")) return NextResponse.json({ error: "视频任务不存在" }, { status: user ? 404 : 401 });
     const schedule = await getStoredGenerationTaskRecord("video", task.id);
     const executionPhase = schedule?.executionPhase || settledExecutionPhase(task.status);
-    const body = (await request.json().catch(() => ({}))) as { action?: string; status?: string; result?: unknown; error?: unknown };
+    const parsed = await readJsonBodyResult<{ action?: string; status?: string; result?: unknown; error?: unknown }>(request);
+    if (!parsed.ok) return NextResponse.json({ error: parsed.message }, { status: parsed.status });
+    const body = parsed.data;
     if (body.result !== undefined || body.error !== undefined || (body.status && body.status !== "cancelled")) {
         return NextResponse.json({ error: "视频任务终态和结果只能由服务端更新" }, { status: 403 });
     }

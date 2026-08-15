@@ -13,6 +13,22 @@ describe("my prompts api", () => {
         expect(fetchMock).toHaveBeenCalledWith("/api/my-prompts?page=2&pageSize=8", { cache: "no-store" });
     });
 
+    it("passes a selected prompt category to the server", async () => {
+        const fetchMock = vi.fn().mockResolvedValue(Response.json({ items: [], tags: [], categories: ["电商"], total: 0 }));
+        vi.stubGlobal("fetch", fetchMock);
+
+        await listMyPrompts({ page: 1, category: "电商" });
+        expect(fetchMock).toHaveBeenCalledWith("/api/my-prompts?page=1&category=%E7%94%B5%E5%95%86", { cache: "no-store" });
+    });
+
+    it("passes server search and skips repeated facets on later pages", async () => {
+        const fetchMock = vi.fn().mockResolvedValue(Response.json({ items: [], tags: [], categories: [], total: 0 }));
+        vi.stubGlobal("fetch", fetchMock);
+
+        await listMyPrompts({ page: 2, keyword: " 产品 海报 ", includeFacets: false });
+        expect(fetchMock).toHaveBeenCalledWith("/api/my-prompts?page=2&keyword=%E4%BA%A7%E5%93%81+%E6%B5%B7%E6%8A%A5&includeFacets=0", { cache: "no-store" });
+    });
+
     it("creates and deletes through the user prompt routes", async () => {
         const prompt = { id: "prompt-one", title: "标题", prompt: "内容" };
         const fetchMock = vi

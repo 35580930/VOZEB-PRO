@@ -119,7 +119,7 @@ export async function waitForVideoGenerationTask(config: AiConfig, task: VideoGe
         }
         if (state.status === "failed") {
             await refreshUserPointsIfSystem(resolveModelRequestConfig(config, task.model).apiSource);
-            if (state.error === GENERATION_TASK_NEEDS_REVIEW_MESSAGE) throw new GenerationTaskNeedsReviewError();
+            if (state.needsReview) throw new GenerationTaskNeedsReviewError(state.error);
             throw new VideoGenerationUpstreamError(state.error, state.canRetry !== false);
         }
         await delay(delayMs, options?.signal);
@@ -143,9 +143,9 @@ export async function createServerVideoGenerationTask(
     const selectedModel = (config.model || config.videoModel).trim();
     const requestConfig = resolveModelRequestConfig(config, selectedModel);
     const serverReferences = await Promise.all([
-        ...references.map(async (item) => ({ type: "image", url: isPublicMediaUrl(item.url || item.dataUrl) ? item.url || item.dataUrl : await publishReferenceMedia("image", await imageToDataUrl(item)) })),
-        ...videoReferences.map(async (item) => ({ type: "video", url: isPublicMediaUrl(item.url) ? item.url : await publishReferenceMedia("video", await referenceBlobDataUrl(item.storageKey, item.url)) })),
-        ...audioReferences.map(async (item) => ({ type: "audio", url: isPublicMediaUrl(item.url) ? item.url : await publishReferenceMedia("audio", await referenceBlobDataUrl(item.storageKey, item.url)) })),
+        ...references.map(async (item) => ({ type: "image", role: item.videoRole || "reference", url: isPublicMediaUrl(item.url || item.dataUrl) ? item.url || item.dataUrl : await publishReferenceMedia("image", await imageToDataUrl(item)) })),
+        ...videoReferences.map(async (item) => ({ type: "video", role: "reference", url: isPublicMediaUrl(item.url) ? item.url : await publishReferenceMedia("video", await referenceBlobDataUrl(item.storageKey, item.url)) })),
+        ...audioReferences.map(async (item) => ({ type: "audio", role: "reference", url: isPublicMediaUrl(item.url) ? item.url : await publishReferenceMedia("audio", await referenceBlobDataUrl(item.storageKey, item.url)) })),
     ]);
     const response = await fetch("/api/video-generation-tasks", {
         method: "POST",
@@ -222,6 +222,9 @@ export async function createUpstreamVideoGenerationTask(
     const requestConfig = resolveModelRequestConfig(config, selectedModel);
     assertVideoConfig(requestConfig, requestConfig.model);
     const protocol = requestConfig.advancedConfig?.protocol === "sub2api" ? "auto" : requestConfig.advancedConfig?.protocol || "auto";
+    if (protocol === "yumeng") {
+        return createCompatibleVideoTask(requestConfig, selectedModel, prompt, references, options, videoReferences, audioReferences);
+    }
     if (protocol === "seedance-special") {
         return createSeedanceSpecialTask(requestConfig, selectedModel, prompt, references, videoReferences, audioReferences, options);
     }
@@ -251,7 +254,7 @@ export async function pollServerVideoTask(task: VideoGenerationTask, options?: R
     syncUserPointsFromHeaders(response.headers, "system");
     const payload = (await response.json().catch(() => ({}))) as { task?: GenerationTaskExecutionState & { status?: string; result?: VideoGenerationResult; error?: string; canRetry?: boolean }; error?: string };
     if (!response.ok) throw new Error(payload.error || "后台视频任务查询失败");
-    if (payload.task?.needsReview) return { status: "failed", error: GENERATION_TASK_NEEDS_REVIEW_MESSAGE };
+    if (payload.task?.needsReview) return { status: "failed", error: payload.task.reviewReason || GENERATION_TASK_NEEDS_REVIEW_MESSAGE, needsReview: true };
     if (payload.task?.status === "success") return { status: "completed", result: payload.task.result || {} };
     if (payload.task?.status === "error" || payload.task?.status === "cancelled") return { status: "failed", error: payload.task.error || "视频生成失败", canRetry: payload.task.canRetry === true };
     return { status: "pending" };

@@ -14,7 +14,7 @@ import { GET, POST } from "./route";
 describe("/api/admin/billing/promotions", () => {
     beforeEach(() => {
         vi.clearAllMocks();
-        mocks.getCurrentUser.mockResolvedValue({ id: "admin-one", role: "admin" });
+        mocks.getCurrentUser.mockResolvedValue({ id: "admin-one", role: "admin", status: "active", adminPermissions: ["commerce.manage"] });
         mocks.listPromotionCampaigns.mockResolvedValue({ items: [{ id: "promotion-one" }], total: 1, page: 2, pageSize: 10 });
         mocks.readJsonBody.mockResolvedValue({ name: "限时活动" });
         mocks.savePromotionCampaign.mockResolvedValue({ id: "promotion-one", name: "限时活动", enabled: true, products: [] });

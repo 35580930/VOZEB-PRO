@@ -23,6 +23,19 @@ describe("drama prompt compiler", () => {
         expect(prompt).toContain("固定色彩：红黑");
         expect(prompt).toContain("不添加文字");
     });
+
+    it("preserves long execution prompts instead of truncating the final constraints", () => {
+        const project = createProject();
+        project.characters[0].description = `${"角色细节".repeat(2500)}最终识别标记`;
+
+        const prompts = compileDramaShotPrompts(project, project.episodes[0], project.episodes[0].shots[0]);
+        const assetPrompt = compileDramaAssetReferencePrompt(project, project.characters[0], "角色");
+
+        expect(prompts.imagePrompt.length).toBeGreaterThan(8000);
+        expect(prompts.imagePrompt).toContain("最终识别标记");
+        expect(assetPrompt.length).toBeGreaterThan(8000);
+        expect(assetPrompt).toContain("最终识别标记");
+    });
 });
 
 function createProject(): DramaProject {

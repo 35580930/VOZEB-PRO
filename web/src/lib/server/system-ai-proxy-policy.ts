@@ -51,7 +51,7 @@ export function authorizeSystemAiProxyRequest(input: ProxyPolicyInput): SystemAi
         return allowedTaskOperation(logical, "cancel", taskIdForAccess(cancelMatch.taskId, input.upstreamTaskIdHint));
     }
 
-    const queryPaths = [...(input.paths?.query || []), ...defaultQueryPaths(logical.capability, input.paths?.create || [])];
+    const queryPaths = [...(input.paths?.query || []), ...defaultQueryPaths(logical.capability, input.paths?.create || [], input.apiFormat)];
     const queryMatch = method === "GET" || method === "HEAD" ? firstPathMatch(candidates, queryPaths, upstreamModel) : null;
     if (queryMatch) {
         return allowedTaskOperation(logical, "query", taskIdForAccess(queryMatch.taskId, input.upstreamTaskIdHint));
@@ -76,15 +76,16 @@ function resolveBoundLogicalModel(logicalModels: LogicalModel[], channelId: stri
 
 function standardCreatePaths(capability: LogicalModelCapability, apiFormat: "openai" | "gemini") {
     if (capability === "image") return ["/images/generations", "/images/edits", "/responses", ...(apiFormat === "gemini" ? ["/models/:model:generateContent"] : [])];
-    if (capability === "video") return ["/videos", "/video/generations", "/videos/generations", "/videos/videos", "/contents/generations/tasks"];
+    if (capability === "video") return ["/videos", "/video/generations", "/videos/generations", "/videos/videos", "/contents/generations/tasks", ...(apiFormat === "gemini" ? ["/models/:model:predictLongRunning"] : [])];
     if (capability === "audio") return ["/audio/speech"];
     return ["/chat/completions", "/responses", "/messages", ...(apiFormat === "gemini" ? ["/models/:model:generateContent", "/models/:model:streamGenerateContent"] : [])];
 }
 
-function defaultQueryPaths(capability: LogicalModelCapability, createPaths: Array<string | undefined>) {
+function defaultQueryPaths(capability: LogicalModelCapability, createPaths: Array<string | undefined>, apiFormat: "openai" | "gemini") {
     const fromCreate = createPaths.filter(Boolean).map((path) => `${String(path).replace(/\/+$/, "")}/:task_id`);
     if (capability === "video") {
-        return [...fromCreate, "/videos/:task_id", "/video/generations/:task_id", "/videos/generations/:task_id", "/result?id=:task_id", "/agnesapi?video_id=:task_id", "/v1/videos/:task_id/content", "/videos/:task_id/content"];
+        const geminiOperation = apiFormat === "gemini" || createPaths.some((path) => /\/models\/:model:predictLongRunning$/i.test(String(path || ""))) ? ["/models/:model/operations/:task_id"] : [];
+        return [...geminiOperation, ...fromCreate, "/videos/:task_id", "/video/generations/:task_id", "/videos/generations/:task_id", "/result?id=:task_id", "/agnesapi?video_id=:task_id", "/v1/videos/:task_id/content", "/videos/:task_id/content"];
     }
     if (capability === "audio") return [...fromCreate, "/audio/speech/:task_id"];
     return fromCreate;

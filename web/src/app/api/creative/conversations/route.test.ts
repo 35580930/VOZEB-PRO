@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
     getCurrentUser: vi.fn(),
-    listWorkbenchSessionsForUser: vi.fn(),
+    listConversationsForUser: vi.fn(),
     deleteConversationsForUser: vi.fn(),
 }));
 
@@ -17,38 +17,37 @@ vi.mock("@/lib/server/creative-runtime-service", () => ({
             super(message);
         }
     },
-    listConversationsForUser: vi.fn(),
-    listWorkbenchSessionsForUser: mocks.listWorkbenchSessionsForUser,
+    listConversationsForUser: mocks.listConversationsForUser,
     deleteConversationsForUser: mocks.deleteConversationsForUser,
 }));
 
 import { DELETE, GET } from "./route";
 
-describe("creative workbench conversation summaries route", () => {
+describe("creative conversation collection route", () => {
     beforeEach(() => {
         vi.clearAllMocks();
         mocks.getCurrentUser.mockResolvedValue({ id: "user-one" });
-        mocks.listWorkbenchSessionsForUser.mockResolvedValue([
-            { id: "one", title: "一", lastPrompt: "一", searchText: "一", updatedAt: 2 },
-            { id: "two", title: "二", lastPrompt: "二", searchText: "二", updatedAt: 1 },
+        mocks.listConversationsForUser.mockResolvedValue([
+            { id: "one", title: "一", updatedAt: 2 },
+            { id: "two", title: "二", updatedAt: 1 },
         ]);
         mocks.deleteConversationsForUser.mockResolvedValue(2);
     });
 
-    it("returns one bounded summary page without expanding conversations", async () => {
-        const response = await GET(new Request("http://localhost/api/creative/conversations?view=workbench&workspace=image&limit=1"));
+    it("returns one bounded conversation page with server-side filters", async () => {
+        const response = await GET(new Request("http://localhost/api/creative/conversations?surface=chat&source=agent&projectId=project-one&limit=1&offset=2"));
         const payload = await response.json();
 
         expect(response.status).toBe(200);
-        expect(mocks.listWorkbenchSessionsForUser).toHaveBeenCalledWith("user-one", "image", 2);
-        expect(payload.data).toEqual({ sessions: [expect.objectContaining({ id: "one" })], hasMore: true });
+        expect(mocks.listConversationsForUser).toHaveBeenCalledWith("user-one", { surface: "chat", source: "agent", projectId: "project-one", status: null, limit: "2", offset: "2" });
+        expect(payload.data).toEqual({ conversations: [expect.objectContaining({ id: "one" })], hasMore: true });
     });
 
-    it("rejects anonymous summary reads", async () => {
+    it("rejects anonymous conversation reads", async () => {
         mocks.getCurrentUser.mockResolvedValueOnce(null);
-        const response = await GET(new Request("http://localhost/api/creative/conversations?view=workbench&workspace=image"));
+        const response = await GET(new Request("http://localhost/api/creative/conversations"));
         expect(response.status).toBe(401);
-        expect(mocks.listWorkbenchSessionsForUser).not.toHaveBeenCalled();
+        expect(mocks.listConversationsForUser).not.toHaveBeenCalled();
     });
 
     it("hard-deletes a bounded conversation batch for the current user", async () => {

@@ -43,7 +43,7 @@ export function BillingCheckoutPage({ productId }: { productId: string }) {
     const loadCoupons = useCallback(async () => {
         setCouponsLoading(true);
         try {
-            const payload = await listBillingCoupons({ productId, quantity, pageSize: 50 });
+            const payload = await listBillingCoupons({ productId, quantity, pageSize: 50, includeTemplates: false });
             setCoupons(payload.coupons || []);
             setSelectedCouponId((current) => (current && payload.coupons.some((coupon) => coupon.id === current && coupon.applicable) ? current : ""));
             return payload.coupons || [];

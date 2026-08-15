@@ -7,7 +7,7 @@ import { Blocks, Plus, RefreshCw, Route, Search, Settings2, Trash2 } from "lucid
 
 import { AdminLogicalModelManager } from "@/components/admin/admin-logical-model-manager";
 import type { SystemChannelProtocol, SystemModelChannel } from "@/lib/auth/store";
-import { channelProtocolDefinitions } from "@/lib/channel-protocol-registry";
+import { channelProtocolDefinitions, channelSupportsModelCatalog } from "@/lib/channel-protocol-registry";
 import { capabilityLabel, isLogicalModelResolvable } from "@/lib/model-routing-config";
 
 import { AdminChannelDetailDrawer } from "./admin-channel-detail-drawer";
@@ -90,7 +90,9 @@ export function AdminChannelWorkspace({ settings, fetchingModelId, saving, onCha
                     <Button size="small" onClick={() => setDetailId(channel.id)}>
                         查看
                     </Button>
-                    <Button size="small" icon={<RefreshCw className="size-3.5" />} loading={fetchingModelId === channel.id} aria-label={`同步 ${channel.name} 模型`} title="同步模型" onClick={() => void onFetchModels(channel)} />
+                    {channelSupportsModelCatalog(channel) ? (
+                        <Button size="small" icon={<RefreshCw className="size-3.5" />} loading={fetchingModelId === channel.id} aria-label={`同步 ${channel.name} 模型`} title="同步模型" onClick={() => void onFetchModels(channel)} />
+                    ) : null}
                     <Popconfirm title="删除这个渠道？" description="关联逻辑模型绑定和失效默认值会同步清理。" okText="删除" cancelText="取消" onConfirm={() => onDeleteChannel(channel.id)}>
                         <Button size="small" danger icon={<Trash2 className="size-3.5" />} aria-label={`删除 ${channel.name}`} title="删除渠道" />
                     </Popconfirm>
@@ -289,7 +291,9 @@ function ChannelList({
                             <Button size="small" className="min-w-0 flex-1" onClick={() => onOpen(channel.id)}>
                                 查看
                             </Button>
-                            <Button size="small" icon={<RefreshCw className="size-3.5" />} loading={fetchingModelId === channel.id} aria-label={`同步 ${channel.name} 模型`} onClick={() => onFetch(channel)} />
+                            {channelSupportsModelCatalog(channel) ? (
+                                <Button size="small" icon={<RefreshCw className="size-3.5" />} loading={fetchingModelId === channel.id} aria-label={`同步 ${channel.name} 模型`} onClick={() => onFetch(channel)} />
+                            ) : null}
                         </div>
                     </div>
                 ))}

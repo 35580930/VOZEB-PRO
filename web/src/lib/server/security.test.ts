@@ -86,6 +86,26 @@ describe("checkRateLimit", () => {
         }
     });
 
+    it("applies a bounded global fallback when account and device headers rotate", async () => {
+        const previous = process.env.VOZEB_PRO_TRUSTED_PROXY_HOPS;
+        delete process.env.VOZEB_PRO_TRUSTED_PROXY_HOPS;
+        try {
+            const scope = `login-global-${crypto.randomUUID()}`;
+            for (let index = 0; index < 40; index += 1) {
+                const request = new Request("http://localhost", { headers: { "user-agent": `rotating-browser-${index}` } });
+                expect((await checkAuthRateLimit(scope, request, `account-${index}`, { maxRequests: 2, windowMs: 60_000 })).allowed).toBe(true);
+            }
+            const blocked = await checkAuthRateLimit(scope, new Request("http://localhost", { headers: { "user-agent": "last-browser" } }), "last-account", {
+                maxRequests: 2,
+                windowMs: 60_000,
+            });
+            expect(blocked).toMatchObject({ allowed: false, dimension: "global" });
+        } finally {
+            if (previous === undefined) delete process.env.VOZEB_PRO_TRUSTED_PROXY_HOPS;
+            else process.env.VOZEB_PRO_TRUSTED_PROXY_HOPS = previous;
+        }
+    });
+
     it("limits generation requests by user", async () => {
         const userId = `user:${crypto.randomUUID()}`;
         for (let index = 0; index < 6; index += 1) expect((await checkGenerationRateLimit(userId, new Request("http://localhost"), "video")).allowed).toBe(true);

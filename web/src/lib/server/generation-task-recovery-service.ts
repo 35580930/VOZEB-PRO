@@ -19,6 +19,8 @@ import { refundAudioTask } from "@/lib/server/audio-task-refund";
 import { refundImageTask } from "@/lib/server/image-task-refund";
 import { refundTextTask } from "@/lib/server/text-task-refund";
 import { refundVideoTask } from "@/lib/server/video-task-refund";
+import { toSafeGenerationErrorMessage } from "@/lib/server/generation-errors";
+import { getAuthSettings } from "@/lib/auth/store";
 
 type RecoveryResult = "pending" | "result_ready" | "completed" | "failed" | "needs_review" | "deferred";
 
@@ -143,7 +145,17 @@ async function cancelledTaskTarget(lease: GenerationTaskLease): Promise<Generati
     }
     if (lease.type === "video") {
         const task = await getVideoTask(lease.id);
-        return task ? { type: "video", taskId: task.id, userId: task.userId, executionPhase: submissionPhase, upstreamTaskId: task.upstream.id || lease.upstreamTaskId, queryPath: task.config.advancedConfig?.queryPath, config: task.config } : null;
+        return task
+            ? {
+                  type: "video",
+                  taskId: task.id,
+                  userId: task.userId,
+                  executionPhase: submissionPhase,
+                  upstreamTaskId: task.upstream.id || lease.upstreamTaskId,
+                  queryPath: task.upstream.queryPath || task.config.advancedConfig?.queryPath,
+                  config: task.config,
+              }
+            : null;
     }
     if (lease.type === "audio") {
         const task = await getAudioTask(lease.id);
@@ -233,15 +245,6 @@ async function processAgentLease(lease: GenerationTaskLease, workerId: string, o
     const run = await getAgentRun(lease.id);
     if (run?.status === "completed" && !run.reviewed && (lease.executionPhase === "review_pending" || lease.executionPhase === "reviewing")) {
         const result = await processAgentRunReview(run, origin, cookie || maintenanceWorkerContext(run.userId));
-        if (result.status === "retry") {
-            await releaseGenerationTaskLease("agent", run.id, workerId, {
-                executionPhase: "review_pending",
-                nextPollAt: generationTaskNextPollAt({ consecutiveErrors: result.attempts }),
-                lastPollAt: Date.now(),
-                lastUpstreamStatus: `review_error:${result.attempts}`,
-            });
-            return "deferred";
-        }
         await releaseGenerationTaskLease("agent", run.id, workerId, {
             executionPhase: result.status === "unavailable" ? "review_unavailable" : "completed",
             nextPollAt: undefined,
@@ -256,13 +259,17 @@ async function processAgentLease(lease: GenerationTaskLease, workerId: string, o
     try {
         const childTaskIds = pendingAgentChildTaskIds(run);
         if (childTaskIds.length) {
-            await runGenerationTaskRecoveryBatch({
-                origin,
-                cookie: cookie || maintenanceWorkerContext(run.userId),
-                limit: childTaskIds.length,
-                taskIds: childTaskIds,
-                workerId: `${workerId}:children`.slice(0, 160),
-            });
+            const batchSize = (await getAuthSettings()).dataLifecycle.maintenanceBatchSize;
+            for (let offset = 0; offset < childTaskIds.length; offset += batchSize) {
+                const taskIds = childTaskIds.slice(offset, offset + batchSize);
+                await runGenerationTaskRecoveryBatch({
+                    origin,
+                    cookie: cookie || maintenanceWorkerContext(run.userId),
+                    limit: taskIds.length,
+                    taskIds,
+                    workerId: `${workerId}:children`.slice(0, 160),
+                });
+            }
         }
         await executeAgentRun(run, origin, cookie || maintenanceWorkerContext(run.userId));
         const latest = await getAgentRun(run.id);
@@ -304,7 +311,7 @@ export function pendingAgentChildTaskIds(run: Pick<AgentRun, "tasks">) {
                 return task.taskIds?.length ? task.taskIds : task.taskId ? [task.taskId] : [];
             }),
         ),
-    ).slice(0, 50);
+    );
 }
 
 async function processTextLease(lease: GenerationTaskLease, workerId: string, origin: string, cookie: string): Promise<RecoveryResult> {
@@ -314,7 +321,12 @@ async function processTextLease(lease: GenerationTaskLease, workerId: string, or
         return task?.status === "success" ? "completed" : "failed";
     }
     if (lease.executionPhase === "submitting" && task.status === "running" && !task.upstream?.id) {
-        await releaseGenerationTaskLease("text", lease.id, workerId, { executionPhase: "needs_review", nextPollAt: undefined, lastUpstreamStatus: "submission_outcome_unknown" });
+        await releaseGenerationTaskLease("text", lease.id, workerId, {
+            executionPhase: "needs_review",
+            nextPollAt: undefined,
+            lastUpstreamStatus: "submission_outcome_unknown",
+            resultPayload: reviewPayload(lease, "文本任务在提交阶段中断，未取得上游任务 ID"),
+        });
         return "needs_review";
     }
     if (!task.upstream?.id)
@@ -337,7 +349,12 @@ async function processTextLease(lease: GenerationTaskLease, workerId: string, or
             return "failed";
         }
         if (step.state === "needs_review") {
-            await releaseGenerationTaskLease("text", task.id, workerId, { executionPhase: "needs_review", nextPollAt: undefined, lastUpstreamStatus: "submission_outcome_unknown" });
+            await releaseGenerationTaskLease("text", task.id, workerId, {
+                executionPhase: "needs_review",
+                nextPollAt: undefined,
+                lastUpstreamStatus: "submission_outcome_unknown",
+                resultPayload: reviewPayload(lease, step.error),
+            });
             console.warn("Text task submission needs review", { taskId: task.id, error: step.error });
             return "needs_review";
         }
@@ -365,6 +382,7 @@ async function processTextLease(lease: GenerationTaskLease, workerId: string, or
             nextPollAt: upstreamTaskId ? generationTaskNextPollAt({ submittedAt: lease.submittedAt, consecutiveErrors: count }) : undefined,
             lastPollAt: Date.now(),
             lastUpstreamStatus: upstreamTaskId ? `query_error:${count}` : "submission_outcome_unknown",
+            ...(!upstreamTaskId ? { resultPayload: reviewPayload(lease, safeReviewReason(error, "文本任务创建结果未知")) } : {}),
         });
         console.warn(upstreamTaskId ? "Text task recovery deferred" : "Text task execution needs review", { taskId: task.id, error: safeError(error) });
         return upstreamTaskId ? "deferred" : "needs_review";
@@ -378,7 +396,26 @@ async function processImageLease(lease: GenerationTaskLease, workerId: string, o
         return "completed";
     }
     if (lease.executionPhase === "submitting" && !lease.upstreamTaskId && task.status === "running") {
-        await releaseGenerationTaskLease("image", lease.id, workerId, { executionPhase: "needs_review", nextPollAt: undefined, lastUpstreamStatus: "submission_outcome_unknown" });
+        if (task.upstream?.id) {
+            const submittedAt = lease.submittedAt || Date.now();
+            await releaseGenerationTaskLease("image", lease.id, workerId, {
+                executionPhase: "submitted",
+                upstreamTaskId: task.upstream.id,
+                channelId: task.config.channelId,
+                provider: task.config.advancedConfig?.protocol || task.config.apiFormat,
+                queryPath: task.upstream.explicitPollUrl || task.config.advancedConfig?.queryPath,
+                submittedAt,
+                nextPollAt: submittedAt,
+                lastUpstreamStatus: "recovered_submitted",
+            });
+            return "pending";
+        }
+        await releaseGenerationTaskLease("image", lease.id, workerId, {
+            executionPhase: "needs_review",
+            nextPollAt: undefined,
+            lastUpstreamStatus: "submission_outcome_unknown",
+            resultPayload: reviewPayload(lease, "图片任务在提交阶段中断，未取得上游任务 ID"),
+        });
         return "needs_review";
     }
     if (needsPersistence(lease)) return persistImageLease(task, lease, workerId, origin, cookie);
@@ -401,6 +438,7 @@ async function processImageLease(lease: GenerationTaskLease, workerId: string, o
                 nextPollAt: undefined,
                 lastPollAt: now,
                 lastUpstreamStatus: `${step.status}:${step.reason}`.slice(0, 500),
+                resultPayload: reviewPayload(lease, step.reason),
             });
             return "needs_review";
         }
@@ -428,12 +466,18 @@ async function processImageLease(lease: GenerationTaskLease, workerId: string, o
     } catch (error) {
         const latest = await getImageTask(task.id);
         const count = errorCount(lease.lastUpstreamStatus) + 1;
-        const submitted = Boolean(latest?.upstream?.id || lease.upstreamTaskId);
+        const upstreamTaskId = latest?.upstream?.id || lease.upstreamTaskId;
+        const submitted = Boolean(upstreamTaskId);
         await releaseGenerationTaskLease("image", task.id, workerId, {
             executionPhase: submitted ? "polling" : "needs_review",
+            upstreamTaskId,
+            channelId: latest?.config.channelId,
+            provider: latest ? latest.config.advancedConfig?.protocol || latest.config.apiFormat : undefined,
+            queryPath: latest?.upstream?.explicitPollUrl || latest?.config.advancedConfig?.queryPath,
             nextPollAt: submitted ? generationTaskNextPollAt({ consecutiveErrors: count }) : undefined,
             lastPollAt: Date.now(),
             lastUpstreamStatus: submitted ? `query_error:${count}` : "submission_outcome_unknown",
+            ...(!submitted ? { resultPayload: reviewPayload(lease, safeReviewReason(error, "图片任务创建结果未知")) } : {}),
         });
         console.warn("Image task step deferred", { taskId: task.id, error: safeError(error) });
         return submitted ? "deferred" : "needs_review";
@@ -468,7 +512,26 @@ async function processAudioLease(lease: GenerationTaskLease, workerId: string, o
         return "completed";
     }
     if (lease.executionPhase === "submitting" && !lease.upstreamTaskId && task.status === "running") {
-        await releaseGenerationTaskLease("audio", lease.id, workerId, { executionPhase: "needs_review", nextPollAt: undefined, lastUpstreamStatus: "submission_outcome_unknown" });
+        if (task.upstream?.id) {
+            const submittedAt = lease.submittedAt || Date.now();
+            await releaseGenerationTaskLease("audio", lease.id, workerId, {
+                executionPhase: "submitted",
+                upstreamTaskId: task.upstream.id,
+                channelId: task.config.channelId,
+                provider: task.config.advancedConfig?.protocol || task.config.apiFormat,
+                queryPath: task.config.advancedConfig?.queryPath,
+                submittedAt,
+                nextPollAt: submittedAt,
+                lastUpstreamStatus: "recovered_submitted",
+            });
+            return "pending";
+        }
+        await releaseGenerationTaskLease("audio", lease.id, workerId, {
+            executionPhase: "needs_review",
+            nextPollAt: undefined,
+            lastUpstreamStatus: "submission_outcome_unknown",
+            resultPayload: reviewPayload(lease, "音频任务在提交阶段中断，未取得上游任务 ID"),
+        });
         return "needs_review";
     }
     if (needsPersistence(lease)) return persistAudioLease(task, lease, workerId, origin, cookie);
@@ -502,14 +565,21 @@ async function processAudioLease(lease: GenerationTaskLease, workerId: string, o
         });
         return "pending";
     } catch (error) {
+        const latest = await getAudioTask(task.id);
+        const upstreamTaskId = latest?.upstream?.id || lease.upstreamTaskId;
         const count = errorCount(lease.lastUpstreamStatus) + 1;
         await releaseGenerationTaskLease("audio", task.id, workerId, {
-            executionPhase: task.upstream?.id ? "polling" : "needs_review",
-            nextPollAt: task.upstream?.id ? generationTaskNextPollAt({ consecutiveErrors: count }) : undefined,
+            executionPhase: upstreamTaskId ? "polling" : "needs_review",
+            upstreamTaskId,
+            channelId: latest?.config.channelId,
+            provider: latest ? latest.config.advancedConfig?.protocol || latest.config.apiFormat : undefined,
+            queryPath: latest?.config.advancedConfig?.queryPath,
+            nextPollAt: upstreamTaskId ? generationTaskNextPollAt({ consecutiveErrors: count }) : undefined,
             lastPollAt: Date.now(),
-            lastUpstreamStatus: task.upstream?.id ? `query_error:${count}` : "submission_outcome_unknown",
+            lastUpstreamStatus: upstreamTaskId ? `query_error:${count}` : "submission_outcome_unknown",
+            ...(!upstreamTaskId ? { resultPayload: reviewPayload(lease, safeReviewReason(error, "音频任务创建结果未知")) } : {}),
         });
-        return task.upstream?.id ? "deferred" : "needs_review";
+        return upstreamTaskId ? "deferred" : "needs_review";
     }
 }
 
@@ -541,6 +611,20 @@ async function processVideoLease(lease: GenerationTaskLease, workerId: string, o
         return "completed";
     }
     if (lease.executionPhase === "submitting" && !lease.upstreamTaskId) {
+        if (task.upstream.id) {
+            const submittedAt = lease.submittedAt || Date.now();
+            await releaseGenerationTaskLease("video", lease.id, workerId, {
+                executionPhase: "submitted",
+                upstreamTaskId: task.upstream.id,
+                channelId: task.config.channelId,
+                provider: task.config.advancedConfig?.protocol || task.config.apiFormat,
+                queryPath: task.upstream.queryPath || task.config?.advancedConfig?.queryPath,
+                submittedAt,
+                nextPollAt: submittedAt,
+                lastUpstreamStatus: "recovered_submitted",
+            });
+            return "pending";
+        }
         await releaseGenerationTaskLease("video", lease.id, workerId, { executionPhase: "needs_review", nextPollAt: undefined, lastUpstreamStatus: "submission_outcome_unknown" });
         return "needs_review";
     }
@@ -560,12 +644,15 @@ async function processVideoLease(lease: GenerationTaskLease, workerId: string, o
                 nextPollAt: now,
                 lastPollAt: now,
                 lastUpstreamStatus: step.status,
+                queryPath: task.upstream.queryPath || task.config?.advancedConfig?.queryPath,
                 resultPayload: { url: step.resultUrl },
             });
             return "result_ready";
         }
         await releaseGenerationTaskLease("video", task.id, workerId, {
             executionPhase: "polling",
+            upstreamTaskId: task.upstream.id || lease.upstreamTaskId,
+            queryPath: task.upstream.queryPath || task.config?.advancedConfig?.queryPath,
             nextPollAt: generationTaskNextPollAt({ submittedAt: lease.submittedAt, now }),
             lastPollAt: now,
             lastUpstreamStatus: step.status,
@@ -575,6 +662,8 @@ async function processVideoLease(lease: GenerationTaskLease, workerId: string, o
         const count = errorCount(lease.lastUpstreamStatus) + 1;
         await releaseGenerationTaskLease("video", task.id, workerId, {
             executionPhase: "polling",
+            upstreamTaskId: task.upstream.id || lease.upstreamTaskId,
+            queryPath: task.upstream.queryPath || task.config?.advancedConfig?.queryPath,
             nextPollAt: generationTaskNextPollAt({ submittedAt: lease.submittedAt, consecutiveErrors: count }),
             lastPollAt: Date.now(),
             lastUpstreamStatus: `query_error:${count}`,
@@ -646,4 +735,12 @@ function errorCount(status?: string) {
 
 function safeError(error: unknown) {
     return error instanceof Error ? error.message.slice(0, 300) : "unknown";
+}
+
+function safeReviewReason(error: unknown, fallback: string) {
+    return toSafeGenerationErrorMessage(error, fallback).slice(0, 500);
+}
+
+function reviewPayload(lease: GenerationTaskLease, reviewReason: string) {
+    return { ...(lease.resultPayload || {}), reviewReason: reviewReason.trim().slice(0, 500) || "上游提交结果需要人工确认" };
 }

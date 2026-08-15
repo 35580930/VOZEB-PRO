@@ -12,7 +12,7 @@ const repoRoot = path.resolve(webRoot, "..");
 const source = readFileSync(path.join(repoRoot, "render.yaml"), "utf8");
 
 describe("Render Blueprint contract", () => {
-    it("keeps the Web, Worker, database, shared secret, health check and disk topology aligned", () => {
+    it("keeps the Web, Worker, database, separated secrets, health check and disk topology aligned", () => {
         expect(validateRenderBlueprint({ repoRoot })).toEqual({
             services: ["vozeb-pro", "vozeb-pro-generation-worker"],
             database: "vozeb-pro-postgres",
@@ -49,6 +49,14 @@ describe("Render Blueprint contract", () => {
         const unsafe = dockerfile.replace("COPY --from=web-build /app/sharp-runtime/node_modules/.pnpm /app/web/node_modules/.pnpm", "");
 
         expect(() => validateRenderBlueprint({ repoRoot, dockerfile: unsafe })).toThrow("生产镜像缺少 Sharp 原生依赖");
+    });
+
+    it("rejects an image that omits the Worker polling policy", () => {
+        const dockerfilePath = path.join(repoRoot, "Dockerfile");
+        const dockerfile = readFileSync(dockerfilePath, "utf8");
+        const unsafe = dockerfile.replace("COPY web/scripts/generation-worker-policy.mjs /app/web/scripts/generation-worker-policy.mjs", "");
+
+        expect(() => validateRenderBlueprint({ repoRoot, dockerfile: unsafe })).toThrow("生产镜像缺少 Worker 轮询策略 helper");
     });
 
     it("rejects a production image that runs as root", () => {

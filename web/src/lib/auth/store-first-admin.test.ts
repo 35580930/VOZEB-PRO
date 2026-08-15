@@ -30,7 +30,7 @@ describe("first administrator creation", () => {
     });
 
     it("rejects public registration before installation", async () => {
-        await expect(createUser({ username: "attacker", password: "password123" })).rejects.toMatchObject({ status: 503 });
+        await expect(createUser({ username: "attacker", password: "password123", policyAccepted: true })).rejects.toMatchObject({ status: 503 });
         expect(memory.value).toBeUndefined();
     });
 
@@ -41,8 +41,17 @@ describe("first administrator creation", () => {
         expect(admin.role).toBe("admin");
         await expect(createFirstAdmin({ username: "admin-two", password: "password123", installToken: TOKEN })).rejects.toMatchObject({ status: 409 });
 
-        const user = await createUser({ username: "normal-user", password: "password123" });
+        await expect(createUser({ username: "normal-user", password: "password123", policyAccepted: false })).rejects.toThrow("请先阅读并同意服务条款和隐私政策");
+
+        const user = await createUser({ username: "normal-user", password: "password123", policyAccepted: true });
         expect(user.role).toBe("user");
+        expect((memory.value as { users: Array<{ registrationConsent?: unknown }> }).users[1].registrationConsent).toMatchObject({
+            termsVersion: "1.0",
+            termsUrl: "/terms",
+            privacyVersion: "1.0",
+            privacyUrl: "/privacy",
+            acceptedAt: expect.any(String),
+        });
     });
 
     it("serializes concurrent first-admin attempts", async () => {

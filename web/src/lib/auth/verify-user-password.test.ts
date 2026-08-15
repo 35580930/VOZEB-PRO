@@ -29,7 +29,7 @@ describe("sensitive action password verification", () => {
         mocks.postgres = true;
         mocks.getById.mockResolvedValue(user);
         mocks.readAuthDb.mockResolvedValue({ users: [user] });
-        mocks.verifyPassword.mockReturnValue(true);
+        mocks.verifyPassword.mockResolvedValue(true);
     });
 
     it("uses a directed PostgreSQL user lookup", async () => {
@@ -42,7 +42,7 @@ describe("sensitive action password verification", () => {
 
     it("rejects a wrong password for the file provider", async () => {
         mocks.postgres = false;
-        mocks.verifyPassword.mockReturnValue(false);
+        mocks.verifyPassword.mockResolvedValue(false);
 
         await expect(verifyUserPasswordForSensitiveAction("user-one", "wrong")).rejects.toThrow("当前密码不正确");
     });

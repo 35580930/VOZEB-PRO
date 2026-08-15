@@ -9,11 +9,16 @@ type CanvasNodeSpec = {
     metadata?: CanvasNodeMetadata;
 };
 
+export const CANVAS_CONFIG_NODE_HEIGHT = {
+    collapsed: 180,
+    expanded: 226,
+} as const;
+
 export const NODE_DEFAULT_SIZE = {
     [CanvasNodeType.Image]: { width: 340, height: 240, title: "New Generation" },
     [CanvasNodeType.Panorama]: { ...PANORAMA_NODE_SIZE, title: "全景图" },
     [CanvasNodeType.Text]: { width: 340, height: 240, title: "Note" },
-    [CanvasNodeType.Config]: { width: 340, height: 240, title: "生成配置" },
+    [CanvasNodeType.Config]: { width: 340, height: CANVAS_CONFIG_NODE_HEIGHT.collapsed, title: "生成配置" },
     [CanvasNodeType.Video]: { width: 420, height: 236, title: "Video" },
     [CanvasNodeType.Audio]: { width: 340, height: 120, title: "Audio" },
     [CanvasNodeType.Brief]: { width: 380, height: 280, title: "创作简报" },
@@ -36,7 +41,7 @@ const NODE_SPECS = {
     },
     [CanvasNodeType.Config]: {
         ...NODE_DEFAULT_SIZE[CanvasNodeType.Config],
-        metadata: { content: "", status: "idle", generationMode: "image" },
+        metadata: { content: "", status: "idle", generationMode: "image", configDetailsOpen: false },
     },
     [CanvasNodeType.Video]: {
         ...NODE_DEFAULT_SIZE[CanvasNodeType.Video],

@@ -34,7 +34,7 @@ export async function exportDramaEpisodeAsJianying(input: { project: DramaProjec
         let offset = 0;
         let totalBytes = 0;
         for (const [index, shot] of clips.entries()) {
-            const duration = Math.max(1, Math.min(20, shot.duration)) * 1_000_000;
+            const duration = Math.max(1, shot.duration) * 1_000_000;
             const videoPath = join(assetsDir, `segment_${String(index + 1).padStart(3, "0")}.mp4`);
             const downloadedVideo = await downloadMediaToFile(shot.videoUrl!, videoPath, { origin: input.origin, cookie: input.cookie, maxBytes: MAX_MEDIA_BYTES });
             totalBytes += downloadedVideo.bytes;

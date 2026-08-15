@@ -1,3 +1,4 @@
+import { hasAdminPermission } from "@/lib/admin-permissions";
 import { NextResponse } from "next/server";
 
 import { createAnnouncement, isAuthInputError, listAnnouncementsPage, type PublicAnnouncement } from "@/lib/auth/store";
@@ -10,7 +11,7 @@ export const dynamic = "force-dynamic";
 export async function GET(request: Request) {
     const currentUser = await getCurrentUser();
     if (!currentUser) return NextResponse.json({ error: "请先登录" }, { status: 401 });
-    if (currentUser.role !== "admin") return NextResponse.json({ error: "需要管理员权限" }, { status: 403 });
+    if (!hasAdminPermission(currentUser, "content.manage")) return NextResponse.json({ error: "需要管理员权限" }, { status: 403 });
 
     const params = new URL(request.url).searchParams;
     const page = await listAnnouncementsPage(true, {
@@ -23,7 +24,7 @@ export async function GET(request: Request) {
 export async function POST(request: Request) {
     const currentUser = await getCurrentUser();
     if (!currentUser) return NextResponse.json({ error: "请先登录" }, { status: 401 });
-    if (currentUser.role !== "admin") return NextResponse.json({ error: "需要管理员权限" }, { status: 403 });
+    if (!hasAdminPermission(currentUser, "content.manage")) return NextResponse.json({ error: "需要管理员权限" }, { status: 403 });
 
     try {
         const body = await readJsonBody<Partial<PublicAnnouncement>>(request);

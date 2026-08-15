@@ -14,6 +14,7 @@ const baseConfig = {
     encryptionKey: "ab".repeat(32),
     installToken: "ef".repeat(32),
     maintenanceToken: "cd".repeat(32),
+    workerToken: "12".repeat(32),
 };
 
 describe("database deployment config", () => {
@@ -32,7 +33,9 @@ describe("database deployment config", () => {
         expect(snippets.envText).toContain(`VOZEB_PRO_INSTALL_TOKEN=${baseConfig.installToken}`);
         expect(snippets.composeText.match(/VOZEB_PRO_INSTALL_TOKEN:/g)).toHaveLength(1);
         expect(snippets.envText).toContain(`VOZEB_PRO_MAINTENANCE_TOKEN=${baseConfig.maintenanceToken}`);
-        expect(snippets.composeText.match(/VOZEB_PRO_MAINTENANCE_TOKEN:/g)).toHaveLength(2);
+        expect(snippets.envText).toContain(`VOZEB_PRO_WORKER_TOKEN=${baseConfig.workerToken}`);
+        expect(snippets.composeText.match(/VOZEB_PRO_MAINTENANCE_TOKEN:/g)).toHaveLength(1);
+        expect(snippets.composeText.match(/VOZEB_PRO_WORKER_TOKEN:/g)).toHaveLength(2);
         expect(snippets.composeText).toContain("generation-worker:");
         expect(snippets.composeText).toContain("VOZEB_PRO_WORKER_API_ORIGIN: http://127.0.0.1:3000");
         expect(snippets.envText).toContain("VOZEB_PRO_TRUSTED_PROXY_HOPS=1");
@@ -49,7 +52,8 @@ describe("database deployment config", () => {
         expect(snippets.envText).not.toContain("VOZEB_PRO_TRUSTED_PROXY_HOPS");
         expect(snippets.composeText).not.toContain("VOZEB_PRO_TRUSTED_PROXY_HOPS");
         expect(snippets.composeText).toContain("generation-worker:");
-        expect(snippets.composeText.match(/VOZEB_PRO_MAINTENANCE_TOKEN:/g)).toHaveLength(2);
+        expect(snippets.composeText.match(/VOZEB_PRO_MAINTENANCE_TOKEN:/g)).toHaveLength(1);
+        expect(snippets.composeText.match(/VOZEB_PRO_WORKER_TOKEN:/g)).toHaveLength(2);
     });
 
     it("uses the Compose service name for the bundled Worker origin", () => {
@@ -72,8 +76,10 @@ describe("database deployment config", () => {
         expect(Object.keys(document.services)).toContain("app");
         expect(Object.keys(document.services)).toContain("generation-worker");
         expect(document.services.app.environment.VOZEB_PRO_MAINTENANCE_TOKEN).toBe(baseConfig.maintenanceToken);
+        expect(document.services.app.environment.VOZEB_PRO_WORKER_TOKEN).toBe(baseConfig.workerToken);
         expect(document.services.app.environment.VOZEB_PRO_INSTALL_TOKEN).toBe(baseConfig.installToken);
-        expect(document.services["generation-worker"].environment.VOZEB_PRO_MAINTENANCE_TOKEN).toBe(baseConfig.maintenanceToken);
+        expect(document.services["generation-worker"].environment.VOZEB_PRO_WORKER_TOKEN).toBe(baseConfig.workerToken);
+        expect(document.services["generation-worker"].environment.VOZEB_PRO_MAINTENANCE_TOKEN).toBeUndefined();
         expect(document.services["generation-worker"].environment.VOZEB_PRO_INSTALL_TOKEN).toBeUndefined();
     });
 });

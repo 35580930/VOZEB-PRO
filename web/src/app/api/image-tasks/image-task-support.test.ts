@@ -16,6 +16,7 @@ import {
     parseImagePayloadCompat,
     parseImageQueryJson,
     resolveRequestSize,
+    resolveResultSize,
     sanitizeConfigs,
     shouldFallbackToJsonImageEdit,
     shouldRetryJsonImageEditPayload,
@@ -35,7 +36,8 @@ describe("GlobalAiOpc image task paths", () => {
 
     it("preserves maintenance authorization for the internal system proxy", () => {
         const token = "m".repeat(32);
-        vi.stubEnv("VOZEB_PRO_MAINTENANCE_TOKEN", token);
+        vi.stubEnv("VOZEB_PRO_MAINTENANCE_TOKEN", `${token}-maintenance`);
+        vi.stubEnv("VOZEB_PRO_WORKER_TOKEN", token);
         const headers = taskHeaders(
             {
                 baseUrl: "/api/ai/system/channel-one",
@@ -61,6 +63,13 @@ describe("GlobalAiOpc image task paths", () => {
     it("passes exact dimensions through without a platform resolution ceiling", () => {
         expect(resolveRequestSize(undefined, "5000x5000")).toBe("5000x5000");
         expect(resolveRequestSize(undefined, "1200x7200")).toBe("1200x7200");
+    });
+
+    it("normalizes ratio results to the exact upstream request while restoring custom output dimensions", () => {
+        expect(resolveResultSize("low", "1:1")).toBe("1024x1024");
+        expect(resolveResultSize("high", "16:9")).toBe(resolveRequestSize("high", "16:9"));
+        expect(resolveResultSize(undefined, "400x600")).toBe("400x600");
+        expect(resolveResultSize(undefined, "auto")).toBeUndefined();
     });
 
     it("uses the model binding timeout for synchronous requests and asynchronous polling", () => {

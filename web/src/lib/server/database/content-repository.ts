@@ -1,6 +1,6 @@
 import type { QueryExecutor } from "@/lib/server/database/postgres";
 import type { AnnouncementRecord, GenerationKind, GenerationLogAssetRecord, GenerationLogRecord, GenerationStatus, PageInput, PageResult, PromptRecord, PromptScope } from "./repository-shared";
-import type { CreateOverviewAsset, CreateOverviewTask } from "@/lib/create-workbench-overview";
+import { CREATE_OVERVIEW_RECENT_ASSET_LIMIT, type CreateOverviewAsset, type CreateOverviewTask } from "@/lib/create-workbench-overview";
 import { mapAnnouncement, mapGenerationLog, mapGenerationLogAsset, mapPrompt } from "./repository-record-mappers";
 import { jsonParam, normalizePage, normalizePageSize, pageResult } from "./repository-shared";
 
@@ -195,7 +195,7 @@ export class GenerationLogsRepository {
               AND ($5 = '' OR lower(title) LIKE $6 OR lower(prompt) LIKE $6 OR lower(model) LIKE $6 OR lower(username) LIKE $6 OR lower(display_name) LIKE $6 OR lower(summary) LIKE $6)
               AND ($7::timestamptz IS NULL OR created_at >= $7)
               AND ($8::timestamptz IS NULL OR created_at <= $8)
-            ORDER BY created_at DESC
+            ORDER BY created_at DESC, id ASC
             LIMIT $9 OFFSET $10
             `,
             [input.userId || null, input.kind || null, input.source || null, input.status || null, keyword, `%${keyword}%`, input.startAt || null, input.endAt || null, pageSize, (page - 1) * pageSize],
@@ -308,7 +308,7 @@ export class GenerationLogsRepository {
                 FROM ranked_assets
                 WHERE duplicate_rank = 1
                 ORDER BY created_at DESC, sort_order ASC
-                LIMIT 6
+                LIMIT $2::integer
             )
             SELECT
                 COALESCE((
@@ -320,7 +320,7 @@ export class GenerationLogsRepository {
                     FROM recent_rows
                 ), '[]'::jsonb) AS recent_assets
             `,
-            [userId],
+            [userId, CREATE_OVERVIEW_RECENT_ASSET_LIMIT],
         );
         const row = result.rows[0] || {};
         return {
@@ -338,7 +338,7 @@ export class GenerationLogsRepository {
                     if (!id || !url || /^(data|blob):/i.test(url)) return [];
                     return [{ id, kind: item.kind === "video" ? "video" : "image", title: textValue(item.title), url, createdAt: isoValue(item.createdAt) }];
                 })
-                .slice(0, 6),
+                .slice(0, CREATE_OVERVIEW_RECENT_ASSET_LIMIT),
         };
     }
 
@@ -349,12 +349,21 @@ export class GenerationLogsRepository {
 
     async getByIds(ids: string[], userId?: string, forUpdate = false) {
         if (!ids.length) return [];
-        const result = await this.db.query(`SELECT * FROM generation_logs WHERE id = ANY($1::text[]) AND ($2::text IS NULL OR user_id = $2) ORDER BY created_at DESC${forUpdate ? " FOR UPDATE" : ""}`, [ids, userId || null]);
+        const result = await this.db.query(`SELECT * FROM generation_logs WHERE id = ANY($1::text[]) AND ($2::text IS NULL OR user_id = $2) ORDER BY created_at DESC, id ASC${forUpdate ? " FOR UPDATE" : ""}`, [ids, userId || null]);
         return this.attachAssets(result.rows.map(mapGenerationLog));
     }
 
-    async listByUserId(userId: string, forUpdate = false) {
-        const result = await this.db.query(`SELECT * FROM generation_logs WHERE user_id = $1 ORDER BY created_at DESC${forUpdate ? " FOR UPDATE" : ""}`, [userId]);
+    async listByUserIdBatch(userId: string, batchSize: number, forUpdate = false) {
+        const targetUserId = userId.trim();
+        if (!targetUserId) return [];
+        if (!Number.isSafeInteger(batchSize) || batchSize < 1) throw new Error("generation log batch size must be a positive safe integer");
+        const result = await this.db.query(
+            `SELECT * FROM generation_logs
+             WHERE user_id = $1
+             ORDER BY created_at DESC, id ASC
+             LIMIT $2::integer${forUpdate ? " FOR UPDATE" : ""}`,
+            [targetUserId, batchSize],
+        );
         return this.attachAssets(result.rows.map(mapGenerationLog));
     }
 
@@ -364,7 +373,7 @@ export class GenerationLogsRepository {
             `SELECT DISTINCT gl.* FROM generation_logs gl
              JOIN generation_log_assets asset ON asset.generation_log_id = gl.id
              WHERE gl.user_id = $1 AND COALESCE(NULLIF(asset.server_url, ''), asset.url) = ANY($2::text[])
-             ORDER BY gl.created_at DESC`,
+             ORDER BY gl.created_at DESC, gl.id ASC`,
             [userId, urls],
         );
         return this.attachAssets(result.rows.map(mapGenerationLog));
@@ -436,7 +445,7 @@ export class GenerationLogsRepository {
 
     private async attachAssets(logs: GenerationLogRecord[]) {
         if (!logs.length) return logs;
-        const result = await this.db.query("SELECT * FROM generation_log_assets WHERE generation_log_id = ANY($1::text[]) ORDER BY sort_order ASC", [logs.map((log) => log.id)]);
+        const result = await this.db.query("SELECT * FROM generation_log_assets WHERE generation_log_id = ANY($1::text[]) ORDER BY generation_log_id ASC, sort_order ASC", [logs.map((log) => log.id)]);
         const byLogId = new Map<string, GenerationLogAssetRecord[]>();
         for (const row of result.rows) {
             const list = byLogId.get(row.generation_log_id) || [];

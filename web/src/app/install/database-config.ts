@@ -18,6 +18,7 @@ type DatabaseConfig = {
     encryptionKey: string;
     installToken: string;
     maintenanceToken: string;
+    workerToken: string;
 };
 
 export function generateDeploymentSecret() {
@@ -39,7 +40,8 @@ VOZEB_PRO_DATABASE_POOL_MAX=10
 VOZEB_PRO_DATABASE_SSL=${config.ssl ? "1" : "0"}
 VOZEB_PRO_ENCRYPTION_KEY=${config.encryptionKey}
 VOZEB_PRO_INSTALL_TOKEN=${config.installToken}
-VOZEB_PRO_MAINTENANCE_TOKEN=${config.maintenanceToken}${config.mode === "baota" ? "\nVOZEB_PRO_TRUSTED_PROXY_HOPS=1" : ""}`;
+VOZEB_PRO_MAINTENANCE_TOKEN=${config.maintenanceToken}
+VOZEB_PRO_WORKER_TOKEN=${config.workerToken}${config.mode === "baota" ? "\nVOZEB_PRO_TRUSTED_PROXY_HOPS=1" : ""}`;
 
     return {
         envText,
@@ -88,13 +90,14 @@ function bundledCompose(config: DatabaseConfig, database: string, username: stri
       VOZEB_PRO_ENCRYPTION_KEY: ${quoteYaml(config.encryptionKey)}
       VOZEB_PRO_INSTALL_TOKEN: ${quoteYaml(config.installToken)}
       VOZEB_PRO_MAINTENANCE_TOKEN: ${quoteYaml(config.maintenanceToken)}
+      VOZEB_PRO_WORKER_TOKEN: ${quoteYaml(config.workerToken)}
     depends_on:
       postgres:
         condition: service_healthy
 ${appHealthcheck()}
     restart: unless-stopped
 
-${workerService(config.maintenanceToken, "http://app:3000")}
+${workerService(config.workerToken, "http://app:3000")}
 
 volumes:
   vozeb-pro-data:
@@ -116,10 +119,11 @@ function externalCompose(config: DatabaseConfig, databaseUrl: string) {
       VOZEB_PRO_ENCRYPTION_KEY: ${quoteYaml(config.encryptionKey)}
       VOZEB_PRO_INSTALL_TOKEN: ${quoteYaml(config.installToken)}
       VOZEB_PRO_MAINTENANCE_TOKEN: ${quoteYaml(config.maintenanceToken)}
+      VOZEB_PRO_WORKER_TOKEN: ${quoteYaml(config.workerToken)}
 ${appHealthcheck()}
     restart: unless-stopped
 
-${workerService(config.maintenanceToken, "http://app:3000")}
+${workerService(config.workerToken, "http://app:3000")}
 
 volumes:
   vozeb-pro-data:`;
@@ -139,11 +143,12 @@ function baotaCompose(config: DatabaseConfig, databaseUrl: string) {
       VOZEB_PRO_ENCRYPTION_KEY: ${quoteYaml(config.encryptionKey)}
       VOZEB_PRO_INSTALL_TOKEN: ${quoteYaml(config.installToken)}
       VOZEB_PRO_MAINTENANCE_TOKEN: ${quoteYaml(config.maintenanceToken)}
+      VOZEB_PRO_WORKER_TOKEN: ${quoteYaml(config.workerToken)}
       VOZEB_PRO_TRUSTED_PROXY_HOPS: "1"
 ${appHealthcheck()}
     restart: unless-stopped
 
-${workerService(config.maintenanceToken, "http://127.0.0.1:3000", true)}
+${workerService(config.workerToken, "http://127.0.0.1:3000", true)}
 
 volumes:
   vozeb-pro-data:`;
@@ -158,13 +163,13 @@ function appHealthcheck() {
       start_period: 30s`;
 }
 
-function workerService(maintenanceToken: string, origin: string, hostNetwork = false) {
+function workerService(workerToken: string, origin: string, hostNetwork = false) {
     return `  generation-worker:
     image: ghcr.io/csyqlz/vozeb-pro:latest
     command: ["node", "/app/web/scripts/generation-worker.mjs"]${hostNetwork ? "\n    network_mode: host" : ""}
     environment:
       VOZEB_PRO_WORKER_API_ORIGIN: ${origin}
-      VOZEB_PRO_MAINTENANCE_TOKEN: ${quoteYaml(maintenanceToken)}
+      VOZEB_PRO_WORKER_TOKEN: ${quoteYaml(workerToken)}
     depends_on:
       app:
         condition: service_healthy

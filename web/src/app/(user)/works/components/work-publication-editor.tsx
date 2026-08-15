@@ -2,7 +2,7 @@
 
 import { App, Button, Checkbox, Form, Input, Modal, Segmented, Select, Tag } from "antd";
 import { Check, Film, Image as ImageIcon, LoaderCircle } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { formatBytes } from "@/lib/image-utils";
 import {
@@ -15,7 +15,8 @@ import {
     type WorkPublicationAuthorDisplay,
     type WorkPublicationDraftInput,
     type WorkPublicationSource,
-    type WorkPublicationSourceGroups,
+    type WorkPublicationSourcePage,
+    type WorkPublicationSourceSummary,
     type WorkPublicationSourceType,
     type WorkPublicationVisibility,
 } from "@/services/api/work-publications";
@@ -34,7 +35,10 @@ type EditorValues = {
     authorName?: string;
 };
 
-const EMPTY_SOURCES: WorkPublicationSourceGroups = { media: [], canvas: [], drama: [] };
+type SourceListState = WorkPublicationSourcePage & { keyword: string; loaded: boolean; loading: boolean };
+
+const emptySourceList = (): SourceListState => ({ items: [], total: 0, page: 1, pageSize: 0, keyword: "", loaded: false, loading: false });
+const emptySourceLists = (): Record<WorkPublicationSourceType, SourceListState> => ({ media: emptySourceList(), canvas: emptySourceList(), drama: emptySourceList() });
 
 export function WorkPublicationEditor({
     open,
@@ -54,26 +58,67 @@ export function WorkPublicationEditor({
     const sourceType = Form.useWatch("sourceType", form) || "media";
     const authorDisplay = Form.useWatch("authorDisplay", form) || "profile";
     const visibility = Form.useWatch("visibility", form) || "public";
-    const [sources, setSources] = useState<WorkPublicationSourceGroups>(EMPTY_SOURCES);
+    const [sourceLists, setSourceLists] = useState(emptySourceLists);
     const [source, setSource] = useState<WorkPublicationSource | null>(null);
     const [selectedKeys, setSelectedKeys] = useState<string[]>([]);
     const [coverKey, setCoverKey] = useState("");
     const [loading, setLoading] = useState(false);
     const [sourceLoading, setSourceLoading] = useState(false);
     const [saving, setSaving] = useState(false);
+    const sourceListRequestIds = useRef<Record<WorkPublicationSourceType, number>>({ media: 0, canvas: 0, drama: 0 });
+    const sourceDetailRequestId = useRef(0);
+
+    const loadSourcePage = useCallback(
+        async (nextType: WorkPublicationSourceType, input: { page?: number; keyword?: string; append?: boolean } = {}) => {
+            const requestId = ++sourceListRequestIds.current[nextType];
+            const page = input.page || 1;
+            const keyword = input.keyword?.trim() || "";
+            setSourceLists((current) => ({
+                ...current,
+                [nextType]: {
+                    ...(input.append ? current[nextType] : emptySourceList()),
+                    keyword,
+                    loading: true,
+                },
+            }));
+            try {
+                const result = await listWorkPublicationSources({ sourceType: nextType, page, keyword });
+                if (sourceListRequestIds.current[nextType] !== requestId) return;
+                setSourceLists((current) => ({
+                    ...current,
+                    [nextType]: {
+                        ...result,
+                        items: input.append ? mergeSourceSummaries(current[nextType].items, result.items) : result.items,
+                        keyword,
+                        loaded: true,
+                        loading: false,
+                    },
+                }));
+            } catch (error) {
+                if (sourceListRequestIds.current[nextType] !== requestId) return;
+                setSourceLists((current) => ({ ...current, [nextType]: { ...current[nextType], loaded: true, loading: false } }));
+                message.error(error instanceof Error ? error.message : "来源列表加载失败");
+            }
+        },
+        [message],
+    );
 
     useEffect(() => {
         if (!open) return;
         let active = true;
+        sourceListRequestIds.current.media += 1;
+        sourceListRequestIds.current.canvas += 1;
+        sourceListRequestIds.current.drama += 1;
+        sourceDetailRequestId.current += 1;
         setLoading(true);
+        setSourceLists(emptySourceLists());
         setSource(null);
         setSelectedKeys([]);
         setCoverKey("");
         void (async () => {
             try {
-                const [sourceGroups, work] = await Promise.all([listWorkPublicationSources(), workId ? getWorkPublication(workId) : Promise.resolve(undefined)]);
+                const work = workId ? await getWorkPublication(workId) : undefined;
                 if (!active) return;
-                setSources(sourceGroups);
                 const nextType = work?.sourceType || initialSource?.sourceType || "media";
                 const nextSourceId = work?.sourceId || initialSource?.sourceId || "";
                 form.setFieldsValue({
@@ -88,9 +133,9 @@ export function WorkPublicationEditor({
                     authorDisplay: work?.currentVersion?.authorDisplay || "profile",
                     authorName: work?.currentVersion?.authorName,
                 });
-                if (!nextSourceId) return;
-                const detail = await getWorkPublicationSource(nextType, nextSourceId);
+                const [, detail] = await Promise.all([workId ? Promise.resolve() : loadSourcePage(nextType), nextSourceId ? getWorkPublicationSource(nextType, nextSourceId) : Promise.resolve(undefined)]);
                 if (!active) return;
+                if (!detail) return;
                 setSource(detail);
                 const currentAssets = work?.currentAssets || [];
                 setSelectedKeys(currentAssets.filter((asset) => asset.role === "content").map((asset) => asset.storageKey));
@@ -105,19 +150,26 @@ export function WorkPublicationEditor({
         })();
         return () => {
             active = false;
+            sourceListRequestIds.current.media += 1;
+            sourceListRequestIds.current.canvas += 1;
+            sourceListRequestIds.current.drama += 1;
+            sourceDetailRequestId.current += 1;
         };
-    }, [form, initialSource?.sourceId, initialSource?.sourceType, message, open, workId]);
+    }, [form, initialSource?.sourceId, initialSource?.sourceType, loadSourcePage, message, open, workId]);
 
-    const sourceOptions = useMemo(
-        () =>
-            sources[sourceType].map((item) => ({
-                value: item.id,
-                label: `${item.title}${item.kind ? ` · ${SOURCE_TYPE_LABELS.media}${item.kind === "image" ? "图片" : "视频"}` : ""}`,
-            })),
-        [sourceType, sources],
-    );
+    const sourceList = sourceLists[sourceType];
+
+    const sourceOptions = useMemo(() => {
+        const options = sourceList.items.map((item) => ({
+            value: item.id,
+            label: `${item.title}${item.kind ? ` · ${SOURCE_TYPE_LABELS.media}${item.kind === "image" ? "图片" : "视频"}` : ""}`,
+        }));
+        if (source?.sourceType === sourceType && !options.some((item) => item.value === source.sourceId)) options.unshift({ value: source.sourceId, label: source.title });
+        return options;
+    }, [source, sourceList.items, sourceType]);
 
     const selectSource = async (nextType: WorkPublicationSourceType, sourceId: string) => {
+        const requestId = ++sourceDetailRequestId.current;
         form.setFieldValue("sourceId", sourceId);
         setSource(null);
         setSelectedKeys([]);
@@ -126,16 +178,18 @@ export function WorkPublicationEditor({
         setSourceLoading(true);
         try {
             const detail = await getWorkPublicationSource(nextType, sourceId);
+            if (sourceDetailRequestId.current !== requestId || form.getFieldValue("sourceType") !== nextType || form.getFieldValue("sourceId") !== sourceId) return;
             setSource(detail);
-            const keys = detail.candidates.slice(0, 12).map((candidate) => candidate.storageKey);
+            const keys = detail.candidates.map((candidate) => candidate.storageKey);
             setSelectedKeys(keys);
             setCoverKey(detail.candidates.find((candidate) => candidate.mediaType === "image")?.storageKey || "");
             if (!form.getFieldValue("title")) form.setFieldValue("title", detail.title);
             if (!form.getFieldValue("publicPrompt")?.trim() && detail.suggestedPrompt) form.setFieldValue("publicPrompt", detail.suggestedPrompt);
         } catch (error) {
+            if (sourceDetailRequestId.current !== requestId) return;
             message.error(error instanceof Error ? error.message : "来源加载失败");
         } finally {
-            setSourceLoading(false);
+            if (sourceDetailRequestId.current === requestId) setSourceLoading(false);
         }
     };
 
@@ -199,21 +253,35 @@ export function WorkPublicationEditor({
                                         options={Object.entries(SOURCE_TYPE_LABELS).map(([value, label]) => ({ value, label }))}
                                         onChange={(value) => {
                                             const nextType = value as WorkPublicationSourceType;
+                                            sourceDetailRequestId.current += 1;
                                             form.setFieldsValue({ sourceType: nextType, sourceId: "" });
                                             setSource(null);
                                             setSelectedKeys([]);
                                             setCoverKey("");
+                                            setSourceLoading(false);
+                                            void loadSourcePage(nextType);
                                         }}
                                     />
                                 </Form.Item>
                                 <Form.Item label="具体来源" name="sourceId" rules={[{ required: true, message: "请选择发布来源" }]}>
                                     <Select
+                                        key={sourceType}
                                         showSearch
                                         disabled={Boolean(workId)}
-                                        loading={sourceLoading}
-                                        optionFilterProp="label"
-                                        placeholder={sourceOptions.length ? "选择本人素材或项目" : "暂无可发布来源"}
+                                        filterOption={false}
+                                        loading={sourceLoading || sourceList.loading}
+                                        notFoundContent={sourceList.loading ? "正在加载" : "暂无可发布来源"}
+                                        placeholder="选择本人素材或项目"
                                         options={sourceOptions}
+                                        onOpenChange={(nextOpen) => {
+                                            if (nextOpen && !sourceList.loaded && !sourceList.loading) void loadSourcePage(sourceType);
+                                        }}
+                                        onSearch={(keyword) => void loadSourcePage(sourceType, { keyword })}
+                                        onPopupScroll={(event) => {
+                                            const target = event.currentTarget;
+                                            if (Math.ceil(target.scrollTop + target.clientHeight) < target.scrollHeight || sourceList.loading || sourceList.items.length >= sourceList.total) return;
+                                            void loadSourcePage(sourceType, { page: sourceList.page + 1, keyword: sourceList.keyword, append: true });
+                                        }}
                                         onChange={(value) => void selectSource(sourceType, value)}
                                     />
                                 </Form.Item>
@@ -317,4 +385,10 @@ export function WorkPublicationEditor({
             )}
         </Modal>
     );
+}
+
+function mergeSourceSummaries(current: WorkPublicationSourceSummary[], next: WorkPublicationSourceSummary[]) {
+    const merged = new Map(current.map((item) => [item.id, item]));
+    next.forEach((item) => merged.set(item.id, item));
+    return [...merged.values()];
 }

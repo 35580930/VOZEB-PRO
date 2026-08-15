@@ -180,15 +180,11 @@
     }
 
     .auth-page-bg {
-        background:
-            radial-gradient(920px circle at 10% 12%, rgba(45, 212, 191, 0.2), transparent 62%), radial-gradient(980px circle at 88% 16%, rgba(99, 102, 241, 0.16), transparent 66%),
-            radial-gradient(860px circle at 52% 88%, rgba(245, 158, 11, 0.08), transparent 64%), linear-gradient(135deg, #eafcff 0%, #eef7ff 36%, #f5f0ff 70%, #edfaff 100%);
+        background: linear-gradient(128deg, #fdfcff 0%, #f7f4ff 34%, #f3f7ff 68%, #fff9fc 100%);
     }
 
     .dark .auth-page-bg {
-        background:
-            radial-gradient(920px circle at 10% 12%, rgba(20, 184, 166, 0.12), transparent 62%), radial-gradient(980px circle at 88% 16%, rgba(99, 102, 241, 0.14), transparent 66%),
-            radial-gradient(860px circle at 52% 88%, rgba(245, 158, 11, 0.06), transparent 64%), linear-gradient(135deg, #041013 0%, #07121c 36%, #0c0916 70%, #071412 100%);
+        background: linear-gradient(128deg, #0f1014 0%, #171621 38%, #121922 70%, #171318 100%);
     }
 
     .auth-page-bg::before,
@@ -203,6 +199,15 @@
             72px 72px,
             24px 24px;
         opacity: 0.42;
+    }
+
+    .auth-page-bg::before {
+        background-image: none;
+        opacity: 0;
+    }
+
+    .dark .auth-page-bg::before {
+        background-image: none;
     }
 
     .auth-page-bg > *,

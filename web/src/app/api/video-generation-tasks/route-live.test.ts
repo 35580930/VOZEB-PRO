@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it } from "vitest";
 
 import { createProtocolFixtureServer } from "../../../../scripts/protocol-fixture-server.mjs";
-import { createUpstream } from "./route";
+import { createUpstream } from "./video-generation-route";
 import { queryVideoTaskUpstream } from "@/lib/server/video-task-runtime";
 import type { VideoTask } from "@/lib/server/video-task-store";
 import { emptyAdvancedConfig } from "@/lib/channel-protocol-registry";
@@ -158,6 +158,7 @@ describe("video creation protocols over a live fixture", () => {
             prompt: "animate a blue logo",
             duration: 5,
             resolution: "720p",
+            metadata: { resolution: "720p" },
             generate_audio: false,
             aspect_ratio: "16:9",
             images: [referenceUrl],

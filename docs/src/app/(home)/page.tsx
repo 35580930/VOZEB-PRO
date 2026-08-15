@@ -9,6 +9,10 @@ const darkStarHistoryChart = `${starHistoryChart}&theme=dark`;
 
 const previewImages = [
   {
+    src: "/screenshots/pages/01-home.webp",
+    title: "公开首页",
+  },
+  {
     src: "/screenshots/pages/02-create.webp",
     title: "Agent 工作台",
   },
@@ -17,12 +21,8 @@ const previewImages = [
     title: "画布编排",
   },
   {
-    src: "/screenshots/pages/05-image-workbench.webp",
-    title: "图片生成",
-  },
-  {
-    src: "/screenshots/pages/06-video-workbench.webp",
-    title: "视频生成",
+    src: "/screenshots/pages/04a-drama-editor.webp",
+    title: "短剧生产",
   },
 ];
 
@@ -76,7 +76,7 @@ export default function HomePage() {
 
         <div className="overflow-hidden rounded-2xl lg:w-[108%] lg:max-w-none">
           <img
-            src={previewImages[3].src}
+            src={previewImages[0].src}
             alt="VOZEB PRO 效果图"
             className="aspect-[16/10] w-full rounded-xl object-cover"
           />

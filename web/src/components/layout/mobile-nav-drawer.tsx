@@ -9,6 +9,7 @@ import { useEffect, useRef } from "react";
 import { SiteLogo } from "@/components/layout/site-logo";
 import { navigationGroups, navigationTools, type NavigationToolSlug } from "@/constant/navigation-tools";
 import { cn } from "@/lib/utils";
+import { DEFAULT_SITE_TITLE, resolveSiteTitle } from "@/lib/site-brand";
 import { usePublicSessionStore } from "@/stores/use-public-session-store";
 
 type MobileNavDrawerProps = {
@@ -21,7 +22,8 @@ export function MobileNavDrawer({ open, activeToolSlug, onClose }: MobileNavDraw
     const pathname = usePathname();
     const router = useRouter();
     const previousPathnameRef = useRef(pathname);
-    const site = usePublicSessionStore((state) => state.payload?.settings?.site) || { title: "MOCREAI", logoUrl: "/logo.svg" };
+    const site = usePublicSessionStore((state) => state.payload?.settings?.site) || { title: DEFAULT_SITE_TITLE, logoUrl: "/logo.svg" };
+    const siteTitle = resolveSiteTitle(site.title);
     const helpActive = pathname.startsWith("/help");
 
     useEffect(() => {
@@ -35,7 +37,7 @@ export function MobileNavDrawer({ open, activeToolSlug, onClose }: MobileNavDraw
             title={
                 <Link href="/create" onClick={onClose} className="inline-flex min-w-0 items-center gap-2.5 text-base font-semibold leading-none text-[#20242a] dark:text-[#f3f5f7]">
                     <SiteLogo logoUrl={site.logoUrl} className="size-8" />
-                    <span className="truncate">{site.title || "MOCREAI"}</span>
+                    <span className="truncate">{siteTitle}</span>
                 </Link>
             }
             placement="left"
@@ -93,7 +95,7 @@ export function MobileNavDrawer({ open, activeToolSlug, onClose }: MobileNavDraw
                     aria-current={helpActive ? "page" : undefined}
                 >
                     <CircleHelp className="size-[18px] shrink-0" />
-                    <span className="min-w-0 flex-1 truncate">帮助中心</span>
+                    <span className="min-w-0 flex-1 truncate">帮助</span>
                     <span className={cn("size-1.5 rounded-full", helpActive ? "bg-current" : "bg-transparent")} />
                 </Link>
             </div>

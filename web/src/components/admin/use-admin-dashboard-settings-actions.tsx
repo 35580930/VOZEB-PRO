@@ -1,97 +1,18 @@
 "use client";
 
-import type { ReactNode } from "react";
-import { useEffect, useMemo, useRef, useState } from "react";
-import { App, Button, Checkbox, DatePicker, Form, Input, InputNumber, Modal, Pagination, Popconfirm, Segmented, Select, Space, Switch, Table, Tag } from "antd";
-import type { TableColumnsType } from "antd";
-import Link from "next/link";
-import { BillingOperations } from "@/app/admin/billing/components/billing-operations";
-import { GenerationOperationsClient } from "@/app/admin/generation-operations/components/generation-operations-client";
-import {
-    formatAdminLogDuration,
-    formatAdminLogTime,
-    formatGenerationLogModel,
-    GenerationLogAssetPreview,
-    GenerationLogDetail,
-    GenerationLogMobileCard,
-    generationKindLabel,
-    generationSourceLabel,
-    generationStatusClass,
-    generationStatusLabel,
-} from "@/components/admin/admin-generation-log";
-import { GenerationConcurrencyPanel, GenerationDefaultsPanel, localAgentReadiness } from "@/components/admin/admin-generation-settings";
-import type { AgentReadiness } from "@/components/admin/admin-generation-settings";
-import { AdminLocalMediaStorage } from "@/components/admin/admin-local-media-storage";
-import { QuotaRuleTable } from "@/components/admin/admin-quota-rules";
-import { AdminOverview, buildOperationsSummary } from "@/components/admin/admin-overview";
-import { AdminLogicalModelManager } from "@/components/admin/admin-logical-model-manager";
-import { Metric, Panel, PanelHeader } from "@/components/admin/admin-panel";
-import { AdminSectionNav, adminSections } from "@/components/admin/admin-section-nav";
 import type { AdminSectionKey } from "@/components/admin/admin-sections";
-import { UpdateCenterPanel } from "@/components/admin/admin-update-center";
-import { LabeledControl, SectionTitle, SettingInlineToggle, SettingToggle } from "@/components/admin/admin-settings-controls";
-import { SiteLogoPreview, SiteSettingStatus, SiteShowcasePreview, siteSocialItems } from "@/components/admin/admin-site-preview";
-import { createDefaultChannelAdvancedConfig, SystemChannelEditor } from "@/components/admin/admin-system-channel-editor";
-import { channelProtocolDefinition, normalizeStrictProtocolModelConfig } from "@/lib/channel-protocol-registry";
-import { formatAdminMoney, toNumberOrOne, toNumberOrZero, uniqueList } from "@/components/admin/admin-values";
-import {
-    ArrowRight,
-    Copy,
-    CreditCard,
-    CircleDollarSign,
-    Database,
-    Download,
-    ExternalLink,
-    Eye,
-    Gift,
-    Globe2,
-    Image as ImageIcon,
-    KeyRound,
-    Mail,
-    Menu,
-    PlugZap,
-    Plus,
-    ReceiptText,
-    RefreshCw,
-    Save,
-    Search,
-    Send,
-    ShieldCheck,
-    SlidersHorizontal,
-    Sparkles,
-    Trash2,
-    Upload,
-    UserCog,
-    UserRound,
-    WalletCards,
-} from "lucide-react";
-import dayjs from "dayjs";
+import { createDefaultChannelAdvancedConfig } from "@/components/admin/admin-system-channel-editor";
+import { toNumberOrOne, toNumberOrZero, uniqueList } from "@/components/admin/admin-values";
+import { channelProtocolDefinition, channelSupportsModelCatalog, normalizeStrictProtocolModelConfig } from "@/lib/channel-protocol-registry";
 import { nanoid } from "nanoid";
+import type { ReactNode } from "react";
+import { useEffect, useRef } from "react";
 
-import { formatCreditAmount } from "@/constant/credits";
-import { normalizeDefaultModelsConfig, synchronizeLogicalModelsWithChannels } from "@/lib/model-routing-config";
+import type { AuthSettings, PublicUser, PublicUserSummary, SiteFriendLink, SiteSocialKey, SystemChannelAdvancedConfig, SystemModelChannel } from "@/lib/auth/store";
 import { buildGlobalAiOpcSelection } from "@/lib/globalaiopc-catalog";
-import type {
-    AgentSkill,
-    AuthSettings,
-    CreatedCdkCode,
-    PublicAnnouncement,
-    PublicCdkCode,
-    PublicUser,
-    PublicUserSummary,
-    SiteFriendLink,
-    SiteShowcaseItem,
-    SiteSocialKey,
-    SystemChannelAdvancedConfig,
-    SystemModelChannel,
-    UserRole,
-    UserStatus,
-} from "@/lib/auth/store";
-import type { GenerationAssetStats, StoredGenerationLog } from "@/lib/server/generation-log-store";
+import { normalizeDefaultModelsConfig, synchronizeLogicalModelsWithChannels } from "@/lib/model-routing-config";
 import type { AdminSetupSummary } from "@/lib/server/admin-setup-status";
-import type { PaymentConfigSummary } from "@/lib/payment-config-types";
-import type { AdminBillingSummary } from "@/lib/admin-billing-types";
-import type { Prompt } from "@/services/api/prompts";
+import { clampInteger, createSystemChannel, requestAdminModels, type AdminModelsResult } from "./admin-dashboard-elements";
 
 export type AdminDashboardProps = {
     initialUsers: PublicUser[];
@@ -112,46 +33,31 @@ export type PromptFormValue = {
     preview?: string;
 };
 
-export type UserEditorValue = {
-    username?: string;
-    displayName: string;
-    email?: string;
-    password?: string;
-    role: UserRole;
-    status: UserStatus;
-    pointsBalance: number;
-};
-
 export const PROMPT_PAGE_SIZE = 20;
 export const PROMPT_SEARCH_DEBOUNCE_MS = 300;
 export const CDK_PAGE_SIZE = 20;
 export const GENERATION_LOG_PAGE_SIZE = 20;
-import {
-    settingsStatusToneClass,
-    SettingsStatusTile,
-    SettingsAnchorItem,
-    FinanceFlowItem,
-    FinanceMiniRow,
-    createSystemChannel,
-    requestAdminModels,
-    type AdminModelsResult,
-    modelNameFromOption,
-    isCdkExpired,
-    cdkStatusLabel,
-    cdkStatusTone,
-    formatCreatedCdkExport,
-    downloadTextFile,
-    CdkRedemptionDetail,
-    splitTags,
-    clampInteger,
-} from "./admin-dashboard-elements";
 
-import type { AdminDashboardState } from "./use-admin-dashboard-state";
 import type { AdminDashboardDataActions } from "./use-admin-dashboard-data-actions";
+import type { AdminDashboardState } from "./use-admin-dashboard-state";
 
 export function useAdminDashboardSettingsActions({ state, data }: { state: AdminDashboardState; data: AdminDashboardDataActions }) {
     const { message, settings, setSettings, setMailTestLoading, mailTestTo, setFetchingModelId, customPointModel, setCustomPointModel } = state;
     const { saveSettings } = data;
+    const latestSettingsRef = useRef(settings);
+
+    useEffect(() => {
+        latestSettingsRef.current = settings;
+    }, [settings]);
+
+    const updateSite = (update: (site: AuthSettings["site"]) => AuthSettings["site"]) => {
+        const current = latestSettingsRef.current;
+        const next = { ...current, site: update(current.site) };
+        latestSettingsRef.current = next;
+        setSettings(next);
+    };
+    const getLatestSiteSettings = () => latestSettingsRef.current.site;
+    const getLatestSettings = () => latestSettingsRef.current;
 
     const updateChannel = (id: string, patch: Partial<SystemModelChannel>) => {
         setSettings((current) => {
@@ -186,12 +92,11 @@ export function useAdminDashboardSettingsActions({ state, data }: { state: Admin
     };
 
     const updateGenerationConcurrency = (key: keyof AuthSettings["generationConcurrency"], value: number | null) => {
-        const limits = { agent: { max: 10, fallback: 2 }, image: { max: 10, fallback: 4 }, video: { max: 5, fallback: 1 }, audio: { max: 10, fallback: 2 }, text: { max: 20, fallback: 4 }, render: { max: 5, fallback: 1 } }[key];
         setSettings((current) => ({
             ...current,
             generationConcurrency: {
                 ...current.generationConcurrency,
-                [key]: clampInteger(value, 1, limits.max, limits.fallback),
+                [key]: Number.isSafeInteger(value) && Number(value) > 0 ? Number(value) : current.generationConcurrency[key],
             },
         }));
     };
@@ -204,6 +109,29 @@ export function useAdminDashboardSettingsActions({ state, data }: { state: Admin
                 [key]: value,
             },
         }));
+    };
+
+    const updateGenerationCostControl = (key: keyof AuthSettings["generationCostControl"], value: number | null) => {
+        setSettings((current) => ({
+            ...current,
+            generationCostControl: {
+                ...current.generationCostControl,
+                [key]: toNumberOrZero(value),
+            },
+        }));
+    };
+
+    const updateDataLifecycle = (key: keyof AuthSettings["dataLifecycle"], value: boolean | number) => {
+        const current = latestSettingsRef.current;
+        const next = {
+            ...current,
+            dataLifecycle: {
+                ...current.dataLifecycle,
+                [key]: key === "maintenanceBatchSize" ? clampInteger(value, 1, 500, current.dataLifecycle.maintenanceBatchSize) : value,
+            },
+        };
+        latestSettingsRef.current = next;
+        setSettings(next);
     };
 
     const updateModelPointCost = (model: string, value: number | null) => {
@@ -278,7 +206,7 @@ export function useAdminDashboardSettingsActions({ state, data }: { state: Admin
     };
 
     const updateSiteSetting = <K extends keyof Omit<AuthSettings["site"], "socials">>(key: K, value: AuthSettings["site"][K]) => {
-        setSettings((current) => ({ ...current, site: { ...current.site, [key]: value } }));
+        updateSite((site) => ({ ...site, [key]: value }));
     };
 
     const uploadSiteImage = (file: File | undefined, key: "logoUrl" | "iconUrl", label: string) => {
@@ -305,90 +233,46 @@ export function useAdminDashboardSettingsActions({ state, data }: { state: Admin
     const uploadSiteIcon = (file?: File) => uploadSiteImage(file, "iconUrl", "浏览器图标");
 
     const updateSiteSocialSetting = (key: SiteSocialKey, patch: Partial<AuthSettings["site"]["socials"][SiteSocialKey]>) => {
-        setSettings((current) => ({
-            ...current,
-            site: {
-                ...current.site,
-                socials: {
-                    ...current.site.socials,
-                    [key]: { ...current.site.socials[key], ...patch },
-                },
+        updateSite((site) => ({
+            ...site,
+            socials: {
+                ...site.socials,
+                [key]: { ...site.socials[key], ...patch },
             },
         }));
     };
 
     const addFriendLink = () => {
-        setSettings((current) => ({
-            ...current,
-            site: {
-                ...current.site,
-                friendLinks: [...(current.site.friendLinks || []), { id: nanoid(), label: "友情链接", url: "https://", enabled: true }],
-            },
+        updateSite((site) => ({
+            ...site,
+            friendLinks: [...(site.friendLinks || []), { id: nanoid(), label: "友情链接", url: "https://", enabled: true }],
         }));
     };
 
     const updateFriendLink = (id: string, patch: Partial<SiteFriendLink>) => {
-        setSettings((current) => ({
-            ...current,
-            site: {
-                ...current.site,
-                friendLinks: (current.site.friendLinks || []).map((link) => (link.id === id ? { ...link, ...patch } : link)),
-            },
+        updateSite((site) => ({
+            ...site,
+            friendLinks: (site.friendLinks || []).map((link) => (link.id === id ? { ...link, ...patch } : link)),
         }));
     };
 
-    const deleteFriendLink = (id: string) => {
-        setSettings((current) => ({
-            ...current,
-            site: {
-                ...current.site,
-                friendLinks: (current.site.friendLinks || []).filter((link) => link.id !== id),
-            },
-        }));
-    };
-
-    const addHomeShowcaseItem = () => {
-        setSettings((current) => ({
-            ...current,
-            site: {
-                ...current.site,
-                homeShowcaseMode: "custom",
-                homeShowcaseItems: [
-                    ...(current.site.homeShowcaseItems || []),
-                    {
-                        id: nanoid(),
-                        title: "首页展示提示词",
-                        coverUrl: "",
-                        prompt: "",
-                        tags: ["精选提示词"],
-                        category: "首页展示",
-                    },
-                ].slice(0, 8),
-            },
-        }));
-    };
-
-    const updateHomeShowcaseItem = (id: string, patch: Partial<SiteShowcaseItem>) => {
-        setSettings((current) => ({
-            ...current,
-            site: {
-                ...current.site,
-                homeShowcaseItems: (current.site.homeShowcaseItems || []).map((item) => (item.id === id ? { ...item, ...patch } : item)),
-            },
-        }));
-    };
-
-    const deleteHomeShowcaseItem = (id: string) => {
-        setSettings((current) => ({
-            ...current,
-            site: {
-                ...current.site,
-                homeShowcaseItems: (current.site.homeShowcaseItems || []).filter((item) => item.id !== id),
-            },
-        }));
+    const deleteFriendLink = async (id: string) => {
+        const previousSite = getLatestSiteSettings();
+        const site = {
+            ...previousSite,
+            friendLinks: (previousSite.friendLinks || []).filter((link) => link.id !== id),
+        };
+        updateSite(() => site);
+        const saved = await saveSettings({ site }, "友情链接已删除");
+        if (!saved && getLatestSiteSettings() === site) updateSite(() => previousSite);
+        return saved;
     };
 
     const fetchModelsForChannel = async (channel: SystemModelChannel) => {
+        if (!channelSupportsModelCatalog(channel)) {
+            message.warning("当前协议没有可用的模型目录，请手动填写上游模型 ID");
+            return;
+        }
         if (!channel.baseUrl.trim()) {
             message.error("请先填写该渠道的 Base URL");
             return;
@@ -408,9 +292,9 @@ export function useAdminDashboardSettingsActions({ state, data }: { state: Admin
     };
 
     const fetchAllModels = async () => {
-        const runnable = settings.systemChannels.filter((channel) => channel.baseUrl.trim());
+        const runnable = settings.systemChannels.filter((channel) => channel.baseUrl.trim() && channelSupportsModelCatalog(channel));
         if (!runnable.length) {
-            message.error("请先填写至少一个渠道的 Base URL");
+            message.warning("当前没有可同步模型目录的渠道；请先配置目录，或手动维护模型 ID");
             return;
         }
         setFetchingModelId("all");
@@ -444,6 +328,8 @@ export function useAdminDashboardSettingsActions({ state, data }: { state: Admin
         updateFreeDailyPoints,
         updateGenerationConcurrency,
         updateGenerationDefaults,
+        updateGenerationCostControl,
+        updateDataLifecycle,
         updateModelPointCost,
         updateGenerationPointMultiplier,
         deleteGenerationPointMultiplier,
@@ -452,15 +338,14 @@ export function useAdminDashboardSettingsActions({ state, data }: { state: Admin
         updateMailSetting,
         testMailSettings,
         updateSiteSetting,
+        getLatestSiteSettings,
+        getLatestSettings,
         uploadSiteLogo,
         uploadSiteIcon,
         updateSiteSocialSetting,
         addFriendLink,
         updateFriendLink,
         deleteFriendLink,
-        addHomeShowcaseItem,
-        updateHomeShowcaseItem,
-        deleteHomeShowcaseItem,
         fetchModelsForChannel,
         fetchAllModels,
     };
@@ -517,5 +402,5 @@ function mergeAdminModelConfigs(current: SystemChannelAdvancedConfig["modelConfi
         const protocol = config.protocol || channelProtocol;
         if (config.source === "manual" && (protocol !== channelProtocol || !channelProtocolDefinition(protocol).strict || !merged[model])) merged[model] = config;
     });
-    return Object.fromEntries(Object.entries(merged).map(([model, config]) => [model, normalizeStrictProtocolModelConfig(config, channelProtocol)]));
+    return Object.fromEntries(Object.entries(merged).map(([model, config]) => [model, normalizeStrictProtocolModelConfig(config, channelProtocol, model)]));
 }

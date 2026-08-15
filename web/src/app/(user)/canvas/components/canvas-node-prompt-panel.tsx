@@ -1,8 +1,8 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import { LoaderCircle, Square } from "lucide-react";
-import { Button } from "antd";
+import { useEffect, useRef, useState, type SyntheticEvent } from "react";
+import { LoaderCircle, Maximize2, Minimize2, Square } from "lucide-react";
+import { Button, Modal, Tooltip } from "antd";
 
 import { ModelPicker } from "@/components/model-picker";
 import { CreditSymbol, formatCreditAmount, requestCreditCost } from "@/constant/credits";
@@ -21,6 +21,8 @@ import { buildCanvasNodeConfig, canvasAudioConfigPatch, canvasVideoConfigPatch }
 import { PANORAMA_IMAGE_SIZE } from "../utils/canvas-panorama";
 
 export type CanvasNodeGenerationMode = CanvasGenerationMode;
+
+const stopCanvasInteraction = (event: SyntheticEvent) => event.stopPropagation();
 
 type CanvasNodePromptPanelProps = {
     node: CanvasNodeData;
@@ -44,6 +46,8 @@ export function CanvasNodePromptPanel({ node, isRunning, onPromptChange, onConfi
     const isPanorama = node.type === CanvasNodeType.Panorama;
     const isEditingExistingContent = hasTextContent || hasImageContent;
     const [prompt, setPrompt] = useState(isEditingExistingContent ? "" : node.metadata?.prompt || "");
+    const [expanded, setExpanded] = useState(false);
+    const expandedEditorRef = useRef<HTMLTextAreaElement | null>(null);
     const credits = requestCreditCost({
         apiSource: config.apiSource,
         modelPointCosts: config.modelPointCosts,
@@ -67,9 +71,14 @@ export function CanvasNodePromptPanel({ node, isRunning, onPromptChange, onConfi
 
     const submit = () => {
         const text = prompt.trim();
-        if (!text || isRunning) return;
+        if (!text || isRunning) return false;
         onGenerate(node.id, mode, text);
         setPrompt("");
+        return true;
+    };
+
+    const submitExpanded = () => {
+        if (submit()) setExpanded(false);
     };
 
     return (
@@ -80,15 +89,36 @@ export function CanvasNodePromptPanel({ node, isRunning, onPromptChange, onConfi
             onPointerDown={(event) => event.stopPropagation()}
             onWheel={(event) => event.stopPropagation()}
         >
-            <CanvasResourceMentionTextarea
-                value={prompt}
-                references={mentionReferences}
-                onChange={updatePrompt}
-                onSubmit={submit}
-                className="thin-scrollbar h-24 w-full resize-none rounded-xl border px-3 py-2 text-sm leading-5 outline-none"
-                style={{ background: theme.node.fill, borderColor: theme.node.stroke, color: theme.node.text }}
-                placeholder={promptPlaceholder(mode, hasImageContent, hasTextContent, isPanorama)}
-            />
+            <div className="relative">
+                <CanvasResourceMentionTextarea
+                    autoFocus
+                    value={prompt}
+                    references={mentionReferences}
+                    onChange={updatePrompt}
+                    onSubmit={submit}
+                    aria-label="节点提示词"
+                    className="thin-scrollbar h-24 w-full resize-none rounded-xl border px-3 py-2 pr-11 text-sm leading-5 outline-none"
+                    style={{ background: theme.node.fill, borderColor: theme.node.stroke, color: theme.node.text }}
+                    placeholder={promptPlaceholder(mode, hasImageContent, hasTextContent, isPanorama)}
+                />
+                <Tooltip title="放大提示词输入" placement="top">
+                    <button
+                        type="button"
+                        data-canvas-no-drag
+                        className="absolute right-2 top-2 z-10 grid size-8 place-items-center rounded-lg border transition-opacity hover:opacity-75 focus-visible:outline-none focus-visible:ring-2"
+                        style={{ background: theme.toolbar.panel, borderColor: theme.toolbar.border, color: theme.toolbar.item }}
+                        onClick={(event) => {
+                            event.stopPropagation();
+                            setExpanded(true);
+                        }}
+                        onMouseDown={stopCanvasInteraction}
+                        onPointerDown={stopCanvasInteraction}
+                        aria-label="放大提示词输入"
+                    >
+                        <Maximize2 className="size-4" aria-hidden />
+                    </button>
+                </Tooltip>
+            </div>
 
             <div className="mt-2 flex min-w-0 flex-wrap items-center gap-2">
                 <div className="canvas-composer-tools flex min-w-0 flex-1 flex-wrap items-center gap-2">
@@ -117,8 +147,11 @@ export function CanvasNodePromptPanel({ node, isRunning, onPromptChange, onConfi
                             <ModelPicker className="min-w-[9rem] flex-1" config={config} value={config.model} onChange={(model) => onConfigChange(node.id, { model })} capability="video" onMissingConfig={() => openConfigDialog(true)} />
                             <CanvasVideoSettingsPopover
                                 config={config}
+                                metadata={node.metadata}
+                                references={mentionReferences}
                                 buttonClassName="canvas-composer-settings !h-10 !min-w-[9rem] !max-w-full !flex-1 !justify-start !rounded-full !px-3"
                                 onConfigChange={(key, value) => onConfigChange(node.id, canvasVideoConfigPatch(key, value))}
+                                onMetadataChange={(patch) => onConfigChange(node.id, patch)}
                             />
                             <CanvasCameraControl
                                 value={node.metadata?.cameraControl}
@@ -165,6 +198,57 @@ export function CanvasNodePromptPanel({ node, isRunning, onPromptChange, onConfi
                         )}
                     </span>
                 </Button>
+            </div>
+
+            <div className="contents" onClick={stopCanvasInteraction} onDoubleClick={stopCanvasInteraction} onMouseDown={stopCanvasInteraction} onPointerDown={stopCanvasInteraction} onWheel={stopCanvasInteraction} onContextMenu={stopCanvasInteraction}>
+                <Modal
+                    className="canvas-prompt-editor-modal"
+                    open={expanded}
+                    title="编辑提示词"
+                    centered
+                    destroyOnHidden
+                    mask={{ closable: false }}
+                    width="min(760px, calc(100vw - 24px))"
+                    onCancel={() => setExpanded(false)}
+                    afterOpenChange={(open) => {
+                        if (!open) return;
+                        requestAnimationFrame(() => {
+                            const textarea = expandedEditorRef.current;
+                            textarea?.focus();
+                            textarea?.setSelectionRange(textarea.value.length, textarea.value.length);
+                        });
+                    }}
+                    styles={{
+                        container: { background: theme.node.panel, border: `1px solid ${theme.toolbar.border}`, color: theme.node.text },
+                        header: { background: theme.node.panel, marginBottom: 0, paddingBottom: 8 },
+                        title: { color: theme.node.text },
+                        body: { background: theme.node.panel, padding: "4px 12px 12px" },
+                    }}
+                    footer={null}
+                >
+                    <div data-canvas-prompt-editor="expanded" className="min-w-0 overflow-hidden rounded-xl border" style={{ borderColor: theme.node.stroke }}>
+                        <CanvasResourceMentionTextarea
+                            ref={expandedEditorRef}
+                            autoFocus={expanded}
+                            value={prompt}
+                            references={mentionReferences}
+                            onChange={updatePrompt}
+                            onSubmit={submitExpanded}
+                            aria-label="提示词编辑器"
+                            className="thin-scrollbar h-[min(52vh,26rem)] min-h-64 w-full resize-none border-0 px-4 py-3 text-sm leading-6 outline-none"
+                            style={{ background: theme.node.fill, color: theme.node.text }}
+                            placeholder={promptPlaceholder(mode, hasImageContent, hasTextContent, isPanorama)}
+                        />
+                    </div>
+                    <div className="mt-3 flex items-center justify-end gap-2">
+                        <Button icon={<Minimize2 className="size-4" />} onClick={() => setExpanded(false)} aria-label="收起提示词输入">
+                            收起
+                        </Button>
+                        <Button type="primary" danger={isRunning} disabled={!isRunning && !prompt.trim()} onClick={() => (isRunning ? onStop(node.id) : submitExpanded())} aria-label={isRunning ? "停止生成" : "生成"}>
+                            {isRunning ? "停止生成" : "生成"}
+                        </Button>
+                    </div>
+                </Modal>
             </div>
         </div>
     );

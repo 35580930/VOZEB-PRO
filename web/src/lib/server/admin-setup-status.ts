@@ -21,12 +21,15 @@ type AdminSetupStep = {
 };
 
 export type AdminSetupSummary = {
+    siteTitle: string;
     completed: number;
     total: number;
     percent: number;
     users: number;
     admins: number;
+    totalChannels: number;
     enabledChannels: number;
+    modelCount: number;
     enabledProducts: number;
     enabledPlanProducts: number;
     databaseProvider: "file" | "postgres";
@@ -34,8 +37,12 @@ export type AdminSetupSummary = {
 };
 
 export async function getAdminSetupSummary(input?: { settings?: AuthSettings; userSummary?: PublicUserSummary }) {
-    const [settings, userSummary, products] = await Promise.all([input?.settings ? Promise.resolve(input.settings) : getAuthSettings(), input?.userSummary ? Promise.resolve(input.userSummary) : getPublicUserSummary(), getBillingProductsSafe()]);
-    const paymentConfig = await getPaymentConfigSummary();
+    const [settings, userSummary, products, paymentConfig] = await Promise.all([
+        input?.settings ? Promise.resolve(input.settings) : getAuthSettings(),
+        input?.userSummary ? Promise.resolve(input.userSummary) : getPublicUserSummary(),
+        getBillingProductsSafe(),
+        getPaymentConfigSummary(),
+    ]);
     return buildAdminSetupSummary({ settings, userSummary, products, paymentConfig });
 }
 
@@ -139,12 +146,15 @@ function buildAdminSetupSummary(input: { settings: AuthSettings; userSummary: Pu
     ];
     const completed = steps.filter((step) => step.status === "done").length;
     return {
+        siteTitle: settings.site.title,
         completed,
         total: steps.length,
         percent: Math.round((completed / steps.length) * 100),
         users: userSummary.total,
         admins,
+        totalChannels: settings.systemChannels.length,
         enabledChannels,
+        modelCount: channelModels.size,
         enabledProducts,
         enabledPlanProducts,
         databaseProvider,

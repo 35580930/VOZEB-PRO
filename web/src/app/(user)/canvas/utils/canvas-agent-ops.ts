@@ -35,7 +35,7 @@ export function applyCanvasAgentOps(snapshot: CanvasAgentSnapshot, ops?: CanvasA
         if (op.type === "add_node") {
             const nodeType = Object.values(CanvasNodeType).includes(op.nodeType as CanvasNodeType) ? op.nodeType! : CanvasNodeType.Text;
             const spec = getNodeSpec(nodeType);
-            const isAgentNode = Boolean(op.metadata?.agentRunId) || op.id?.startsWith("output-agent-");
+            const isAgentNode = Boolean(op.metadata?.agentRunId);
             const existing = op.id ? nodes.find((node) => node.id === op.id) : undefined;
             if (existing) {
                 nodes = nodes.map((node) => (node.id === op.id ? { ...node, type: nodeType, title: op.title || node.title, metadata: { ...node.metadata, ...op.metadata } } : node));
@@ -77,7 +77,17 @@ export function applyCanvasAgentOps(snapshot: CanvasAgentSnapshot, ops?: CanvasA
                 if (!isCanvasVisualMedia(updated.type) || !naturalWidth || !naturalHeight || updated.metadata?.freeResize) return updated;
                 const size = fitNodeAspectRatio(naturalWidth, naturalHeight, Math.max(updated.width, updated.height), Math.max(updated.width, updated.height));
                 const center = { x: updated.position.x + updated.width / 2, y: updated.position.y + updated.height / 2 };
-                return { ...updated, width: size.width, height: size.height, position: { x: center.x - size.width / 2, y: center.y - size.height / 2 } };
+                const resized = { ...updated, width: size.width, height: size.height, position: { x: center.x - size.width / 2, y: center.y - size.height / 2 } };
+                if (!resized.metadata?.agentRunId) return resized;
+                return {
+                    ...resized,
+                    position: findFreeNodePosition(
+                        nodes.filter((item) => item.id !== resized.id),
+                        resized.position,
+                        resized.width,
+                        resized.height,
+                    ),
+                };
             });
         }
         if (op.type === "delete_node") {
@@ -109,12 +119,13 @@ function isCanvasVisualMedia(type: CanvasNodeType) {
 
 export function findFreeNodePosition(nodes: CanvasNodeData[], start: { x: number; y: number }, width: number, height: number) {
     const gap = 36;
-    for (let step = 0; step < 200; step += 1) {
-        const column = step % 5;
-        const row = Math.floor(step / 5);
-        const candidate = { x: start.x + column * (width + gap), y: start.y + row * (height + gap) };
-        const overlaps = nodes.some((node) => candidate.x < node.position.x + node.width + gap && candidate.x + width + gap > node.position.x && candidate.y < node.position.y + node.height + gap && candidate.y + height + gap > node.position.y);
-        if (!overlaps) return candidate;
+    const blockers = nodes.filter((node) => start.y < node.position.y + node.height + gap && start.y + height + gap > node.position.y).sort((left, right) => left.position.x - right.position.x);
+    let x = start.x;
+    for (const node of blockers) {
+        const nodeRight = node.position.x + node.width + gap;
+        if (x >= nodeRight) continue;
+        if (x + width + gap <= node.position.x) break;
+        x = nodeRight;
     }
-    return { x: start.x, y: start.y + nodes.length * (height + gap) };
+    return { x, y: start.y };
 }

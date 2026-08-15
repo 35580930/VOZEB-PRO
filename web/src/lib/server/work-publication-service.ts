@@ -54,9 +54,14 @@ export class WorkPublicationServiceError extends Error {
     }
 }
 
-export async function listWorkPublicationSources(userId: string) {
+export async function listWorkPublicationSources(userId: string, input: { sourceType?: unknown; page?: number; pageSize?: number; keyword?: unknown }) {
     await assertWorkPublicationReady();
-    return createPostgresRepositories().workPublications.listSourceSummaries(requiredId(userId, "用户"));
+    return createPostgresRepositories().workPublications.listSourceSummaries(requiredId(userId, "用户"), {
+        sourceType: requiredSourceType(input.sourceType),
+        page: input.page,
+        pageSize: input.pageSize,
+        keyword: typeof input.keyword === "string" ? input.keyword.trim() : undefined,
+    });
 }
 
 export async function getWorkPublicationSource(userId: string, sourceTypeValue: unknown, sourceIdValue: unknown) {
@@ -429,7 +434,7 @@ function normalizeDraft(
 ) {
     const candidateMap = new Map(candidates.map((candidate) => [candidate.storageKey, candidate]));
     const existingContentKeys = current?.assets.filter((asset) => asset.role === "content").map((asset) => asset.storageKey) || [];
-    const selectedKeys = normalizeStorageKeys(input.assetStorageKeys, existingContentKeys.length ? existingContentKeys : candidates.slice(0, 12).map((candidate) => candidate.storageKey));
+    const selectedKeys = normalizeStorageKeys(input.assetStorageKeys, existingContentKeys.length ? existingContentKeys : candidates.map((candidate) => candidate.storageKey));
     if (!selectedKeys.length) throw new WorkPublicationServiceError("请至少选择一个作品媒体");
     for (const key of selectedKeys) if (!candidateMap.has(key)) throw new WorkPublicationServiceError("选择的媒体不属于当前来源", 400);
 
@@ -616,7 +621,7 @@ function normalizeTags(value: unknown) {
 
 function normalizeStorageKeys(value: unknown, fallback: string[]) {
     const source = value === undefined ? fallback : Array.isArray(value) ? value : [];
-    return [...new Set(source.map(normalizeStorageKey).filter(Boolean))].slice(0, 20);
+    return [...new Set(source.map(normalizeStorageKey).filter(Boolean))];
 }
 
 function normalizeStorageKey(value: unknown) {

@@ -1,18 +1,15 @@
 "use client";
 
-import dynamic from "next/dynamic";
+import { nanoid } from "nanoid";
 import { useCallback, useEffect } from "react";
 
+import { clipboardImageFiles } from "@/lib/clipboard-image-files";
 import { uploadMediaFile } from "@/services/file-storage";
 import { NODE_DEFAULT_SIZE } from "../constants";
 import { CanvasNodeType, type CanvasNodeData, type Position } from "../types";
 import { fitNodeSize } from "../utils/canvas-node-size";
 
-const CanvasAssistantPanel = dynamic(() => import("../components/canvas-assistant-panel").then((mod) => mod.CanvasAssistantPanel), { ssr: false });
-const loadAssetPickerModal = () => import("../components/asset-picker-modal").then((mod) => mod.AssetPickerModal);
-const AssetPickerModal = dynamic(loadAssetPickerModal, { ssr: false, loading: () => null });
-
-import { NODE_STATUS_SUCCESS, VIDEO_NODE_MAX_HEIGHT, VIDEO_NODE_MAX_WIDTH, createCanvasNode } from "./canvas-page-elements";
+import { CANVAS_DROP_NODE_OFFSET, NODE_STATUS_SUCCESS, VIDEO_NODE_MAX_HEIGHT, VIDEO_NODE_MAX_WIDTH, createCanvasNode } from "./canvas-page-elements";
 import { audioMetadata, imageMetadata, uploadCanvasImage, videoMetadata } from "./canvas-page-utils";
 
 import type { CanvasInteractions } from "./use-canvas-interactions";
@@ -28,7 +25,6 @@ export function useCanvasFileActions({ state, interactions }: { state: CanvasPag
         setSelectedConnectionId,
         setHoveredNodeId,
         setPendingConnectionCreate,
-        setSelectionBox,
         setContextMenu,
         setToolbarNodeId,
         setDialogNodeId,
@@ -39,12 +35,12 @@ export function useCanvasFileActions({ state, interactions }: { state: CanvasPag
         nodesRef,
         selectedNodeIdsRef,
     } = state;
-    const { getCanvasCenter, setConnecting, deleteNodes, deleteConnection, copySelectedNodes, pasteCopiedNodes, undoCanvas, redoCanvas } = interactions;
+    const { getCanvasCenter, deleteNodes, deleteConnection, copySelectedNodes, pasteCopiedNodes, undoCanvas, redoCanvas } = interactions;
 
-    const createImageFileNode = useCallback(async (file: File, position: Position, preserveSelection = false) => {
+    const createImageFileNode = useCallback(async (file: File, position: Position, preserveSelection = false, openDialog = true) => {
         const image = await uploadCanvasImage(file);
         const size = fitNodeSize(image.width, image.height);
-        const id = `image-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+        const id = `image-${nanoid()}`;
         const newNode: CanvasNodeData = {
             id,
             type: CanvasNodeType.Image,
@@ -58,14 +54,14 @@ export function useCanvasFileActions({ state, interactions }: { state: CanvasPag
         setNodes((prev) => [...prev, newNode]);
         setSelectedNodeIds((current) => (preserveSelection ? new Set([...current, id]) : new Set([id])));
         setSelectedConnectionId(null);
-        setDialogNodeId(id);
+        if (openDialog) setDialogNodeId(id);
         return id;
     }, []);
 
-    const createVideoFileNode = useCallback(async (file: File, position: Position) => {
+    const createVideoFileNode = useCallback(async (file: File, position: Position, preserveSelection = false, openDialog = true) => {
         const video = await uploadMediaFile(file, "video");
         const size = fitNodeSize(video.width || 1280, video.height || 720, VIDEO_NODE_MAX_WIDTH, VIDEO_NODE_MAX_HEIGHT);
-        const id = `video-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+        const id = `video-${nanoid()}`;
         setNodes((prev) => [
             ...prev,
             {
@@ -78,15 +74,16 @@ export function useCanvasFileActions({ state, interactions }: { state: CanvasPag
                 metadata: videoMetadata(video),
             },
         ]);
-        setSelectedNodeIds(new Set([id]));
+        setSelectedNodeIds((current) => (preserveSelection ? new Set([...current, id]) : new Set([id])));
         setSelectedConnectionId(null);
-        setDialogNodeId(id);
+        if (openDialog) setDialogNodeId(id);
+        return id;
     }, []);
 
-    const createAudioFileNode = useCallback(async (file: File, position: Position) => {
+    const createAudioFileNode = useCallback(async (file: File, position: Position, preserveSelection = false) => {
         const audio = await uploadMediaFile(file, "audio");
         const spec = NODE_DEFAULT_SIZE[CanvasNodeType.Audio];
-        const id = `audio-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+        const id = `audio-${nanoid()}`;
         setNodes((prev) => [
             ...prev,
             {
@@ -99,8 +96,9 @@ export function useCanvasFileActions({ state, interactions }: { state: CanvasPag
                 metadata: audioMetadata(audio),
             },
         ]);
-        setSelectedNodeIds(new Set([id]));
+        setSelectedNodeIds((current) => (preserveSelection ? new Set([...current, id]) : new Set([id])));
         setSelectedConnectionId(null);
+        return id;
     }, []);
 
     const createTextNodeFromClipboard = useCallback(
@@ -123,24 +121,32 @@ export function useCanvasFileActions({ state, interactions }: { state: CanvasPag
         [getCanvasCenter],
     );
 
-    const pasteSystemClipboard = useCallback(async () => {
-        if (!navigator.clipboard) return;
+    useEffect(() => {
+        const handlePaste = (event: ClipboardEvent) => {
+            const target = event.target instanceof Element ? event.target : null;
+            if (event.target instanceof HTMLInputElement || event.target instanceof HTMLTextAreaElement || event.target instanceof HTMLSelectElement || target?.closest("[contenteditable='true'],[data-canvas-no-zoom]")) return;
+            if (!event.clipboardData) return;
+            const images = clipboardImageFiles(event.clipboardData);
+            if (images.length) {
+                event.preventDefault();
+                setSelectedNodeIds(new Set());
+                const center = getCanvasCenter();
+                void Promise.allSettled(images.map((file, index) => createImageFileNode(file, { x: center.x + index * CANVAS_DROP_NODE_OFFSET, y: center.y + index * CANVAS_DROP_NODE_OFFSET }, true, false))).then((results) => {
+                    const failures = results.filter((result) => result.status === "rejected");
+                    if (failures.length) message.error(failures.length === images.length ? "剪切板图片添加失败" : `有 ${failures.length} 张剪切板图片添加失败`);
+                    if (failures.length < images.length) message.success(`已从剪切板添加 ${images.length - failures.length} 张图片`);
+                });
+                return;
+            }
+            const text = event.clipboardData?.getData("text/plain") || "";
+            if (!text.trim()) return;
+            event.preventDefault();
+            if (createTextNodeFromClipboard(text)) message.success("已从剪切板添加文本");
+        };
 
-        const items = await navigator.clipboard.read();
-        const imageItem = items.find((item) => item.types.some((type) => type.startsWith("image/")));
-        if (imageItem) {
-            const imageType = imageItem.types.find((type) => type.startsWith("image/"));
-            if (!imageType) return;
-            const blob = await imageItem.getType(imageType);
-            const file = new File([blob], "clipboard-image.png", { type: imageType });
-            void createImageFileNode(file, getCanvasCenter());
-            message.success("已从剪切板添加图片");
-            return;
-        }
-
-        const text = await navigator.clipboard.readText();
-        if (createTextNodeFromClipboard(text)) message.success("已从剪切板添加文本");
-    }, [createImageFileNode, createTextNodeFromClipboard, getCanvasCenter, message]);
+        window.addEventListener("paste", handlePaste);
+        return () => window.removeEventListener("paste", handlePaste);
+    }, [createImageFileNode, createTextNodeFromClipboard, getCanvasCenter, message, setSelectedNodeIds]);
 
     useEffect(() => {
         const handleKeyDown = (event: KeyboardEvent) => {
@@ -168,7 +174,6 @@ export function useCanvasFileActions({ state, interactions }: { state: CanvasPag
                 setSelectedNodeIds(new Set(nodesRef.current.map((node) => node.id)));
                 setSelectedConnectionId(null);
                 setContextMenu(null);
-                setSelectionBox(null);
                 return;
             }
 
@@ -179,8 +184,7 @@ export function useCanvasFileActions({ state, interactions }: { state: CanvasPag
             }
 
             if (isModifierShortcut && !event.altKey && key === "v") {
-                event.preventDefault();
-                if (!pasteCopiedNodes()) void pasteSystemClipboard();
+                if (pasteCopiedNodes()) event.preventDefault();
                 return;
             }
 
@@ -196,8 +200,6 @@ export function useCanvasFileActions({ state, interactions }: { state: CanvasPag
                 setSelectedNodeIds(new Set());
                 setSelectedConnectionId(null);
                 setContextMenu(null);
-                setSelectionBox(null);
-                setConnecting(null);
                 setHoveredNodeId(null);
                 setToolbarNodeId(null);
                 setDialogNodeId(null);
@@ -211,13 +213,12 @@ export function useCanvasFileActions({ state, interactions }: { state: CanvasPag
 
         window.addEventListener("keydown", handleKeyDown);
         return () => window.removeEventListener("keydown", handleKeyDown);
-    }, [copySelectedNodes, deleteConnection, deleteNodes, pasteCopiedNodes, pasteSystemClipboard, redoCanvas, selectedConnectionId, setConnecting, undoCanvas]);
+    }, [copySelectedNodes, deleteConnection, deleteNodes, pasteCopiedNodes, redoCanvas, selectedConnectionId, undoCanvas]);
     return {
         createImageFileNode,
         createVideoFileNode,
         createAudioFileNode,
         createTextNodeFromClipboard,
-        pasteSystemClipboard,
     };
 }
 

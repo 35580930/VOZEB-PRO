@@ -102,6 +102,7 @@ const POSTGRES_SCHEMA_OBJECTS = [
     "billing_orders_created_idx",
     "billing_orders_pending_expires_idx",
     "billing_orders_provider_idx",
+    "billing_orders_provider_payment_idx",
     "billing_orders_product_idx",
     "user_coupons_user_status_idx",
     "user_coupons_template_user_idx",
@@ -237,6 +238,11 @@ const POSTGRES_SCHEMA_OBJECTS = [
     "object_storage_settings_set_updated_at",
 ] as const;
 
+const POSTGRES_RELATION_NAMES = new Set<string>([...POSTGRES_TABLES, ...POSTGRES_SCHEMA_OBJECTS]);
+const POSTGRES_IDENTIFIER_PATTERN = new RegExp(`(?<!${POSTGRES_TABLE_PREFIX})\\b(${[...POSTGRES_SCHEMA_OBJECTS, ...POSTGRES_TABLES].join("|")})\\b`, "g");
+const POSTGRES_RELATION_LITERAL_FUNCTIONS = new Set<string>(["currval", "nextval", "pg_get_serial_sequence", "setval", "to_regclass"]);
+const POSTGRES_CATALOG_OBJECT_NAME_COLUMNS = new Set<string>(["conname", "indexname", "proname", "relname", "sequencename", "tgname"]);
+
 const globalForPostgres = globalThis as typeof globalThis & {
     __vozebProPostgresPool?: Pool;
     __vozebProPostgresSchemaReady?: Promise<void>;
@@ -244,6 +250,7 @@ const globalForPostgres = globalThis as typeof globalThis & {
 };
 
 type PostgresNotificationListener = (payload: string) => void;
+const POSTGRES_SCHEMA_LOCK_KEY = "vozeb-pro:schema";
 type PostgresNotificationState = {
     client?: Client;
     connecting?: Promise<void>;
@@ -271,7 +278,7 @@ function getPostgresPool() {
         globalForPostgres.__vozebProPostgresPool = new Pool({
             connectionString,
             max: normalizePoolMax(process.env.VOZEB_PRO_DATABASE_POOL_MAX),
-            ssl: parseBoolean(process.env.VOZEB_PRO_DATABASE_SSL) ? { rejectUnauthorized: false } : undefined,
+            ssl: postgresSslConfig(),
         });
     }
 
@@ -343,7 +350,7 @@ async function ensurePostgresNotificationClient(state: PostgresNotificationState
     if (state.connecting) return state.connecting;
     const connectionString = getPostgresConnectionString();
     if (!connectionString) throw new Error("DATABASE_URL is required for PostgreSQL notifications");
-    const client = new Client({ connectionString, ssl: parseBoolean(process.env.VOZEB_PRO_DATABASE_SSL) ? { rejectUnauthorized: false } : undefined });
+    const client = new Client({ connectionString, ssl: postgresSslConfig() });
     state.connecting = (async () => {
         await client.connect();
         client.on("notification", (message) => {
@@ -386,8 +393,10 @@ export async function ensurePostgresSchema() {
 
 export async function initializePostgresSchema() {
     if (!globalForPostgres.__vozebProPostgresSchemaReady) {
-        globalForPostgres.__vozebProPostgresSchemaReady = getPostgresPool()
-            .query(prefixPostgresSql(POSTGRESQL_SCHEMA_SQL))
+        globalForPostgres.__vozebProPostgresSchemaReady = withPostgresTransaction(async (client) => {
+            await client.query("SELECT pg_advisory_xact_lock(hashtext($1))", [POSTGRES_SCHEMA_LOCK_KEY]);
+            await client.query(POSTGRESQL_SCHEMA_SQL);
+        })
             .then(() => undefined)
             .catch((error) => {
                 globalForPostgres.__vozebProPostgresSchemaReady = undefined;
@@ -398,14 +407,168 @@ export async function initializePostgresSchema() {
 }
 
 function prefixPostgresSql(sql: string) {
-    let next = sql;
-    for (const objectName of POSTGRES_SCHEMA_OBJECTS) {
-        next = next.replace(new RegExp(`(?<!${POSTGRES_TABLE_PREFIX})\\b${objectName}\\b`, "g"), `${POSTGRES_TABLE_PREFIX}${objectName}`);
+    let result = "";
+    let segmentStart = 0;
+    let cursor = 0;
+
+    while (cursor < sql.length) {
+        if (sql.startsWith("--", cursor)) {
+            result += prefixPostgresIdentifiers(sql.slice(segmentStart, cursor));
+            const commentEnd = sql.indexOf("\n", cursor + 2);
+            const end = commentEnd === -1 ? sql.length : commentEnd + 1;
+            result += sql.slice(cursor, end);
+            cursor = end;
+            segmentStart = end;
+            continue;
+        }
+        if (sql.startsWith("/*", cursor)) {
+            result += prefixPostgresIdentifiers(sql.slice(segmentStart, cursor));
+            const end = findPostgresBlockCommentEnd(sql, cursor);
+            result += sql.slice(cursor, end);
+            cursor = end;
+            segmentStart = end;
+            continue;
+        }
+        if (sql[cursor] === "$") {
+            const delimiter = readPostgresDollarDelimiter(sql, cursor);
+            if (delimiter) {
+                result += prefixPostgresIdentifiers(sql.slice(segmentStart, cursor));
+                const bodyStart = cursor + delimiter.length;
+                const closingStart = sql.indexOf(delimiter, bodyStart);
+                const end = closingStart === -1 ? sql.length : closingStart + delimiter.length;
+                if (closingStart !== -1 && isPostgresExecutableDollarBody(sql, cursor)) {
+                    result += delimiter + prefixPostgresSql(sql.slice(bodyStart, closingStart)) + delimiter;
+                } else {
+                    result += sql.slice(cursor, end);
+                }
+                cursor = end;
+                segmentStart = end;
+                continue;
+            }
+        }
+        if (sql[cursor] === "'") {
+            result += prefixPostgresIdentifiers(sql.slice(segmentStart, cursor));
+            const end = findPostgresStringEnd(sql, cursor);
+            result += prefixPostgresRelationLiteral(sql, cursor, end);
+            cursor = end;
+            segmentStart = end;
+            continue;
+        }
+        cursor += 1;
     }
-    for (const table of POSTGRES_TABLES) {
-        next = next.replace(new RegExp(`(?<!${POSTGRES_TABLE_PREFIX})\\b${table}\\b`, "g"), `${POSTGRES_TABLE_PREFIX}${table}`);
+
+    return result + prefixPostgresIdentifiers(sql.slice(segmentStart));
+}
+
+function prefixPostgresIdentifiers(sql: string) {
+    return sql.replace(POSTGRES_IDENTIFIER_PATTERN, `${POSTGRES_TABLE_PREFIX}$1`);
+}
+
+function readPostgresDollarDelimiter(sql: string, start: number) {
+    let cursor = start + 1;
+    if (sql[cursor] === "$") return "$$";
+    if (!/[a-z_]/i.test(sql[cursor] || "")) return "";
+    cursor += 1;
+    while (/[a-z0-9_]/i.test(sql[cursor] || "")) cursor += 1;
+    return sql[cursor] === "$" ? sql.slice(start, cursor + 1) : "";
+}
+
+function isPostgresExecutableDollarBody(sql: string, start: number) {
+    let cursor = start - 1;
+    while (cursor >= 0 && /\s/.test(sql[cursor])) cursor -= 1;
+    const wordEnd = cursor + 1;
+    while (cursor >= 0 && /[a-z]/i.test(sql[cursor])) cursor -= 1;
+    const precedingWord = sql.slice(cursor + 1, wordEnd).toLowerCase();
+    if (precedingWord === "do") return true;
+    if (precedingWord !== "as") return false;
+    const statement = sql.slice(sql.lastIndexOf(";", cursor) + 1, start);
+    return /\bCREATE\s+(?:OR\s+REPLACE\s+)?(?:FUNCTION|PROCEDURE)\b/i.test(statement);
+}
+
+function findPostgresStringEnd(sql: string, start: number) {
+    const escapeBackslashes = sql[start - 1]?.toLowerCase() === "e" && !/[a-z0-9_$]/i.test(sql[start - 2] || "");
+    let cursor = start + 1;
+    while (cursor < sql.length) {
+        if (escapeBackslashes && sql[cursor] === "\\") {
+            cursor += 2;
+            continue;
+        }
+        if (sql[cursor] !== "'") {
+            cursor += 1;
+            continue;
+        }
+        if (sql[cursor + 1] === "'") {
+            cursor += 2;
+            continue;
+        }
+        return cursor + 1;
     }
-    return next;
+    return sql.length;
+}
+
+function findPostgresBlockCommentEnd(sql: string, start: number) {
+    let depth = 1;
+    let cursor = start + 2;
+    while (cursor < sql.length && depth > 0) {
+        if (sql.startsWith("/*", cursor)) {
+            depth += 1;
+            cursor += 2;
+        } else if (sql.startsWith("*/", cursor)) {
+            depth -= 1;
+            cursor += 2;
+        } else {
+            cursor += 1;
+        }
+    }
+    return cursor;
+}
+
+function prefixPostgresRelationLiteral(sql: string, start: number, end: number) {
+    const literal = sql.slice(start, end);
+    const shouldPrefix = isPostgresRelationLiteralContext(sql, start, end) || isPostgresCatalogObjectLiteralContext(sql, start);
+    if (!shouldPrefix) return literal;
+
+    const value = literal.slice(1, -1);
+    const separator = value.lastIndexOf(".");
+    const qualifier = separator === -1 ? "" : value.slice(0, separator + 1);
+    const name = separator === -1 ? value : value.slice(separator + 1);
+    return POSTGRES_RELATION_NAMES.has(name) ? `'${qualifier}${POSTGRES_TABLE_PREFIX}${name}'` : literal;
+}
+
+function isPostgresRelationLiteralContext(sql: string, start: number, end: number) {
+    if (/^\s*::\s*(?:pg_catalog\.)?regclass\b/i.test(sql.slice(end))) return true;
+
+    let cursor = start - 1;
+    while (cursor >= 0 && /\s/.test(sql[cursor])) cursor -= 1;
+    if (sql[cursor] !== "(") return false;
+    cursor -= 1;
+    while (cursor >= 0 && /\s/.test(sql[cursor])) cursor -= 1;
+    const nameEnd = cursor + 1;
+    while (cursor >= 0 && /[a-z0-9_.]/i.test(sql[cursor])) cursor -= 1;
+    const functionName =
+        sql
+            .slice(cursor + 1, nameEnd)
+            .split(".")
+            .pop()
+            ?.toLowerCase() || "";
+    return POSTGRES_RELATION_LITERAL_FUNCTIONS.has(functionName);
+}
+
+function isPostgresCatalogObjectLiteralContext(sql: string, start: number) {
+    let cursor = start - 1;
+    while (cursor >= 0 && /\s/.test(sql[cursor])) cursor -= 1;
+    if (sql[cursor] !== "=") return false;
+    cursor -= 1;
+    while (cursor >= 0 && /\s/.test(sql[cursor])) cursor -= 1;
+    const nameEnd = cursor + 1;
+    while (cursor >= 0 && /[a-z0-9_.]/i.test(sql[cursor])) cursor -= 1;
+    const columnName =
+        sql
+            .slice(cursor + 1, nameEnd)
+            .split(".")
+            .pop()
+            ?.toLowerCase() || "";
+    return POSTGRES_CATALOG_OBJECT_NAME_COLUMNS.has(columnName);
 }
 
 function normalizePoolMax(value: string | undefined) {
@@ -415,4 +578,11 @@ function normalizePoolMax(value: string | undefined) {
 
 function parseBoolean(value: string | undefined) {
     return ["1", "true", "yes", "on"].includes(value?.trim().toLowerCase() || "");
+}
+
+function postgresSslConfig() {
+    if (!parseBoolean(process.env.VOZEB_PRO_DATABASE_SSL)) return undefined;
+    const rejectUnauthorized = !["0", "false", "no", "off"].includes(process.env.VOZEB_PRO_DATABASE_SSL_REJECT_UNAUTHORIZED?.trim().toLowerCase() || "");
+    const ca = process.env.VOZEB_PRO_DATABASE_SSL_CA?.trim().replace(/\\n/g, "\n") || "";
+    return { rejectUnauthorized, ...(ca ? { ca } : {}) };
 }

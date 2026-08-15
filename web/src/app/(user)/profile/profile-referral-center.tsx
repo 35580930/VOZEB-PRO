@@ -1,29 +1,39 @@
 "use client";
 
-import { useCallback, useEffect, useState, type ReactNode } from "react";
-import { App, Button, Tag } from "antd";
+import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
+import { App, Button, Pagination, Tag } from "antd";
 import { Copy, Gift, Link2, RefreshCw, ShieldCheck, UserPlus } from "lucide-react";
 
 import { useCopyText } from "@/hooks/use-copy-text";
 import { getReferralCenter, type ReferralCenter, type ReferralRewardStatus, type ReferralRiskStatus } from "@/services/api/referrals";
 import { AccountPanel, LoadingBlock, profilePrimaryButtonClass, profileSecondaryButtonClass } from "./profile-elements";
 
+const REFERRAL_PAGE_SIZE = 8;
+
 export function ProfileReferralCenter() {
     const { message } = App.useApp();
     const copyText = useCopyText();
     const [data, setData] = useState<ReferralCenter | null>(null);
     const [loading, setLoading] = useState(true);
+    const referralsPage = useRef(1);
+    const rewardsPage = useRef(1);
 
-    const load = useCallback(async () => {
-        setLoading(true);
-        try {
-            setData(await getReferralCenter());
-        } catch (error) {
-            message.error(error instanceof Error ? error.message : "加载邀请中心失败");
-        } finally {
-            setLoading(false);
-        }
-    }, [message]);
+    const load = useCallback(
+        async (input: { referralsPage?: number; rewardsPage?: number } = {}) => {
+            setLoading(true);
+            try {
+                const next = await getReferralCenter({ referralsPage: input.referralsPage || referralsPage.current, rewardsPage: input.rewardsPage || rewardsPage.current, pageSize: REFERRAL_PAGE_SIZE });
+                referralsPage.current = next.referralsPage;
+                rewardsPage.current = next.rewardsPage;
+                setData(next);
+            } catch (error) {
+                message.error(error instanceof Error ? error.message : "加载邀请中心失败");
+            } finally {
+                setLoading(false);
+            }
+        },
+        [message],
+    );
 
     useEffect(() => {
         void load();
@@ -108,6 +118,20 @@ export function ProfileReferralCenter() {
                     ) : (
                         <Empty label="暂无成功注册的受邀用户" />
                     )}
+                    {data.referralsTotal > data.referralsPageSize ? (
+                        <div className="mt-3 flex justify-center sm:justify-end">
+                            <Pagination
+                                size="small"
+                                current={data.referralsPage}
+                                pageSize={data.referralsPageSize}
+                                total={data.referralsTotal}
+                                showLessItems
+                                showSizeChanger={false}
+                                disabled={loading}
+                                onChange={(page) => void load({ referralsPage: page })}
+                            />
+                        </div>
+                    ) : null}
                 </AccountPanel>
 
                 <AccountPanel title="奖励记录" description="待结算、已发放、已撤销和人工复核状态均可追踪。">
@@ -134,6 +158,11 @@ export function ProfileReferralCenter() {
                     ) : (
                         <Empty label="暂无邀请奖励记录" />
                     )}
+                    {data.rewardsTotal > data.rewardsPageSize ? (
+                        <div className="mt-3 flex justify-center sm:justify-end">
+                            <Pagination size="small" current={data.rewardsPage} pageSize={data.rewardsPageSize} total={data.rewardsTotal} showLessItems showSizeChanger={false} disabled={loading} onChange={(page) => void load({ rewardsPage: page })} />
+                        </div>
+                    ) : null}
                 </AccountPanel>
             </div>
         </div>

@@ -21,7 +21,7 @@ import { POST } from "./route";
 describe("POST /api/admin/agent-skills/import", () => {
     beforeEach(() => {
         vi.clearAllMocks();
-        mocks.getCurrentUser.mockResolvedValue({ id: "admin", role: "admin" });
+        mocks.getCurrentUser.mockResolvedValue({ id: "admin", role: "admin", status: "active", adminPermissions: ["upstream.manage"] });
         mocks.refineImportedAgentSkill.mockImplementation(async ({ skill }: { skill: unknown }) => skill);
     });
 

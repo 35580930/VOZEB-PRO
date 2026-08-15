@@ -16,7 +16,7 @@ import { GET } from "./route";
 describe("GET /api/admin/generation-logs", () => {
     beforeEach(() => {
         vi.clearAllMocks();
-        mocks.getCurrentUser.mockResolvedValue({ id: "admin", role: "admin" });
+        mocks.getCurrentUser.mockResolvedValue({ id: "admin", role: "admin", status: "active", adminPermissions: ["generation.read"] });
         mocks.listGenerationLogs.mockResolvedValue({ items: [{ id: "log-one", userId: "user-one", username: "creator", displayName: "创作者" }], total: 1, page: 1, pageSize: 20 });
         mocks.getPublicUsersByIds.mockResolvedValue([{ id: "user-one", accountId: "0001", username: "creator", displayName: "创作者" }]);
     });

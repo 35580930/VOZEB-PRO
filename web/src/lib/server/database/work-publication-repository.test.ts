@@ -62,6 +62,25 @@ describe("WorkPublicationRepository", () => {
         expect(query.mock.calls[0]?.[1]).toEqual([null, null, null, "0001", "%0001%", null, 10, 0]);
     });
 
+    it("pages and searches one publication source type without truncating the full source set", async () => {
+        const query = vi.fn(async (..._args: unknown[]) => ({ rows: [{ id: "asset-225", title: "海边短片", kind: "video", updated_at: "2026-08-10T00:00:00.000Z", total_count: "225" }] }));
+        const repository = new WorkPublicationRepository({ query } as unknown as QueryExecutor);
+
+        await expect(repository.listSourceSummaries("user-one", { sourceType: "media", keyword: "海边", page: 9, pageSize: 25 })).resolves.toEqual({
+            items: [{ id: "asset-225", title: "海边短片", kind: "video", updatedAt: "2026-08-10T00:00:00.000Z" }],
+            total: 225,
+            page: 9,
+            pageSize: 25,
+        });
+
+        const [sql, params] = query.mock.calls[0] || [];
+        expect(String(sql)).toContain("FROM library_assets");
+        expect(String(sql)).toContain("kind IN ('image', 'video')");
+        expect(String(sql)).toContain("position($2 in lower(title)) > 0");
+        expect(String(sql)).toContain("LIMIT $3 OFFSET $4");
+        expect(params).toEqual(["user-one", "海边", 25, 200]);
+    });
+
     it("restores only an approved public version owned by the same work", async () => {
         const query = vi.fn(async (..._args: unknown[]) => ({ rows: [] }));
         const repository = new WorkPublicationRepository({ query } as unknown as QueryExecutor);

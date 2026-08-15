@@ -25,9 +25,14 @@ export type CouponTemplateInput = {
     createdByUserId?: unknown;
 };
 
-export async function listCouponTemplates(input: { page?: number; pageSize?: number; includeDisabled?: boolean } = {}) {
+export async function listCouponTemplates(input: { page?: number; pageSize?: number; includeDisabled?: boolean; keyword?: unknown; selectedId?: unknown } = {}) {
     await assertBillingDatabaseReady();
-    return createPostgresRepositories().coupons.listTemplates(input);
+    const { keyword, selectedId, ...pageInput } = input;
+    return createPostgresRepositories().coupons.listTemplates({
+        ...pageInput,
+        keyword: normalizeText(keyword, "", 80) || undefined,
+        selectedId: normalizeId(selectedId) || undefined,
+    });
 }
 
 export async function listClaimableCouponTemplates(input: { userId?: string; page?: number; pageSize?: number } = {}) {

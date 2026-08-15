@@ -1,4 +1,4 @@
-import type { CreateOverviewAsset, CreateOverviewTask, CreateWorkbenchOverviewPayload } from "@/lib/create-workbench-overview";
+import { CREATE_OVERVIEW_RECENT_ASSET_LIMIT, type CreateOverviewAsset, type CreateOverviewTask, type CreateWorkbenchOverviewPayload } from "@/lib/create-workbench-overview";
 import { getLatestCanvasProjectOverview } from "@/lib/server/canvas-project-store";
 import { createPostgresRepositories, ensurePostgresSchema, isPostgresDatabaseEnabled } from "@/lib/server/database";
 import { readGenerationLogDb, stableAssetUrl } from "@/lib/server/generation-log-repository";
@@ -6,7 +6,7 @@ import type { StoredGenerationLog } from "@/lib/server/generation-log-types";
 import { listAgentRuns, type AgentRun } from "@/lib/server/agent-run-store";
 
 export async function getCreateWorkbenchOverview(userId: string): Promise<CreateWorkbenchOverviewPayload> {
-    const [latestProject, generation, agentRuns] = await Promise.all([getLatestCanvasProjectOverview(userId), getCreateGenerationOverview(userId), listAgentRuns(userId, 20)]);
+    const [latestProject, generation, agentRuns] = await Promise.all([getLatestCanvasProjectOverview(userId), getCreateGenerationOverview(userId), listAgentRuns({ userId, surface: "chat", statuses: ["planning", "running", "paused"], limit: 4 })]);
     const runningTasks = [...buildCreateAgentRunOverview(agentRuns), ...generation.runningTasks]
         .filter((task, index, tasks) => tasks.findIndex((candidate) => candidate.id === task.id) === index)
         .sort((left, right) => Date.parse(right.createdAt) - Date.parse(left.createdAt))
@@ -22,7 +22,7 @@ export function buildCreateAgentRunOverview(runs: AgentRun[]): CreateOverviewTas
                 id: run.id,
                 kind: run.tasks.some((task) => task.type === "video") ? "video" : run.tasks.some((task) => task.type === "image") ? "image" : "agent",
                 source: "agent",
-                title: run.prompt.trim().slice(0, 80) || "Agent 创作任务",
+                title: (run.publicPrompt || run.prompt).trim().slice(0, 80) || "Agent 创作任务",
                 createdAt: new Date(run.createdAt).toISOString(),
                 conversationId: run.conversationId,
                 status: run.status,
@@ -53,7 +53,7 @@ export function buildCreateGenerationOverview(logs: StoredGenerationLog[]): Pick
             if (!url || /^(data|blob):/i.test(url) || seen.has(url)) continue;
             seen.add(url);
             recentAssets.push({ id: `${log.id}-${index}`, kind: asset.type, title: log.title || (asset.type === "video" ? "生成视频" : "生成图片"), url, createdAt: log.createdAt });
-            if (recentAssets.length >= 6) return { runningTasks, recentAssets };
+            if (recentAssets.length >= CREATE_OVERVIEW_RECENT_ASSET_LIMIT) return { runningTasks, recentAssets };
         }
     }
 

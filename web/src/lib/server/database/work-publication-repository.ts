@@ -13,6 +13,13 @@ import type {
 } from "./repository-shared";
 import { jsonParam, mapPublishedWork, mapPublishedWorkAsset, mapPublishedWorkSummary, mapPublishedWorkVersion, normalizePage, normalizePageSize, numberValue, pageResult } from "./repository-shared";
 
+export type WorkPublicationSourceSummaryRecord = {
+    id: string;
+    title: string;
+    kind?: "image" | "video";
+    updatedAt: string;
+};
+
 export class WorkPublicationRepository {
     constructor(private readonly db: QueryExecutor) {}
 
@@ -351,17 +358,33 @@ export class WorkPublicationRepository {
         return numberValue(result.rows[0]?.view_count);
     }
 
-    async listSourceSummaries(userId: string) {
-        const [media, canvas, drama] = await Promise.all([
-            this.db.query("SELECT id, kind, title, updated_at FROM library_assets WHERE user_id = $1 AND kind IN ('image', 'video') ORDER BY updated_at DESC LIMIT 200", [userId]),
-            this.db.query("SELECT id, title, updated_at FROM canvas_projects WHERE user_id = $1 ORDER BY updated_at DESC LIMIT 200", [userId]),
-            this.db.query("SELECT id, title, updated_at FROM drama_projects WHERE user_id = $1 ORDER BY updated_at DESC LIMIT 200", [userId]),
-        ]);
-        return {
-            media: media.rows.map((row) => ({ id: String(row.id), title: String(row.title), kind: String(row.kind), updatedAt: String(row.updated_at instanceof Date ? row.updated_at.toISOString() : row.updated_at) })),
-            canvas: canvas.rows.map((row) => ({ id: String(row.id), title: String(row.title), updatedAt: String(row.updated_at instanceof Date ? row.updated_at.toISOString() : row.updated_at) })),
-            drama: drama.rows.map((row) => ({ id: String(row.id), title: String(row.title), updatedAt: String(row.updated_at instanceof Date ? row.updated_at.toISOString() : row.updated_at) })),
-        };
+    async listSourceSummaries(userId: string, input: PageInput & { sourceType: PublishedWorkSourceType; keyword?: string }): Promise<PageResult<WorkPublicationSourceSummaryRecord>> {
+        const page = normalizePage(input.page);
+        const pageSize = normalizePageSize(input.pageSize);
+        const keyword = input.keyword?.trim().toLowerCase() || "";
+        const table = input.sourceType === "media" ? "library_assets" : input.sourceType === "canvas" ? "canvas_projects" : "drama_projects";
+        const kindProjection = input.sourceType === "media" ? "kind" : "NULL::text AS kind";
+        const mediaFilter = input.sourceType === "media" ? "AND kind IN ('image', 'video')" : "";
+        const result = await this.db.query(
+            `SELECT id, title, ${kindProjection}, updated_at, count(*) OVER() AS total_count
+             FROM ${table}
+             WHERE user_id = $1 ${mediaFilter}
+               AND ($2 = '' OR position($2 in lower(title)) > 0)
+             ORDER BY updated_at DESC, id DESC
+             LIMIT $3 OFFSET $4`,
+            [userId, keyword, pageSize, (page - 1) * pageSize],
+        );
+        return pageResult(
+            result.rows.map((row) => ({
+                id: String(row.id),
+                title: String(row.title),
+                kind: row.kind === "image" || row.kind === "video" ? row.kind : undefined,
+                updatedAt: String(row.updated_at instanceof Date ? row.updated_at.toISOString() : row.updated_at),
+            })),
+            numberValue(result.rows[0]?.total_count),
+            page,
+            pageSize,
+        );
     }
 
     async getSourceJson(userId: string, sourceType: PublishedWorkSourceType, sourceId: string): Promise<{ title: string; value: JsonValue } | null> {

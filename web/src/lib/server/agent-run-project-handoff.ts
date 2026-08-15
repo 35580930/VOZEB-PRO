@@ -24,7 +24,7 @@ export function normalizeAgentProjectHandoff(plan: AgentPlan, surface: CreativeS
 export async function buildAgentProjectHandoff(run: AgentRun): Promise<CreativeProjectHandoff | undefined> {
     if (!run.projectHandoff || !isExplicitProjectHandoffRequest(run.prompt)) return undefined;
     const assetIds = Array.from(new Set([...(run.projectHandoff.assetIds || []), ...run.assetIds]));
-    const assets = (await getCreativeAssetsByIds(assetIds)).filter((asset) => asset.userId === run.userId && asset.conversationId === run.conversationId && asset.status === "ready");
+    const assets = (await getCreativeAssetsByIds(assetIds, run.userId)).filter((asset) => asset.conversationId === run.conversationId && asset.status === "ready");
     return {
         id: `handoff-${run.id}`,
         sourceRunId: run.id,

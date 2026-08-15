@@ -30,8 +30,8 @@ type SkillFormValues = {
 };
 
 const workspaceOptions = [
-    { value: "image", label: "生图工作台" },
-    { value: "video", label: "视频工作台" },
+    { value: "image", label: "图片创作" },
+    { value: "video", label: "视频创作" },
     { value: "canvas", label: "画布" },
     { value: "drama", label: "短剧项目" },
 ];

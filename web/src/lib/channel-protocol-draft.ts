@@ -47,6 +47,10 @@ const templateVariables = new Set([
     "videos",
     "audio",
     "audios",
+    "first_frame",
+    "first_frame_url",
+    "last_frame",
+    "last_frame_url",
     "references",
     "content",
 ]);

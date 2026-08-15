@@ -1,11 +1,11 @@
 "use client";
 
-import { Input, InputNumber, Select } from "antd";
-import { SlidersHorizontal, Sparkles } from "lucide-react";
+import { AutoComplete, Input, InputNumber, Select } from "antd";
+import { CircleGauge, SlidersHorizontal, Sparkles } from "lucide-react";
 
 import type { AuthSettings } from "@/lib/auth/store";
 import { resolveLogicalModelConfig } from "@/lib/model-routing-config";
-import { LabeledControl, SectionTitle, SettingToggle } from "@/components/admin/admin-settings-controls";
+import { LabeledControl, SectionTitle } from "@/components/admin/admin-settings-controls";
 
 const settingsPanelSurfaceClass = "rounded-lg border border-zinc-200 bg-white p-4 dark:border-zinc-800 dark:bg-zinc-950";
 
@@ -21,25 +21,44 @@ export function GenerationConcurrencyPanel({ settings, onChange }: { settings: A
             <SectionTitle icon={<Sparkles className="size-4" />} title="每用户并发上限" />
             <div className="mt-4 grid gap-3 sm:grid-cols-2">
                 <LabeledControl label="Agent 同时运行">
-                    <InputNumber className="w-full" min={1} max={10} precision={0} value={settings.generationConcurrency.agent} onChange={(value) => onChange("agent", value)} />
+                    <InputNumber className="w-full" min={1} precision={0} value={settings.generationConcurrency.agent} onChange={(value) => onChange("agent", value)} />
                 </LabeledControl>
                 <LabeledControl label="生图同时生成">
-                    <InputNumber className="w-full" min={1} max={10} precision={0} value={settings.generationConcurrency.image} onChange={(value) => onChange("image", value)} />
+                    <InputNumber className="w-full" min={1} precision={0} value={settings.generationConcurrency.image} onChange={(value) => onChange("image", value)} />
                 </LabeledControl>
                 <LabeledControl label="视频同时生成">
-                    <InputNumber className="w-full" min={1} max={5} precision={0} value={settings.generationConcurrency.video} onChange={(value) => onChange("video", value)} />
+                    <InputNumber className="w-full" min={1} precision={0} value={settings.generationConcurrency.video} onChange={(value) => onChange("video", value)} />
                 </LabeledControl>
                 <LabeledControl label="音频同时生成">
-                    <InputNumber className="w-full" min={1} max={10} precision={0} value={settings.generationConcurrency.audio} onChange={(value) => onChange("audio", value)} />
+                    <InputNumber className="w-full" min={1} precision={0} value={settings.generationConcurrency.audio} onChange={(value) => onChange("audio", value)} />
                 </LabeledControl>
                 <LabeledControl label="文本同时生成">
-                    <InputNumber className="w-full" min={1} max={20} precision={0} value={settings.generationConcurrency.text} onChange={(value) => onChange("text", value)} />
+                    <InputNumber className="w-full" min={1} precision={0} value={settings.generationConcurrency.text} onChange={(value) => onChange("text", value)} />
                 </LabeledControl>
                 <LabeledControl label="整集合成同时运行">
-                    <InputNumber className="w-full" min={1} max={5} precision={0} value={settings.generationConcurrency.render} onChange={(value) => onChange("render", value)} />
+                    <InputNumber className="w-full" min={1} precision={0} value={settings.generationConcurrency.render} onChange={(value) => onChange("render", value)} />
                 </LabeledControl>
             </div>
             <div className="mt-2 text-xs leading-5 text-stone-500 dark:text-stone-400">限制的是单个用户自己的并发任务，不是全站共享上限。</div>
+        </div>
+    );
+}
+
+export function GenerationCostControlPanel({ settings, onChange }: { settings: AuthSettings; onChange: (key: keyof AuthSettings["generationCostControl"], value: number | null) => void }) {
+    return (
+        <div className={settingsPanelSurfaceClass}>
+            <SectionTitle icon={<CircleGauge className="size-4" />} title="生成成本保护" />
+            <div className="mt-4 grid gap-3 sm:grid-cols-3 xl:grid-cols-1 2xl:grid-cols-3">
+                <LabeledControl label="单任务积分上限">
+                    <InputNumber className="w-full" min={0} precision={2} value={settings.generationCostControl.maxPointsPerTask} onChange={(value) => onChange("maxPointsPerTask", value)} />
+                </LabeledControl>
+                <LabeledControl label="单用户每日积分上限">
+                    <InputNumber className="w-full" min={0} precision={2} value={settings.generationCostControl.dailyUserPointSpend} onChange={(value) => onChange("dailyUserPointSpend", value)} />
+                </LabeledControl>
+                <LabeledControl label="全站每日积分上限">
+                    <InputNumber className="w-full" min={0} precision={2} value={settings.generationCostControl.dailyTotalPointSpend} onChange={(value) => onChange("dailyTotalPointSpend", value)} />
+                </LabeledControl>
+            </div>
         </div>
     );
 }
@@ -62,10 +81,10 @@ export function GenerationDefaultsPanel({ settings, onChange }: { settings: Auth
             <SectionTitle icon={<SlidersHorizontal className="size-4" />} title="生成默认值" />
             <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
                 <LabeledControl label="画布默认生图张数">
-                    <InputNumber className="w-full" min={1} max={10} precision={0} value={settings.generationDefaults.canvasImageCount} onChange={(value) => onChange("canvasImageCount", value || 1)} />
+                    <InputNumber className="w-full" min={1} precision={0} value={settings.generationDefaults.canvasImageCount} onChange={(value) => onChange("canvasImageCount", value || 1)} />
                 </LabeledControl>
-                <LabeledControl label="工作台默认生图张数">
-                    <InputNumber className="w-full" min={1} max={10} precision={0} value={settings.generationDefaults.imageCount} onChange={(value) => onChange("imageCount", value || 1)} />
+                <LabeledControl label="Agent 默认生图张数">
+                    <InputNumber className="w-full" min={1} precision={0} value={settings.generationDefaults.imageCount} onChange={(value) => onChange("imageCount", value || 1)} />
                 </LabeledControl>
                 <LabeledControl label="默认图片/视频比例">
                     <Select
@@ -89,10 +108,16 @@ export function GenerationDefaultsPanel({ settings, onChange }: { settings: Auth
                     />
                 </LabeledControl>
                 <LabeledControl label="默认视频清晰度">
-                    <Select className="w-full" value={settings.generationDefaults.videoQuality} options={["480", "720", "1080"].map((value) => ({ value, label: value + "p" }))} onChange={(value) => onChange("videoQuality", value)} />
+                    <AutoComplete
+                        className="w-full"
+                        value={settings.generationDefaults.videoQuality}
+                        options={["480", "720", "1080"].map((value) => ({ value, label: value + "p" }))}
+                        placeholder="例如 720、1440 或 2K"
+                        onChange={(value) => onChange("videoQuality", value)}
+                    />
                 </LabeledControl>
                 <LabeledControl label="默认视频秒数">
-                    <InputNumber className="w-full" min={1} max={20} precision={0} value={settings.generationDefaults.videoSeconds} onChange={(value) => onChange("videoSeconds", value || 5)} />
+                    <InputNumber className="w-full" min={-1} precision={0} placeholder="-1 表示智能" value={settings.generationDefaults.videoSeconds} onChange={(value) => onChange("videoSeconds", value ?? 5)} />
                 </LabeledControl>
                 <LabeledControl label="默认音频音色">
                     <Input value={settings.generationDefaults.audioVoice} onChange={(event) => onChange("audioVoice", event.target.value)} />
@@ -102,29 +127,6 @@ export function GenerationDefaultsPanel({ settings, onChange }: { settings: Auth
                 </LabeledControl>
             </div>
             <div className="mt-2 text-xs leading-5 text-stone-500 dark:text-stone-400">新建画布生图节点和配置节点默认使用，单个节点仍可单独覆盖。</div>
-            <div className="mt-4 border-t border-zinc-200 pt-4 dark:border-zinc-800">
-                <div className="text-xs font-semibold text-stone-700 dark:text-stone-200">工作台 Agent 智能规划</div>
-                <div className="mt-3 grid gap-4 sm:grid-cols-2 sm:divide-x sm:divide-zinc-200 dark:sm:divide-zinc-800">
-                    <SettingToggle
-                        title="生图工作台默认开启"
-                        description="关闭后，用户进入生图工作台会被引导先选择图片模型。"
-                        checked={settings.generationDefaults.workbenchSmartPlanning.image}
-                        checkedChildren="开启"
-                        unCheckedChildren="关闭"
-                        onChange={(image) => onChange("workbenchSmartPlanning", { ...settings.generationDefaults.workbenchSmartPlanning, image })}
-                    />
-                    <div className="sm:pl-4">
-                        <SettingToggle
-                            title="视频工作台默认开启"
-                            description="关闭后，用户进入视频工作台会被引导先选择视频模型。"
-                            checked={settings.generationDefaults.workbenchSmartPlanning.video}
-                            checkedChildren="开启"
-                            unCheckedChildren="关闭"
-                            onChange={(video) => onChange("workbenchSmartPlanning", { ...settings.generationDefaults.workbenchSmartPlanning, video })}
-                        />
-                    </div>
-                </div>
-            </div>
         </div>
     );
 }

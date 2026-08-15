@@ -1,3 +1,4 @@
+import { hasAdminPermission } from "@/lib/admin-permissions";
 import { NextResponse } from "next/server";
 
 import { readJsonBody } from "@/lib/auth/request";
@@ -16,7 +17,7 @@ type RouteContext = {
 export async function PATCH(request: Request, context: RouteContext) {
     const currentUser = await getCurrentUser();
     if (!currentUser) return NextResponse.json({ error: "请先登录" }, { status: 401 });
-    if (currentUser.role !== "admin") return NextResponse.json({ error: "需要管理员权限" }, { status: 403 });
+    if (!hasAdminPermission(currentUser, "commerce.manage")) return NextResponse.json({ error: "需要管理员权限" }, { status: 403 });
 
     try {
         const { id } = await context.params;
@@ -45,7 +46,7 @@ export async function PATCH(request: Request, context: RouteContext) {
 export async function DELETE(request: Request, context: RouteContext) {
     const currentUser = await getCurrentUser();
     if (!currentUser) return NextResponse.json({ error: "请先登录" }, { status: 401 });
-    if (currentUser.role !== "admin") return NextResponse.json({ error: "需要管理员权限" }, { status: 403 });
+    if (!hasAdminPermission(currentUser, "commerce.manage")) return NextResponse.json({ error: "需要管理员权限" }, { status: 403 });
 
     try {
         const { id } = await context.params;

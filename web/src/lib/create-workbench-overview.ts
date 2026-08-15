@@ -1,5 +1,7 @@
 import type { CanvasProject } from "@/lib/canvas-project-contract";
 
+export const CREATE_OVERVIEW_RECENT_ASSET_LIMIT = 8;
+
 export type CreateOverviewMedia = {
     kind: "image" | "video";
     url: string;

@@ -427,8 +427,36 @@ describe("split Postgres repositories", () => {
         expect(settings).toMatchObject({ freeDailyPointsEnabled: false, freeDailyPoints: 20 });
         expect(sql).toContain("free_daily_points_enabled");
         expect(sql).not.toContain("daily_plan_points_enabled");
-        expect(params[3]).toBe(false);
-        expect(params[16]).toBe(20);
+        expect(sql).not.toContain("site =");
+        expect(params).toEqual([false, 20]);
+    });
+
+    it("persists generation cost controls as structured settings", async () => {
+        const timestamp = "2026-01-01T00:00:00.000Z";
+        const generationCostControl = { maxPointsPerTask: 2.5, dailyUserPointSpend: 20, dailyTotalPointSpend: 100 };
+        const { executor, query } = mockExecutor([[{ id: "default", generation_cost_control: generationCostControl, created_at: timestamp, updated_at: timestamp }]]);
+
+        const settings = await createPostgresRepositories(executor).settings.updateSettings({ generationCostControl });
+        const [sql, params] = queryArgs(query, 0) as [string, unknown[]];
+
+        expect(settings.generationCostControl).toEqual(generationCostControl);
+        expect(sql).toContain("generation_cost_control = $1");
+        expect(sql).not.toContain("site =");
+        expect(params).toEqual([JSON.stringify(generationCostControl)]);
+    });
+
+    it("persists bounded technical data lifecycle settings", async () => {
+        const timestamp = "2026-01-01T00:00:00.000Z";
+        const dataLifecycle = { cleanupExpiredSessions: true, cleanupExpiredEmailCodes: true, cleanupExpiredGenerationTasks: false, cleanupExpiredTemporaryMedia: true, maintenanceBatchSize: 80 };
+        const { executor, query } = mockExecutor([[{ id: "default", data_lifecycle: dataLifecycle, created_at: timestamp, updated_at: timestamp }]]);
+
+        const settings = await createPostgresRepositories(executor).settings.updateSettings({ dataLifecycle });
+        const [sql, params] = queryArgs(query, 0) as [string, unknown[]];
+
+        expect(settings.dataLifecycle).toEqual(dataLifecycle);
+        expect(sql).toContain("data_lifecycle = $1");
+        expect(sql).not.toContain("site =");
+        expect(params).toEqual([JSON.stringify(dataLifecycle)]);
     });
 
     it("preserves the product list boolean contract", async () => {
@@ -835,6 +863,38 @@ describe("split Postgres repositories", () => {
         expect(query).toHaveBeenCalledWith("DELETE FROM generation_logs WHERE id = ANY($1::text[])", [["log-one", "log-three"]]);
     });
 
+    it("loads one stable, parameterized generation-log deletion batch with its assets", async () => {
+        const timestamp = "2026-01-01T00:00:00.000Z";
+        const { executor, query } = mockExecutor([
+            [
+                { id: "log-b", user_id: "user-one", kind: "image", status: "success", created_at: timestamp, updated_at: timestamp },
+                { id: "log-a", user_id: "user-one", kind: "image", status: "success", created_at: timestamp, updated_at: timestamp },
+            ],
+            [{ generation_log_id: "log-b", type: "image", url: "/api/generation-log-assets/one.webp", sort_order: 0 }],
+        ]);
+
+        const logs = await createPostgresRepositories(executor).generationLogs.listByUserIdBatch(" user-one ", 24, true);
+
+        expect(logs).toHaveLength(2);
+        expect(logs[0]?.id).toBe("log-b");
+        expect(logs[0]?.assets).toHaveLength(1);
+        expect(query).toHaveBeenCalledTimes(2);
+        const [statement, params] = queryArgs(query, 0);
+        expect(String(statement)).toContain("WHERE user_id = $1");
+        expect(String(statement)).toContain("ORDER BY created_at DESC, id ASC");
+        expect(String(statement)).toContain("LIMIT $2::integer");
+        expect(String(statement)).toContain("FOR UPDATE");
+        expect(params).toEqual(["user-one", 24]);
+    });
+
+    it("rejects an unbounded or invalid generation-log deletion batch", async () => {
+        const { executor, query } = mockExecutor([]);
+        const repository = createPostgresRepositories(executor).generationLogs;
+
+        await expect(repository.listByUserIdBatch("user-one", 0, true)).rejects.toThrow("positive safe integer");
+        expect(query).not.toHaveBeenCalled();
+    });
+
     it("aggregates the generation overview in one bounded query without loading log payloads or assets", async () => {
         const { executor, query } = mockExecutor([
             [
@@ -886,9 +946,9 @@ describe("split Postgres repositories", () => {
         expect(query).toHaveBeenCalledTimes(1);
         const [statement, params] = queryArgs(query, 0);
         expect(String(statement)).toContain("LIMIT 4");
-        expect(String(statement)).toContain("LIMIT 6");
+        expect(String(statement)).toContain("LIMIT $2::integer");
         expect(String(statement)).not.toMatch(/SELECT\s+\*|\bprompt\b|\berror\b/i);
-        expect(params).toEqual(["user-one"]);
+        expect(params).toEqual(["user-one", 8]);
     });
 
     it("pushes prompt filtering and pagination into PostgreSQL", async () => {

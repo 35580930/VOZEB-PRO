@@ -1,15 +1,16 @@
 import { randomBytes, randomUUID } from "node:crypto";
 
 import { lockAuthMutation } from "@/lib/server/auth-mutation-lock";
-import { createPostgresRepositories, ensurePostgresSchema, isPostgresDatabaseEnabled, withPostgresTransaction } from "@/lib/server/database";
+import { createPostgresRepositories, ensurePostgresSchema, isPostgresDatabaseEnabled, withPostgresTransaction, type QueryExecutor } from "@/lib/server/database";
 import { adjustPermanentPointsInAuthDb, adjustPermanentPointsInPostgresTransaction, walletClock } from "@/lib/server/points-wallet-service";
 import { consumePostgresEmailCode } from "./postgres-email-code-service";
 import { hashPassword, verifyPassword } from "./password";
 import { AuthInputError, SESSION_MAX_AGE_SECONDS } from "./store-foundation";
-import { consumeEmailCode, countActiveAdmins, hashToken, normalizeDisplayName, normalizeEmail, normalizePoints, normalizeUserBio, parseSessionCookie, resolvePlanById, validateEmail, validatePassword } from "./store-normalizers";
+import { consumeEmailCode, countActiveAdmins, countActiveFullAdmins, hashToken, normalizeDisplayName, normalizeEmail, normalizePoints, normalizeUserBio, parseSessionCookie, resolvePlanById, validateEmail, validatePassword } from "./store-normalizers";
 import { mutateAuthDb, readAuthDb, readPostgresAuthSettings } from "./store-repository";
-import type { PublicUser, UserRole, UserStatus } from "./store-types";
+import type { PublicUser, StoredUser, UserRole, UserStatus } from "./store-types";
 import { publicUserFromAuthenticatedRecord, toPublicUser } from "./store-user-projection";
+import { ALL_ADMIN_PERMISSIONS, hasAdminPermission, hasAllAdminPermissions, isFullAdminPermissions, normalizeAdminPermissions, type AdminPermission } from "@/lib/admin-permissions";
 
 export async function updateOwnProfile(userId: string, input: { displayName?: string; bio?: string; email?: string; emailCode?: string }) {
     if (isPostgresDatabaseEnabled()) {
@@ -75,20 +76,20 @@ export async function updateOwnPassword(userId: string, input: { currentPassword
             const repos = createPostgresRepositories(client);
             const user = await repos.users.getById(userId, true);
             if (!user || user.status !== "active") throw new AuthInputError("用户不可用");
-            if (!verifyPassword(input.currentPassword, user.passwordHash)) throw new AuthInputError("当前密码不正确");
-            await repos.users.update(userId, { passwordHash: hashPassword(input.newPassword) });
+            if (!(await verifyPassword(input.currentPassword, user.passwordHash))) throw new AuthInputError("当前密码不正确");
+            await repos.users.update(userId, { passwordHash: await hashPassword(input.newPassword) });
             await repos.sessions.deleteByUserId(userId);
             const record = (await repos.users.getPublicDetails([userId], { now: clock.now.toISOString(), date: clock.date }))[0];
             if (!record) throw new AuthInputError("用户不可用");
             return publicUserFromAuthenticatedRecord(record, clock.expiresAt);
         });
     }
-    return mutateAuthDb((db) => {
+    return mutateAuthDb(async (db) => {
         const user = db.users.find((item) => item.id === userId);
         if (!user || user.status !== "active") throw new AuthInputError("用户不可用");
-        if (!verifyPassword(input.currentPassword, user.passwordHash)) throw new AuthInputError("当前密码不正确");
+        if (!(await verifyPassword(input.currentPassword, user.passwordHash))) throw new AuthInputError("当前密码不正确");
         validatePassword(input.newPassword);
-        user.passwordHash = hashPassword(input.newPassword);
+        user.passwordHash = await hashPassword(input.newPassword);
         user.updatedAt = new Date().toISOString();
         db.sessions = db.sessions.filter((session) => session.userId !== user.id);
         return toPublicUser(user, db);
@@ -100,13 +101,13 @@ export async function verifyUserPasswordForSensitiveAction(userId: string, passw
         await ensurePostgresSchema();
         const user = await createPostgresRepositories().users.getById(userId);
         if (!user || user.status !== "active") throw new AuthInputError("用户不可用");
-        if (!verifyPassword(password, user.passwordHash)) throw new AuthInputError("当前密码不正确");
+        if (!(await verifyPassword(password, user.passwordHash))) throw new AuthInputError("当前密码不正确");
         return;
     }
     const db = await readAuthDb();
     const user = db.users.find((item) => item.id === userId);
     if (!user || user.status !== "active") throw new AuthInputError("用户不可用");
-    if (!verifyPassword(password, user.passwordHash)) throw new AuthInputError("当前密码不正确");
+    if (!(await verifyPassword(password, user.passwordHash))) throw new AuthInputError("当前密码不正确");
 }
 
 export async function resetPasswordByEmail(input: { email: string; code?: string; newPassword: string }) {
@@ -122,7 +123,7 @@ export async function resetPasswordByEmail(input: { email: string; code?: string
             if (!user || user.status !== "active") throw new AuthInputError("邮箱验证码不正确或已过期");
             const consumed = await consumePostgresEmailCode(client, { purpose: "password-reset", email, code: input.code });
             if (!consumed.ok) return consumed;
-            await repos.users.update(user.id, { passwordHash: hashPassword(input.newPassword) });
+            await repos.users.update(user.id, { passwordHash: await hashPassword(input.newPassword) });
             await repos.sessions.deleteByUserId(user.id);
             const record = (await repos.users.getPublicDetails([user.id], { now: clock.now.toISOString(), date: clock.date }))[0];
             if (!record) throw new AuthInputError("没有找到可用账号");
@@ -131,11 +132,11 @@ export async function resetPasswordByEmail(input: { email: string; code?: string
         if (!outcome.ok) throw outcome.error;
         return publicUserFromAuthenticatedRecord(outcome.record, clock.expiresAt);
     }
-    return mutateAuthDb((db) => {
+    return mutateAuthDb(async (db) => {
         const user = db.users.find((item) => item.email?.toLowerCase() === email);
         if (!user || user.status !== "active") throw new AuthInputError("邮箱验证码不正确或已过期");
         consumeEmailCode(db, { purpose: "password-reset", email, code: input.code });
-        user.passwordHash = hashPassword(input.newPassword);
+        user.passwordHash = await hashPassword(input.newPassword);
         user.updatedAt = new Date().toISOString();
         db.sessions = db.sessions.filter((session) => session.userId !== user.id);
         return toPublicUser(user, db);
@@ -152,7 +153,6 @@ export async function createSession(userId: string) {
             const repos = createPostgresRepositories(client);
             const user = await repos.users.getById(userId, true);
             if (!user || user.status !== "active") throw new AuthInputError("用户不可用");
-            await repos.sessions.pruneExpired(now);
             await repos.sessions.create({
                 id: sessionId,
                 userId,
@@ -219,27 +219,38 @@ export async function deleteSession(cookieValue: string | undefined) {
     });
 }
 
-export async function updateUserByAdmin(actorId: string, userId: string, patch: Partial<Pick<PublicUser, "displayName" | "email" | "role" | "status" | "pointsBalance" | "planId">> & { password?: string }) {
+type AdminUserPatch = Partial<Pick<PublicUser, "displayName" | "email" | "role" | "adminPermissions" | "status" | "pointsBalance" | "planId">> & { password?: string };
+
+export async function updateUserByAdmin(actorId: string, userId: string, patch: AdminUserPatch) {
     if (isPostgresDatabaseEnabled()) {
         await ensurePostgresSchema();
         const clock = walletClock();
         return withPostgresTransaction(async (client) => {
             await lockAuthMutation(client);
             const repos = createPostgresRepositories(client);
+            const actor = await repos.users.getById(actorId, true);
             const user = await repos.users.getById(userId, true);
             if (!user) throw new AuthInputError("用户不存在");
+            assertCanUpdateManagedUser(actor, user, patch);
             if (user.id === actorId && patch.status === "disabled") throw new AuthInputError("不能禁用当前登录的管理员账号");
 
             const nextRole = patch.role || user.role;
             const nextStatus = patch.status || user.status;
+            const nextAdminPermissions = nextRole === "admin" ? normalizeAdminPermissions(patch.adminPermissions ?? user.adminPermissions) : [];
             if (user.role === "admin" && (nextRole !== "admin" || nextStatus !== "active")) {
                 const activeAdminIds = await repos.users.lockActiveAdminIds();
                 if (!activeAdminIds.some((id) => id !== user.id)) throw new AuthInputError("至少需要保留一个可用管理员");
             }
 
-            const userPatch: { displayName?: string; email?: string | null; role?: UserRole; status?: UserStatus; planId?: string; passwordHash?: string } = {
+            if (isFullAdminPermissions(user.adminPermissions) && (nextRole !== "admin" || nextStatus !== "active" || !isFullAdminPermissions(nextAdminPermissions))) {
+                const activeFullAdminIds = await repos.users.lockActiveFullAdminIds(ALL_ADMIN_PERMISSIONS);
+                if (!activeFullAdminIds.some((id) => id !== user.id)) throw new AuthInputError("至少需要保留一个可用的全权限管理员");
+            }
+
+            const userPatch: { displayName?: string; email?: string | null; role?: UserRole; adminPermissions?: AdminPermission[]; status?: UserStatus; planId?: string; passwordHash?: string } = {
                 displayName: patch.displayName === undefined ? undefined : normalizeDisplayName(patch.displayName || user.username),
                 role: nextRole,
+                adminPermissions: nextAdminPermissions,
                 status: patch.pointsBalance !== undefined && nextStatus === "active" ? "active" : nextStatus,
             };
             if (patch.email !== undefined) {
@@ -254,7 +265,7 @@ export async function updateUserByAdmin(actorId: string, userId: string, patch: 
             }
             if (patch.password) {
                 validatePassword(patch.password);
-                userPatch.passwordHash = hashPassword(patch.password);
+                userPatch.passwordHash = await hashPassword(patch.password);
             }
             if (patch.planId !== undefined) {
                 const settings = await readPostgresAuthSettings(client);
@@ -281,15 +292,21 @@ export async function updateUserByAdmin(actorId: string, userId: string, patch: 
             return { ...publicUserFromAuthenticatedRecord(record, clock.expiresAt), ...(walletPointsBalance === undefined ? {} : { pointsBalance: walletPointsBalance }) };
         });
     }
-    return mutateAuthDb((db) => {
+    return mutateAuthDb(async (db) => {
         const user = db.users.find((item) => item.id === userId);
         if (!user) throw new AuthInputError("用户不存在");
+        const actor = db.users.find((item) => item.id === actorId);
+        assertCanUpdateManagedUser(actor, user, patch);
         if (user.id === actorId && patch.status === "disabled") throw new AuthInputError("不能禁用当前登录的管理员账号");
 
         const nextRole = patch.role || user.role;
         const nextStatus = patch.status || user.status;
+        const nextAdminPermissions = nextRole === "admin" ? normalizeAdminPermissions(patch.adminPermissions ?? user.adminPermissions) : [];
         if (user.role === "admin" && nextRole !== "admin" && countActiveAdmins(db, user.id) === 0) throw new AuthInputError("至少需要保留一个管理员");
         if (user.role === "admin" && nextStatus !== "active" && countActiveAdmins(db, user.id) === 0) throw new AuthInputError("至少需要保留一个可用管理员");
+        if (isFullAdminPermissions(user.adminPermissions) && (nextRole !== "admin" || nextStatus !== "active" || !isFullAdminPermissions(nextAdminPermissions)) && countActiveFullAdmins(db, user.id) === 0) {
+            throw new AuthInputError("至少需要保留一个可用的全权限管理员");
+        }
 
         if (patch.displayName !== undefined) user.displayName = normalizeDisplayName(patch.displayName || user.username);
         if (patch.email !== undefined) {
@@ -304,10 +321,11 @@ export async function updateUserByAdmin(actorId: string, userId: string, patch: 
         }
         if (patch.password) {
             validatePassword(patch.password);
-            user.passwordHash = hashPassword(patch.password);
+            user.passwordHash = await hashPassword(patch.password);
             db.sessions = db.sessions.filter((session) => session.userId !== user.id);
         }
         user.role = nextRole;
+        user.adminPermissions = nextAdminPermissions;
         if (patch.planId !== undefined) user.planId = resolvePlanById(db.settings.entitlements, patch.planId).id;
         let walletPointsBalance: number | undefined;
         if (patch.pointsBalance !== undefined) {
@@ -329,19 +347,28 @@ export async function updateUserByAdmin(actorId: string, userId: string, patch: 
     });
 }
 
-export async function deleteUserByAdmin(actorId: string, userId: string) {
+export type BeforeAdminUserDelete = (client: QueryExecutor, userId: string) => Promise<void>;
+
+export async function deleteUserByAdmin(actorId: string, userId: string, options: { beforeDelete?: BeforeAdminUserDelete } = {}) {
     if (isPostgresDatabaseEnabled()) {
         await ensurePostgresSchema();
         return withPostgresTransaction(async (client) => {
             await lockAuthMutation(client);
             const users = createPostgresRepositories(client).users;
+            const actor = await users.getById(actorId, true);
             const user = await users.getById(userId, true);
             if (!user) throw new AuthInputError("用户不存在");
+            assertCanDeleteManagedUser(actor, user);
             if (user.id === actorId) throw new AuthInputError("不能删除当前登录的管理员账号");
             if (user.role === "admin") {
                 const activeAdminIds = await users.lockActiveAdminIds();
                 if (!activeAdminIds.some((id) => id !== user.id)) throw new AuthInputError("至少需要保留一个管理员");
             }
+            if (isFullAdminPermissions(user.adminPermissions)) {
+                const activeFullAdminIds = await users.lockActiveFullAdminIds(ALL_ADMIN_PERMISSIONS);
+                if (!activeFullAdminIds.some((id) => id !== user.id)) throw new AuthInputError("至少需要保留一个可用的全权限管理员");
+            }
+            await options.beforeDelete?.(client, user.id);
             await users.delete(user.id);
             return { ok: true };
         });
@@ -349,12 +376,37 @@ export async function deleteUserByAdmin(actorId: string, userId: string) {
     return mutateAuthDb((db) => {
         const user = db.users.find((item) => item.id === userId);
         if (!user) throw new AuthInputError("用户不存在");
+        const actor = db.users.find((item) => item.id === actorId);
+        assertCanDeleteManagedUser(actor, user);
         if (user.id === actorId) throw new AuthInputError("不能删除当前登录的管理员账号");
         if (user.role === "admin" && countActiveAdmins(db, user.id) === 0) throw new AuthInputError("至少需要保留一个管理员");
+        if (isFullAdminPermissions(user.adminPermissions) && countActiveFullAdmins(db, user.id) === 0) throw new AuthInputError("至少需要保留一个可用的全权限管理员");
         db.users = db.users.filter((item) => item.id !== user.id);
         db.sessions = db.sessions.filter((session) => session.userId !== user.id);
         db.quotaUsage = db.quotaUsage.filter((usage) => !usage || typeof usage !== "object" || (usage as { userId?: unknown }).userId !== user.id);
         db.emailCodes = db.emailCodes.filter((code) => code.userId !== user.id);
         return { ok: true };
     });
+}
+
+function assertCanUpdateManagedUser(actor: StoredUser | null | undefined, user: StoredUser, patch: AdminUserPatch) {
+    const nextRole = patch.role || user.role;
+    const touchesAdministrator = user.role === "admin" || nextRole === "admin" || patch.adminPermissions !== undefined;
+    assertAdminPermission(actor, touchesAdministrator ? "administrators.manage" : "users.manage");
+    if (user.role === "admin" && !hasAllAdminPermissions(actor, user.adminPermissions)) throw new AuthInputError("不能管理职责范围高于当前账号的管理员", 403);
+    if (patch.pointsBalance !== undefined || patch.planId !== undefined) assertAdminPermission(actor, "billing.manage");
+    if (nextRole === "admin") {
+        const permissions = normalizeAdminPermissions(patch.adminPermissions ?? user.adminPermissions);
+        if (!permissions.length) throw new AuthInputError("管理员至少需要一项职责权限");
+        if (!hasAllAdminPermissions(actor, permissions)) throw new AuthInputError("不能授予超出当前管理员职责范围的权限", 403);
+    }
+}
+
+function assertCanDeleteManagedUser(actor: StoredUser | null | undefined, user: StoredUser) {
+    assertAdminPermission(actor, user.role === "admin" ? "administrators.manage" : "users.manage");
+    if (user.role === "admin" && !hasAllAdminPermissions(actor, user.adminPermissions)) throw new AuthInputError("不能删除职责范围高于当前账号的管理员", 403);
+}
+
+function assertAdminPermission(actor: StoredUser | null | undefined, permission: AdminPermission) {
+    if (!hasAdminPermission(actor, permission)) throw new AuthInputError("当前管理员没有执行此操作的职责权限", 403);
 }

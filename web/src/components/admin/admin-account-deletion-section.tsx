@@ -1,12 +1,12 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
-import { App, Button, Grid, Input, Modal, Pagination, Select, Table, Tag } from "antd";
 import type { TableColumnsType } from "antd";
+import { App, Button, Grid, Input, Modal, Pagination, Select, Table, Tag } from "antd";
 import { Check, RefreshCw, Search, X } from "lucide-react";
+import { useCallback, useEffect, useState } from "react";
 
-import type { AccountDeletionRequestStatus, AdminAccountDeletionRequest } from "@/lib/account-deletion-contract";
 import { AdminUserIdentity } from "@/components/admin/admin-user-identity";
+import type { AccountDeletionRequestStatus, AdminAccountDeletionRequest } from "@/lib/account-deletion-contract";
 import { listAdminAccountDeletionRequests, reviewAdminAccountDeletionRequest } from "@/services/api/account-deletion";
 
 import { Panel, PanelHeader } from "./admin-panel";

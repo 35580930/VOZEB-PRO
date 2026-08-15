@@ -1,11 +1,5 @@
 "use client";
 
-import dynamic from "next/dynamic";
-
-const CanvasAssistantPanel = dynamic(() => import("../components/canvas-assistant-panel").then((mod) => mod.CanvasAssistantPanel), { ssr: false });
-const loadAssetPickerModal = () => import("../components/asset-picker-modal").then((mod) => mod.AssetPickerModal);
-const AssetPickerModal = dynamic(loadAssetPickerModal, { ssr: false, loading: () => null });
-
 import { useCanvasGenerationActions } from "./use-canvas-generation-actions";
 import { useCanvasInteractions } from "./use-canvas-interactions";
 import { useCanvasMediaActions } from "./use-canvas-media-actions";

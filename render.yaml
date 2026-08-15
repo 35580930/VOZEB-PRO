@@ -35,6 +35,8 @@ services:
         generateValue: true
       - key: VOZEB_PRO_INSTALL_TOKEN
         generateValue: true
+      - key: VOZEB_PRO_MAINTENANCE_TOKEN
+        generateValue: true
       - key: NEXT_PUBLIC_SITE_URL
         sync: false
 
@@ -63,5 +65,5 @@ databases:
 envVarGroups:
   - name: vozeb-pro-runtime
     envVars:
-      - key: VOZEB_PRO_MAINTENANCE_TOKEN
+      - key: VOZEB_PRO_WORKER_TOKEN
         generateValue: true

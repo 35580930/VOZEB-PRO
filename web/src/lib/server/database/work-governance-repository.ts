@@ -156,21 +156,26 @@ export class WorkGovernanceRepository {
         return pageResult(result.rows.map(mapPublishedWorkCaseSummary), numberValue(result.rows[0]?.total_count), page, pageSize);
     }
 
-    async listCasesForOwner(workId: string, ownerUserId: string) {
+    async listCasesForOwner(workId: string, ownerUserId: string, input: PageInput = {}): Promise<PageResult<PublishedWorkCaseSummaryRecord>> {
+        const page = normalizePage(input.page);
+        const pageSize = normalizePageSize(input.pageSize);
         const result = await this.db.query(
             `SELECT cases.*, work.slug, work.owner_user_id, version.title,
                     owner.username AS owner_username, owner.display_name AS owner_display_name,
-                    submitter.username AS submitter_username, submitter.display_name AS submitter_display_name
+                    submitter.username AS submitter_username, submitter.display_name AS submitter_display_name,
+                    count(*) OVER() AS total_count
              FROM published_work_cases cases
              JOIN published_works work ON work.id = cases.work_id
              JOIN published_work_versions version ON version.id = cases.version_id
              JOIN users owner ON owner.id = work.owner_user_id
              JOIN users submitter ON submitter.id = cases.submitter_user_id
              WHERE cases.work_id = $1 AND work.owner_user_id = $2
-             ORDER BY cases.created_at DESC, cases.id DESC LIMIT 50`,
-            [workId, ownerUserId],
+               AND cases.case_type = 'appeal' AND cases.submitter_user_id = $2
+             ORDER BY cases.created_at DESC, cases.id DESC
+             LIMIT $3 OFFSET $4`,
+            [workId, ownerUserId, pageSize, (page - 1) * pageSize],
         );
-        return result.rows.map(mapPublishedWorkCaseSummary);
+        return pageResult(result.rows.map(mapPublishedWorkCaseSummary), numberValue(result.rows[0]?.total_count), page, pageSize);
     }
 
     async resolveCase(id: string, input: { status: "approved" | "rejected"; resolution: string; handledByUserId: string; handledAt: string }) {

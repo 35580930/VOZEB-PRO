@@ -547,6 +547,164 @@ describe("VOZEB recommended video proxy", () => {
     });
 });
 
+describe("Gemini Veo native video proxy", () => {
+    const model = "veo-3.1-generate-preview";
+
+    beforeEach(() => {
+        vi.restoreAllMocks();
+        mocks.consumeUserPoints.mockReset().mockResolvedValue({ model: "gemini-video", cost: 6, units: 6, recordId: "points-gemini", remaining: 94, permanentRemaining: 94, dailyRemaining: 0, dailyExpiresAt: "" });
+        mocks.refundUserPoints.mockReset();
+        mocks.safeUrl.mockResolvedValue(true);
+        mocks.taskAccess.mockReset().mockResolvedValue(true);
+        mocks.getAuthSettings.mockResolvedValue({
+            generationPointMultipliers: { videoQuality: { "720": 2 }, videoSeconds: { "6": 3 } },
+            logicalModels: [logicalModel("gemini-video", "video", model)],
+            systemChannels: [{ id: "channel-one", enabled: true, baseUrl: "https://generativelanguage.googleapis.com", apiKey: "gemini-secret", apiFormat: "gemini", models: [model], advancedConfig: { protocol: "gemini" } }],
+        });
+    });
+
+    it("forwards Gemini creation and operation polling with x-goog-api-key and video billing", async () => {
+        const fetchMock = vi
+            .spyOn(globalThis, "fetch")
+            .mockResolvedValueOnce(Response.json({ name: `models/${model}/operations/operation-one`, done: false }))
+            .mockResolvedValueOnce(Response.json({ done: false }));
+        const headers = { "content-type": "application/json", ...systemModelHeaders("gemini-video", model) };
+        const createResponse = await POST(
+            new Request(`http://localhost/api/ai/system/channel-one/models/${model}:predictLongRunning`, {
+                method: "POST",
+                headers,
+                body: JSON.stringify({ instances: [{ prompt: "A test video" }], parameters: { durationSeconds: 6, resolution: "720p" } }),
+            }),
+            { params: Promise.resolve({ channelId: "channel-one", path: ["models", `${model}:predictLongRunning`] }) },
+        );
+        const queryResponse = await GET(new Request(`http://localhost/api/ai/system/channel-one/models/${model}/operations/operation-one`, { headers }), {
+            params: Promise.resolve({ channelId: "channel-one", path: ["models", model, "operations", "operation-one"] }),
+        });
+
+        expect(createResponse.status).toBe(200);
+        expect(queryResponse.status).toBe(200);
+        expect(fetchMock.mock.calls.map(([url]) => url)).toEqual([`https://generativelanguage.googleapis.com/v1beta/models/${model}:predictLongRunning`, `https://generativelanguage.googleapis.com/v1beta/models/${model}/operations/operation-one`]);
+        expect(new Headers(fetchMock.mock.calls[0][1]?.headers).get("x-goog-api-key")).toBe("gemini-secret");
+        expect(new Headers(fetchMock.mock.calls[0][1]?.headers).get("authorization")).toBeNull();
+        expect(mocks.consumeUserPoints).toHaveBeenCalledWith("user-one", "gemini-video", 6, "video", expect.any(String), expect.any(String));
+        expect(mocks.consumeUserPoints).toHaveBeenCalledOnce();
+    });
+});
+
+describe("Yumeng v2 model-center proxy", () => {
+    beforeEach(() => {
+        vi.restoreAllMocks();
+        mocks.consumeUserPoints.mockReset().mockResolvedValue(undefined);
+        mocks.refundUserPoints.mockReset();
+        mocks.safeUrl.mockResolvedValue(true);
+        mocks.getAuthSettings.mockResolvedValue({
+            generationPointMultipliers: {},
+            logicalModels: [logicalModel("yumeng-image", "image", "seedream_5.0Pro")],
+            systemChannels: [
+                {
+                    id: "channel-one",
+                    enabled: true,
+                    baseUrl: "http://token.myairealm.com/",
+                    apiKey: "yumeng-secret",
+                    apiFormat: "openai",
+                    models: ["seedream_5.0Pro"],
+                    advancedConfig: {
+                        protocol: "yumeng",
+                        modelConfigs: { "seedream_5.0pro": { capability: "image", protocol: "yumeng", createPath: "/kyyReactApiServer/v2/model-center/tasks", queryPath: "/kyyReactApiServer/v2/model-center/tasks/:task_id" } },
+                    },
+                },
+            ],
+        });
+    });
+
+    it("keeps the v2 path literal instead of inserting v1", async () => {
+        const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(Response.json({ id: "yumeng-task", status: "queued" }));
+        const response = await POST(
+            new Request("http://localhost/api/ai/system/channel-one/kyyReactApiServer/v2/model-center/tasks", {
+                method: "POST",
+                headers: { "content-type": "application/json", ...systemModelHeaders("yumeng-image", "seedream_5.0Pro") },
+                body: JSON.stringify({ model: "seedream_5.0Pro", prompt: "test" }),
+            }),
+            { params: Promise.resolve({ channelId: "channel-one", path: ["kyyReactApiServer", "v2", "model-center", "tasks"] }) },
+        );
+
+        expect(response.status).toBe(200);
+        expect(fetchMock.mock.calls[0][0]).toBe("https://zcbservice.aizfw.cn/kyyReactApiServer/v2/model-center/tasks");
+        expect(new Headers(fetchMock.mock.calls[0][1]?.headers).get("authorization")).toBe("Bearer yumeng-secret");
+    });
+
+    it("does not duplicate a path prefix already present in the channel Base URL", async () => {
+        const settings = await mocks.getAuthSettings();
+        mocks.getAuthSettings.mockResolvedValue({
+            ...settings,
+            systemChannels: settings.systemChannels.map((channel: { baseUrl: string }) => ({ ...channel, baseUrl: "https://zcbservice.aizfw.cn/kyyReactApiServer" })),
+        });
+        const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(Response.json({ id: "yumeng-task", status: "queued" }));
+
+        const response = await POST(
+            new Request("http://localhost/api/ai/system/channel-one/kyyReactApiServer/v2/model-center/tasks", {
+                method: "POST",
+                headers: { "content-type": "application/json", ...systemModelHeaders("yumeng-image", "seedream_5.0Pro") },
+                body: JSON.stringify({ model: "seedream_5.0Pro", prompt: "test" }),
+            }),
+            { params: Promise.resolve({ channelId: "channel-one", path: ["kyyReactApiServer", "v2", "model-center", "tasks"] }) },
+        );
+
+        expect(response.status).toBe(200);
+        expect(fetchMock.mock.calls[0][0]).toBe("https://zcbservice.aizfw.cn/kyyReactApiServer/v2/model-center/tasks");
+    });
+});
+
+describe("configured versioned protocol billing", () => {
+    beforeEach(() => {
+        vi.restoreAllMocks();
+        mocks.consumeUserPoints.mockReset().mockResolvedValue(undefined);
+        mocks.refundUserPoints.mockReset();
+        mocks.safeUrl.mockResolvedValue(true);
+        mocks.getAuthSettings.mockResolvedValue({
+            generationPointMultipliers: {},
+            logicalModels: [logicalModel("seedance-special-video", "video", "sd_2.0_fast_special_720p")],
+            systemChannels: [
+                {
+                    id: "channel-one",
+                    enabled: true,
+                    baseUrl: "https://provider.example/kyyReactApiServer",
+                    apiKey: "secret",
+                    apiFormat: "openai",
+                    models: ["sd_2.0_fast_special_720p"],
+                    advancedConfig: {
+                        protocol: "seedance-special",
+                        modelConfigs: {
+                            "sd_2.0_fast_special_720p": {
+                                capability: "video",
+                                protocol: "seedance-special",
+                                createPath: "/v1/seedance-special/videos",
+                                queryPath: "/v1/result/:task_id",
+                            },
+                        },
+                    },
+                },
+            ],
+        });
+    });
+
+    it("classifies a configured v1 create path from the trusted model header", async () => {
+        const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(Response.json({ task_id: "seedance-task", status: "queued" }));
+        const response = await POST(
+            new Request("http://localhost/api/ai/system/channel-one/v1/seedance-special/videos", {
+                method: "POST",
+                headers: { "content-type": "application/json", ...systemModelHeaders("seedance-special-video", "sd_2.0_fast_special_720p") },
+                body: JSON.stringify({ content: [{ type: "text", text: "test" }], duration: 5, ratio: "16:9" }),
+            }),
+            { params: Promise.resolve({ channelId: "channel-one", path: ["v1", "seedance-special", "videos"] }) },
+        );
+
+        expect(response.status).toBe(200);
+        expect(fetchMock.mock.calls[0]?.[0]).toBe("https://provider.example/kyyReactApiServer/v1/seedance-special/videos");
+        expect(mocks.consumeUserPoints).toHaveBeenCalledWith("user-one", "seedance-special-video", 1, "video", expect.any(String), expect.any(String));
+    });
+});
+
 describe("custom protocol model routing", () => {
     beforeEach(() => {
         vi.restoreAllMocks();

@@ -6,64 +6,60 @@ import { strictJsonObjectText } from "@/lib/server/structured-model-output";
 
 export function normalizeDramaContentAnalysis(value: unknown, defaultVideoSeconds: number, sourceScript = ""): DramaContentAnalysis {
     const source = object(value);
-    const shots = array(source.shots)
-        .slice(0, 80)
-        .flatMap((item, index) => {
-            const shot = object(item);
-            const sourceText = text(shot.sourceText, 8000);
-            const description = text(shot.description, 4000) || sourceText;
-            if (!sourceText || !description) return [];
-            const modelUtterances = array(shot.utterances)
-                .slice(0, 100)
-                .flatMap((value, utteranceIndex) => {
-                    const utterance = object(value);
-                    const utteranceText = text(utterance.text, 4000);
-                    if (!utteranceText) return [];
-                    return [
-                        {
-                            id: `utterance-${nanoid()}`,
-                            order: utteranceIndex + 1,
-                            type: utterance.type === "voiceover" ? ("voiceover" as const) : ("dialogue" as const),
-                            speaker: text(utterance.speaker, 120),
-                            text: utteranceText,
-                        },
-                    ];
-                });
-            const utterances = mergeUtterances(extractDramaUtterances(sourceText), modelUtterances);
-            const dialogue = normalizeDialogue(extractQuotedDialogue(sourceText) || shot.dialogue, utterances);
-            const narration =
-                text(shot.narration, 4000) ||
-                utterances
-                    .filter((item) => item.type === "voiceover")
-                    .map((item) => item.text)
-                    .join("\n");
+    const shots = array(source.shots).flatMap((item, index) => {
+        const shot = object(item);
+        const sourceText = text(shot.sourceText);
+        const description = text(shot.description) || sourceText;
+        if (!sourceText || !description) return [];
+        const modelUtterances = array(shot.utterances).flatMap((value, utteranceIndex) => {
+            const utterance = object(value);
+            const utteranceText = text(utterance.text);
+            if (!utteranceText) return [];
             return [
                 {
-                    title: text(shot.title, 160) || `镜头 ${String(index + 1).padStart(2, "0")}`,
-                    description,
-                    sourceText,
-                    shotBoundary: text(shot.shotBoundary, 500) || "动作或叙事节拍变化",
-                    dialogue,
-                    narration,
-                    utterances,
-                    duration: resolveDramaShotDuration(shot.duration, defaultVideoSeconds),
-                    characterNames: texts(shot.characterNames, 30, 120),
-                    sceneName: text(shot.sceneName, 120),
-                    propNames: texts(shot.propNames, 50, 120),
-                    clueNames: texts(shot.clueNames, 50, 120),
+                    id: `utterance-${nanoid()}`,
+                    order: utteranceIndex + 1,
+                    type: utterance.type === "voiceover" ? ("voiceover" as const) : ("dialogue" as const),
+                    speaker: text(utterance.speaker),
+                    text: utteranceText,
                 },
             ];
         });
+        const utterances = mergeUtterances(extractDramaUtterances(sourceText), modelUtterances);
+        const dialogue = normalizeDialogue(extractQuotedDialogue(sourceText) || shot.dialogue, utterances);
+        const narration =
+            text(shot.narration) ||
+            utterances
+                .filter((item) => item.type === "voiceover")
+                .map((item) => item.text)
+                .join("\n");
+        return [
+            {
+                title: text(shot.title) || `镜头 ${String(index + 1).padStart(2, "0")}`,
+                description,
+                sourceText,
+                shotBoundary: text(shot.shotBoundary) || "动作或叙事节拍变化",
+                dialogue,
+                narration,
+                utterances,
+                duration: resolveDramaShotDuration(shot.duration, defaultVideoSeconds),
+                characterNames: texts(shot.characterNames),
+                sceneName: text(shot.sceneName),
+                propNames: texts(shot.propNames),
+                clueNames: texts(shot.clueNames),
+            },
+        ];
+    });
     return {
         episode: {
-            outline: text(object(source.episode).outline, 4000),
-            hook: text(object(source.episode).hook, 2000),
-            nextPreview: text(object(source.episode).nextPreview, 2000),
-            sourceRange: text(object(source.episode).sourceRange, 500),
+            outline: text(object(source.episode).outline),
+            hook: text(object(source.episode).hook),
+            nextPreview: text(object(source.episode).nextPreview),
+            sourceRange: text(object(source.episode).sourceRange),
         },
-        characters: normalizeAssets(source.characters, 30),
-        scenes: normalizeAssets(source.scenes, 30),
-        props: normalizeAssets(source.props, 50),
+        characters: normalizeAssets(source.characters),
+        scenes: normalizeAssets(source.scenes),
+        props: normalizeAssets(source.props),
         clues: normalizeClues(source.clues),
         shots: restoreMissingDialogueCoverage(shots, sourceScript),
     };
@@ -74,9 +70,9 @@ export function normalizeDramaVisualAnalysis(value: unknown, shotIds: string[]):
     const seen = new Set<string>();
     const shots = array(object(value).shots).flatMap((item) => {
         const shot = object(item);
-        const shotId = text(shot.shotId, 160);
-        const imagePrompt = text(shot.imagePrompt, 8000);
-        const videoPrompt = text(shot.videoPrompt, 8000);
+        const shotId = text(shot.shotId);
+        const imagePrompt = text(shot.imagePrompt);
+        const videoPrompt = text(shot.videoPrompt);
         if (!allowed.has(shotId) || seen.has(shotId) || !imagePrompt || !videoPrompt) return [];
         seen.add(shotId);
         return [
@@ -84,10 +80,10 @@ export function normalizeDramaVisualAnalysis(value: unknown, shotIds: string[]):
                 shotId,
                 imagePrompt,
                 videoPrompt,
-                cameraMotion: text(shot.cameraMotion, 2000),
-                startFramePrompt: text(shot.startFramePrompt, 8000) || imagePrompt,
-                endFramePrompt: text(shot.endFramePrompt, 8000) || videoPrompt,
-                negativePrompt: text(shot.negativePrompt, 2000),
+                cameraMotion: text(shot.cameraMotion),
+                startFramePrompt: text(shot.startFramePrompt) || imagePrompt,
+                endFramePrompt: text(shot.endFramePrompt) || videoPrompt,
+                negativePrompt: text(shot.negativePrompt),
                 continuity: normalizeContinuity(shot.continuity),
             },
         ];
@@ -234,66 +230,62 @@ function valueType(value: unknown) {
     return Array.isArray(value) ? "array" : value === null ? "null" : typeof value;
 }
 
-function normalizeAssets(value: unknown, limit: number) {
-    return array(value)
-        .slice(0, limit)
-        .flatMap((item) => {
-            const record = object(item);
-            const name = text(record.name, 120);
-            return name
-                ? [
-                      {
-                          name,
-                          description: text(record.description, 2000),
-                          profile: normalizeProfile(record.profile, record),
-                      },
-                  ]
-                : [];
-        });
+function normalizeAssets(value: unknown) {
+    return array(value).flatMap((item) => {
+        const record = object(item);
+        const name = text(record.name);
+        return name
+            ? [
+                  {
+                      name,
+                      description: text(record.description),
+                      profile: normalizeProfile(record.profile, record),
+                  },
+              ]
+            : [];
+    });
 }
 
 function normalizeClues(value: unknown) {
-    return array(value)
-        .slice(0, 50)
-        .flatMap((item) => {
-            const record = object(item);
-            const name = text(record.name, 120);
-            return name
-                ? [
-                      {
-                          name,
-                          description: text(record.description, 2000),
-                          profile: normalizeProfile(record.profile, record),
-                          payoff: text(record.payoff, 2000),
-                      },
-                  ]
-                : [];
-        });
+    return array(value).flatMap((item) => {
+        const record = object(item);
+        const name = text(record.name);
+        return name
+            ? [
+                  {
+                      name,
+                      description: text(record.description),
+                      profile: normalizeProfile(record.profile, record),
+                      payoff: text(record.payoff),
+                  },
+              ]
+            : [];
+    });
 }
 
 function normalizeProfile(value: unknown, fallback: Record<string, unknown>): DramaAssetProfile {
     const profile = object(value);
     return {
-        visualIdentity: text(profile.visualIdentity, 2000) || text(fallback.visualIdentity, 2000),
-        styling: text(profile.styling, 2000) || text(fallback.styling, 2000),
-        colorPalette: text(profile.colorPalette, 500) || text(fallback.colorPalette, 500),
-        consistencyRules: text(profile.consistencyRules, 2000) || text(fallback.consistencyRules, 2000),
+        visualIdentity: text(profile.visualIdentity) || text(fallback.visualIdentity),
+        styling: text(profile.styling) || text(fallback.styling),
+        colorPalette: text(profile.colorPalette) || text(fallback.colorPalette),
+        consistencyRules: text(profile.consistencyRules) || text(fallback.consistencyRules),
     };
 }
 
 function normalizeContinuity(value: unknown): DramaShotContinuity {
     const input = object(value);
     return {
-        shotSize: text(input.shotSize, 120),
-        cameraAngle: text(input.cameraAngle, 200),
-        composition: text(input.composition, 500),
-        characterBlocking: text(input.characterBlocking, 1200),
-        gazeDirection: text(input.gazeDirection, 500),
-        actionStart: text(input.actionStart, 1200),
-        actionEnd: text(input.actionEnd, 1200),
-        screenDirection: text(input.screenDirection, 500),
-        axisRule: text(input.axisRule, 500),
-        continuityNotes: text(input.continuityNotes, 1200),
+        shotSize: text(input.shotSize),
+        cameraAngle: text(input.cameraAngle),
+        composition: text(input.composition),
+        characterBlocking: text(input.characterBlocking),
+        gazeDirection: text(input.gazeDirection),
+        actionStart: text(input.actionStart),
+        actionEnd: text(input.actionEnd),
+        screenDirection: text(input.screenDirection),
+        axisRule: text(input.axisRule),
+        continuityNotes: text(input.continuityNotes),
     };
 }
 
@@ -314,7 +306,7 @@ function extractQuotedDialogue(value: string) {
 }
 
 function normalizeDialogue(value: unknown, utterances: DramaUtterance[]) {
-    const direct = text(value, 4000);
+    const direct = text(value);
     const utteranceText = utterances
         .filter((item) => item.type === "dialogue" && !narrativeDialoguePattern.test(item.text))
         .map((item) => item.text)
@@ -335,7 +327,7 @@ function extractDramaUtterances(value: string): DramaUtterance[] {
 function extractDialogueSpans(value: string): DialogueSpan[] {
     const spans: DialogueSpan[] = [];
     const seen = new Set<string>();
-    const quotePattern = /“([^”]{1,2000})”|「([^」]{1,2000})」|『([^』]{1,2000})』|"([^"\r\n]{1,2000})"/g;
+    const quotePattern = /“([^”]+)”|「([^」]+)」|『([^』]+)』|"([^"\r\n]+)"/g;
     for (const match of value.matchAll(quotePattern)) {
         const dialogue = [match[1], match[2], match[3], match[4]].find(Boolean)?.trim() || "";
         if (!dialogue) continue;
@@ -353,7 +345,7 @@ function extractDialogueSpans(value: string): DialogueSpan[] {
                 start: lineStart + colonIndex + 1,
                 end: lineStart + line.length,
                 speaker: inferSpeaker(before),
-                text: after.slice(0, 2000),
+                text: after,
             });
         }
         lineStart += line.length + 1;
@@ -397,7 +389,7 @@ function mergeUtterances(sourceUtterances: DramaUtterance[], modelUtterances: Dr
         if (merged.some((candidate) => sameDialogue(candidate.text, item.text))) continue;
         merged.push(item);
     }
-    return merged.slice(0, 100).map((item, index) => ({ ...item, order: index + 1 }));
+    return merged.map((item, index) => ({ ...item, order: index + 1 }));
 }
 
 function restoreMissingDialogueCoverage(shots: DramaContentAnalysis["shots"], sourceScript: string) {
@@ -425,13 +417,12 @@ function restoreMissingDialogueCoverage(shots: DramaContentAnalysis["shots"], so
         }
         const targetIndex = nearestShotIndex(span.start, positions, result.length, script.length);
         const target = result[targetIndex];
-        if (!target || target.utterances.length >= 100) continue;
+        if (!target) continue;
         target.utterances.push({ id: `utterance-${nanoid()}`, order: target.utterances.length + 1, type: "dialogue", speaker: span.speaker, text: span.text });
         target.dialogue = target.utterances
             .filter((item) => item.type === "dialogue")
             .map((item) => item.text)
-            .join("\n")
-            .slice(0, 4000);
+            .join("\n");
         matched.set(key, matchedCount + 1);
     }
     return result;
@@ -490,21 +481,19 @@ function sameDialogue(left: string, right: string) {
 }
 
 function dialogueKey(value: string) {
-    return value
-        .toLocaleLowerCase()
-        .replace(/[\s“”"「」『』，。！？!?、：:；;…—-]/g, "")
-        .slice(0, 2000);
+    return value.toLocaleLowerCase().replace(/[\s“”"「」『』，。！？!?、：:；;…—-]/g, "");
 }
 
-function texts(value: unknown, limit: number, max: number) {
+function texts(value: unknown) {
     return array(value)
-        .map((item) => text(item, max))
-        .filter(Boolean)
-        .slice(0, limit);
+        .map((item) => text(item))
+        .filter(Boolean);
 }
 
-function text(value: unknown, max: number) {
-    return typeof value === "string" ? value.trim().slice(0, max) : "";
+function text(value: unknown, max?: number) {
+    if (typeof value !== "string") return "";
+    const normalized = value.trim();
+    return max === undefined ? normalized : normalized.slice(0, max);
 }
 
 function object(value: unknown) {
@@ -549,12 +538,11 @@ export const dramaContentTool = {
                 required: ["outline", "hook", "nextPreview", "sourceRange"],
                 properties: { outline: { type: "string" }, hook: { type: "string" }, nextPreview: { type: "string" }, sourceRange: { type: "string" } },
             },
-            characters: { type: "array", maxItems: 30, items: namedAssetSchema },
-            scenes: { type: "array", maxItems: 30, items: namedAssetSchema },
-            props: { type: "array", maxItems: 50, items: namedAssetSchema },
+            characters: { type: "array", items: namedAssetSchema },
+            scenes: { type: "array", items: namedAssetSchema },
+            props: { type: "array", items: namedAssetSchema },
             clues: {
                 type: "array",
-                maxItems: 50,
                 items: {
                     type: "object",
                     additionalProperties: false,
@@ -564,7 +552,6 @@ export const dramaContentTool = {
             },
             shots: {
                 type: "array",
-                maxItems: 80,
                 items: {
                     type: "object",
                     additionalProperties: false,
@@ -589,7 +576,7 @@ export const dramaContentTool = {
                                 },
                             },
                         },
-                        duration: { type: "integer", minimum: 1, maximum: 20 },
+                        duration: { type: "integer", minimum: 1 },
                         characterNames: { type: "array", items: { type: "string" } },
                         sceneName: { type: "string" },
                         propNames: { type: "array", items: { type: "string" } },
@@ -611,7 +598,6 @@ export const dramaVisualTool = {
         properties: {
             shots: {
                 type: "array",
-                maxItems: 80,
                 items: {
                     type: "object",
                     additionalProperties: false,

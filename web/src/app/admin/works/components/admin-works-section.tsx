@@ -1,7 +1,7 @@
 "use client";
 
-import { App, Button, Input, Modal, Pagination, Segmented, Select, Table, Tag, Tooltip } from "antd";
 import type { TableColumnsType } from "antd";
+import { App, Button, Input, Modal, Pagination, Segmented, Select, Table, Tag, Tooltip } from "antd";
 import { Ban, Check, Eye, GalleryVerticalEnd, RefreshCw, Search, Star, Trash2, X } from "lucide-react";
 import type { ReactNode } from "react";
 import { useCallback, useEffect, useRef, useState } from "react";
@@ -10,6 +10,7 @@ import { Panel, PanelHeader } from "@/components/admin/admin-panel";
 import { AdminAccountId, AdminUserIdentity } from "@/components/admin/admin-user-identity";
 import { imagePreviewUrl } from "@/lib/media-image-url";
 import { workStatusToneClass } from "@/lib/work-publication-status";
+import { setAdminWorkFeatured } from "@/services/api/work-governance";
 import {
     deleteAdminWorkPublication,
     listAdminWorkPublications,
@@ -20,7 +21,6 @@ import {
     type WorkPublicationModerationStatus,
     type WorkPublicationVisibility,
 } from "@/services/api/work-publications";
-import { setAdminWorkFeatured } from "@/services/api/work-governance";
 import { AdminWorkCasesSection } from "./admin-work-cases-section";
 
 const PAGE_SIZE = 12;

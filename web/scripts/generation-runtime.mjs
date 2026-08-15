@@ -5,19 +5,24 @@ const MIN_TOKEN_LENGTH = 32;
 
 export function generationRuntimeEnvironment({ environment = process.env, allowEphemeralToken = false } = {}) {
     const source = { ...environment };
-    const configuredToken = source.VOZEB_PRO_MAINTENANCE_TOKEN?.trim() || "";
-    if (configuredToken.length < MIN_TOKEN_LENGTH && !allowEphemeralToken) {
-        throw new Error("VOZEB_PRO_MAINTENANCE_TOKEN must contain at least 32 characters");
+    const maintenanceToken = source.VOZEB_PRO_MAINTENANCE_TOKEN?.trim() || "";
+    const workerToken = source.VOZEB_PRO_WORKER_TOKEN?.trim() || "";
+    if (!allowEphemeralToken && (maintenanceToken.length < MIN_TOKEN_LENGTH || workerToken.length < MIN_TOKEN_LENGTH || maintenanceToken === workerToken)) {
+        throw new Error("VOZEB_PRO_MAINTENANCE_TOKEN and VOZEB_PRO_WORKER_TOKEN must be distinct and contain at least 32 characters");
     }
 
     const port = validPort(source.PORT) || 3000;
+    const resolvedMaintenanceToken = maintenanceToken.length >= MIN_TOKEN_LENGTH ? maintenanceToken : randomBytes(32).toString("hex");
+    let resolvedWorkerToken = workerToken.length >= MIN_TOKEN_LENGTH ? workerToken : randomBytes(32).toString("hex");
+    if (resolvedWorkerToken === resolvedMaintenanceToken) resolvedWorkerToken = randomBytes(32).toString("hex");
     return {
         environment: {
             ...source,
-            VOZEB_PRO_MAINTENANCE_TOKEN: configuredToken.length >= MIN_TOKEN_LENGTH ? configuredToken : randomBytes(32).toString("hex"),
+            VOZEB_PRO_MAINTENANCE_TOKEN: resolvedMaintenanceToken,
+            VOZEB_PRO_WORKER_TOKEN: resolvedWorkerToken,
             VOZEB_PRO_WORKER_API_ORIGIN: resolveGenerationWorkerOrigin({ environment: source, fallbackOrigin: `http://127.0.0.1:${port}` }),
         },
-        ephemeralToken: configuredToken.length < MIN_TOKEN_LENGTH,
+        ephemeralToken: maintenanceToken.length < MIN_TOKEN_LENGTH || workerToken.length < MIN_TOKEN_LENGTH || maintenanceToken === workerToken,
     };
 }
 

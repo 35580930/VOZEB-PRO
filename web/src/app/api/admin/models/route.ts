@@ -1,3 +1,4 @@
+import { hasAdminPermission } from "@/lib/admin-permissions";
 import { NextResponse } from "next/server";
 
 import { AGNES_RECOMMENDED_CONFIG, isAgnesApiBaseUrl } from "@/lib/agnes-model-catalog";
@@ -67,7 +68,7 @@ const modelFetchCooldowns = (globalCooldownStore.__vozebProModelFetchCooldowns ?
 export async function POST(request: Request) {
     const currentUser = await getCurrentUser();
     if (!currentUser) return NextResponse.json({ error: "请先登录" }, { status: 401 });
-    if (currentUser.role !== "admin") return NextResponse.json({ error: "需要管理员权限" }, { status: 403 });
+    if (!hasAdminPermission(currentUser, "upstream.manage")) return NextResponse.json({ error: "需要管理员权限" }, { status: 403 });
 
     const [body, settings] = await Promise.all([readJsonBody<ModelsPayload>(request), getAuthSettings()]);
     const { baseUrl, apiKey, apiFormat, savedChannel } = resolveAdminChannelCredentials(settings, body);
@@ -85,21 +86,23 @@ export async function POST(request: Request) {
     } as SystemChannelAdvancedConfig;
     const configuredModels = body.configuredModels !== undefined ? body.configuredModels : savedChannel?.models;
     const configuredCapabilities = body.modelCapabilities !== undefined ? body.modelCapabilities : savedChannel?.advancedConfig?.modelCapabilities;
-    const configuredCatalog = configuredModelCatalog(configuredModels, configuredCapabilities);
     const configuredConfigs = normalizeModelConfigs(body.modelConfigs !== undefined ? body.modelConfigs : savedChannel?.advancedConfig?.modelConfigs);
+    const configuredCatalog = configuredModelCatalog(configuredModels, configuredCapabilities, configuredConfigs);
     const operationConfigs = body.operationConfigs !== undefined ? body.operationConfigs : savedChannel?.advancedConfig?.operationConfigs;
     const protocol = (typeof body.protocol === "string" ? body.protocol : advancedConfig.protocol || "auto") as SystemChannelProtocol;
     const protocolDefinition = channelProtocolDefinition(protocol);
     advancedConfig.protocol = protocolDefinition.id;
     advancedConfig.authMode = resolveChannelAuthMode(advancedConfig);
     if (!apiKey && advancedConfig.authMode !== "none") return NextResponse.json({ error: "请先填写 Base URL 和 API Key" }, { status: 400 });
+    const modelCatalogPaths = body.modelCatalogPaths ?? savedChannel?.advancedConfig?.modelCatalogPaths ?? protocolDefinition.modelCatalogPaths;
+    const hasConfiguredCatalog = Array.isArray(modelCatalogPaths) && modelCatalogPaths.some((path) => typeof path === "string" && path.trim());
 
-    if (protocolDefinition.builtInModels?.length) {
+    if (protocolDefinition.builtInModels?.length && !hasConfiguredCatalog) {
         const builtInCatalog = protocolDefinition.builtInModels.map(({ id, capability }) => ({ id, capability, source: "official" as const }));
         const merged = mergeModelCatalogEntries(configuredCatalog, builtInCatalog);
         const builtInConfigs = Object.fromEntries(
             protocolDefinition.builtInModels.flatMap(({ id, capability }) => {
-                const config = protocolModelConfig(protocol, capability);
+                const config = protocolModelConfig(protocol, capability, id);
                 return config ? [[normalizeModelId(id), config] as const] : [];
             }),
         );
@@ -113,6 +116,10 @@ export async function POST(request: Request) {
             catalogSupported: false,
             provider: protocol,
         });
+    }
+
+    if (protocol === "yumeng" && !hasConfiguredCatalog) {
+        return NextResponse.json({ error: "昱梦新版只确认了 V2 任务接口，官方文档未提供 V2 模型目录；系统不会降级请求 /v1/models。请先手动填写模型 ID，或在上游确认 V2 模型目录路径后再同步。" }, { status: 422 });
     }
 
     const globalAiOpcPresets = resolveGlobalAiOpcCatalogPresets(baseUrl, advancedConfig);
@@ -133,7 +140,7 @@ export async function POST(request: Request) {
     if (advancedConfig.protocol === "globalaiopc" || isGlobalAiOpcBaseUrl(baseUrl)) return NextResponse.json({ error: "未识别到 GlobalAiOpc 接口范围，请检查 Base URL 或重新选择接口范围" }, { status: 400 });
 
     if (!(await isSafeOutboundUrl(baseUrl))) return NextResponse.json({ error: "Base URL 不允许访问内网或保留地址" }, { status: 400 });
-    const modelCatalogUrls = buildModelCatalogUrls(baseUrl, apiFormat, body.modelCatalogPaths ?? savedChannel?.advancedConfig?.modelCatalogPaths ?? protocolDefinition.modelCatalogPaths);
+    const modelCatalogUrls = buildModelCatalogUrls(baseUrl, apiFormat, modelCatalogPaths);
     if (!modelCatalogUrls.length) return NextResponse.json({ error: "模型目录路径必须与 Base URL 同源" }, { status: 400 });
 
     const cooldownKey = `${currentUser.id}:${baseUrl.toLowerCase()}`;
@@ -185,7 +192,7 @@ export async function POST(request: Request) {
                 if (!protocolDefinition.strict) return [];
                 const configuredProtocol = configuredConfigs[normalizeModelId(entry.id)]?.protocol;
                 if (configuredProtocol && configuredProtocol !== protocol) return [];
-                const config = protocolModelConfig(protocol, entry.capability);
+                const config = protocolModelConfig(protocol, entry.capability, entry.id);
                 return config ? [[normalizeModelId(entry.id), config] as const] : [];
             }),
         );

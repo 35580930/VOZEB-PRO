@@ -22,7 +22,10 @@ describe("generation Worker heartbeat PostgreSQL repository", () => {
             return { rows: [] };
         });
         mocks.pool.mockReset().mockImplementation(function PoolMock() {
-            return { query: mocks.query };
+            return {
+                query: mocks.query,
+                connect: vi.fn(async () => ({ query: mocks.query, release: vi.fn() })),
+            };
         });
     });
 

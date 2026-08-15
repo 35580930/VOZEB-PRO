@@ -1,3 +1,4 @@
+import { hasAdminPermission } from "@/lib/admin-permissions";
 import { forbidden, unauthorized, workPublicationError, workPublicationOk } from "@/app/api/_shared/work-publication-response";
 import { readJsonBody } from "@/lib/auth/request";
 import { getCurrentUser } from "@/lib/auth/session";
@@ -12,7 +13,7 @@ type Context = { params: Promise<{ id: string }> };
 export async function POST(request: Request, context: Context) {
     const user = await getCurrentUser();
     if (!user) return unauthorized();
-    if (user.role !== "admin") return forbidden();
+    if (!hasAdminPermission(user, "content.manage")) return forbidden();
     const { id } = await context.params;
     const body = await readJsonBody<{ decision?: unknown; resolution?: unknown }>(request);
     try {

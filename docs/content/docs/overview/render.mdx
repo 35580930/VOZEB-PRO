@@ -5,7 +5,7 @@ description: 使用 Render Blueprint 和 PostgreSQL 部署 VOZEB PRO
 
 # Render 部署
 
-仓库根目录 `render.yaml` 会创建 Web Service、独立生成 Worker、PostgreSQL 和 Web 持久盘。Web 与 Worker 通过同一 Render 环境组取得自动生成的维护令牌；Worker 只通过 Render 私网调用 Web 维护接口，不直接读取数据库连接。
+仓库根目录 `render.yaml` 会创建 Web Service、独立生成 Worker、PostgreSQL 和 Web 持久盘。Web 与 Worker 通过同一 Render 环境组取得自动生成的 Worker 令牌，Web 另持有独立维护令牌；Worker 只通过 Render 私网调用内部 Worker 接口，不直接读取数据库连接或外部维护令牌。
 
 [部署到 Render](https://render.com/deploy?repo=https://github.com/csyqlz/VOZEB-PRO)
 
@@ -13,7 +13,7 @@ description: 使用 Render Blueprint 和 PostgreSQL 部署 VOZEB PRO
 
 1. 连接 GitHub 仓库并创建 Blueprint。
 2. 为 `NEXT_PUBLIC_SITE_URL` 填写最终 Render 域名或自定义 HTTPS 域名。
-3. 确认 `VOZEB_PRO_ENCRYPTION_KEY` 和环境组中的 `VOZEB_PRO_MAINTENANCE_TOKEN` 已由 Render 生成并长期保留。
+3. 确认 `VOZEB_PRO_ENCRYPTION_KEY`、Web 的 `VOZEB_PRO_MAINTENANCE_TOKEN` 和环境组中的 `VOZEB_PRO_WORKER_TOKEN` 已由 Render 分别生成并长期保留。
 4. 确认 Web 的 `/app/web/.data` 已挂载 `vozeb-pro-data` 持久盘，Worker 状态为运行中。
 5. 部署完成后访问 `/install` 创建管理员。
 6. 登录后台配置模型渠道和默认逻辑模型，再检查 `/api/health/ready` 返回成功且包含有效 Worker 心跳。

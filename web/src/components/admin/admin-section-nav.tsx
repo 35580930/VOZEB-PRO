@@ -35,8 +35,10 @@ import {
     WalletCards,
     X,
 } from "lucide-react";
-import type { AdminSectionKey } from "@/components/admin/admin-sections";
+import { canAccessAdminSection, type AdminSectionKey } from "@/components/admin/admin-sections";
 import { SiteLogo } from "@/components/layout/site-logo";
+import type { PublicUser } from "@/lib/auth/store";
+import { DEFAULT_SITE_TITLE } from "@/lib/site-brand";
 import { usePublicSessionStore } from "@/stores/use-public-session-store";
 
 type AdminSection = { key: AdminSectionKey; label: string; description: string; shortDescription: string; icon: ReactNode };
@@ -45,23 +47,28 @@ type AdminSectionGroup = { title: string; items: AdminSection[] };
 export function AdminSectionNav({
     activeKey,
     onChange,
+    onIntent,
     mobileOpen,
     desktopCollapsed,
     onDesktopToggle,
     onMobileToggle,
     onMobileClose,
+    currentUser,
 }: {
     activeKey: AdminSectionKey;
     onChange: (key: AdminSectionKey) => void;
+    onIntent?: (key: AdminSectionKey) => void;
     mobileOpen: boolean;
     desktopCollapsed: boolean;
     onDesktopToggle: () => void;
     onMobileToggle: () => void;
     onMobileClose: () => void;
+    currentUser: PublicUser;
 }) {
-    const activeGroup = adminSectionGroups.find((group) => group.items.some((section) => section.key === activeKey));
+    const allowedGroups = adminSectionGroups.map((group) => ({ ...group, items: group.items.filter((section) => canAccessAdminSection(currentUser, section.key)) })).filter((group) => group.items.length);
+    const activeGroup = allowedGroups.find((group) => group.items.some((section) => section.key === activeKey));
     const activeGroupTitle = activeGroup?.title;
-    const site = usePublicSessionStore((state) => state.payload?.settings?.site) || { title: "MOCREAI", logoUrl: "/logo.svg" };
+    const site = usePublicSessionStore((state) => state.payload?.settings?.site) || { title: DEFAULT_SITE_TITLE, logoUrl: "/logo.svg" };
     const [collapsedGroups, setCollapsedGroups] = useState<Record<string, boolean>>({});
 
     useEffect(() => {
@@ -83,6 +90,9 @@ export function AdminSectionNav({
                     title={desktopCollapsed ? section.label : undefined}
                     aria-label={section.label}
                     className={`admin-section-nav-item relative flex h-9 w-full min-w-0 items-center gap-2.5 rounded-md px-2.5 text-left text-sm transition ${active ? "is-active bg-zinc-100 font-medium text-zinc-950 dark:bg-zinc-900 dark:text-zinc-50" : "text-zinc-600 hover:bg-zinc-50 hover:text-zinc-950 dark:text-zinc-400 dark:hover:bg-zinc-900 dark:hover:text-white"}`}
+                    onPointerEnter={() => onIntent?.(section.key)}
+                    onPointerDown={() => onIntent?.(section.key)}
+                    onFocus={() => onIntent?.(section.key)}
                     onClick={() => {
                         onChange(section.key);
                         onMobileClose();
@@ -135,7 +145,7 @@ export function AdminSectionNav({
                     </button>
                 </div>
                 <div className="admin-section-nav-list flex flex-1 flex-col gap-4 overflow-x-hidden overflow-y-auto px-3 py-4">
-                    {adminSectionGroups.map((group) => {
+                    {allowedGroups.map((group) => {
                         const collapsed = Boolean(collapsedGroups[group.title]) && !desktopCollapsed;
                         return (
                             <div key={group.title} className="admin-section-nav-group block min-w-0">
@@ -178,9 +188,9 @@ export const adminSections: AdminSection[] = [
     { key: "cdk", label: "CDK 兑换", description: "生成和管理积分或套餐兑换码，用于活动发放和售后补偿。", shortDescription: "兑换码", icon: <Gift className="size-4" /> },
     { key: "wallet", label: "财务流水", description: "查看资金流水、积分负债和收入/退款对账口径。", shortDescription: "收入对账", icon: <WalletCards className="size-4" /> },
     { key: "site", label: "站点资料", description: "管理前台网站标题、Logo、SEO 标题、描述和关键词。", shortDescription: "品牌与 SEO", icon: <Globe2 className="size-4" /> },
-    { key: "channels", label: "模型渠道", description: "添加上游接口、拉取模型、测试可用性并设置默认模型。", shortDescription: "上游接口", icon: <PlugZap className="size-4" /> },
+    { key: "channels", label: "模型渠道", description: "添加上游接口，维护模型目录、逻辑绑定和各能力默认模型。", shortDescription: "上游接口", icon: <PlugZap className="size-4" /> },
     { key: "skills", label: "Agent Skills", description: "管理 Agent 专业能力、触发词、来源和执行规则。", shortDescription: "专业能力", icon: <Sparkles className="size-4" /> },
-    { key: "settings", label: "基础设置", description: "管理注册策略、邮箱服务和生成默认值。", shortDescription: "账号与生成", icon: <SlidersHorizontal className="size-4" /> },
+    { key: "settings", label: "基础设置", description: "管理注册、邮箱、生成与数据维护。", shortDescription: "账号与生成", icon: <SlidersHorizontal className="size-4" /> },
     { key: "accountDeletion", label: "注销申请", description: "查看用户账号注销申请，完成身份核验、受理或拒绝并保留审计记录。", shortDescription: "用户权利请求", icon: <UserRoundX className="size-4" /> },
     { key: "mediaStorage", label: "本地媒体", description: "查看服务器图片、视频和音频文件，管理临时期限与长期存储。", shortDescription: "文件与期限", icon: <HardDrive className="size-4" /> },
     { key: "externalStorage", label: "外部存储", description: "配置 S3 兼容存储，迁移本地媒体并管理外部对象。", shortDescription: "S3 与 OSS", icon: <Cloud className="size-4" /> },

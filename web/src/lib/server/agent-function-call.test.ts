@@ -25,6 +25,14 @@ describe("Agent Function Call parsing refunds", () => {
         expect(refund).not.toHaveBeenCalled();
     });
 
+    it("refunds a plan that violates the explicitly selected media mode", async () => {
+        const refund = vi.fn().mockResolvedValue(undefined);
+        const plan = { objective: "制作商品视频", deliverables: [{ title: "误选主图", type: "image" as const, prompt: "生成商品主图" }] };
+
+        await expect(parseAgentPlanCall({ arguments: JSON.stringify(plan) }, refund, undefined, { requiredGenerationMode: "video" })).rejects.toThrow("创作类型与用户选择不一致");
+        expect(refund).toHaveBeenCalledTimes(1);
+    });
+
     it("drops an invalid project handoff before validating an ordinary generation plan", async () => {
         const refund = vi.fn().mockResolvedValue(undefined);
         const plan = {

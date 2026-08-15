@@ -7,7 +7,9 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 
 import { Panel, PanelHeader } from "@/components/admin/admin-panel";
 import { AdminUserIdentity } from "@/components/admin/admin-user-identity";
-import type { AdminGenerationChannel, AdminGenerationOperationsPayload, AdminGenerationTask } from "@/lib/admin-generation-operations";
+import type { AdminGenerationOperationsPayload, AdminGenerationTask } from "@/lib/admin-generation-operations";
+import { GenerationChannelStatus } from "./generation-channel-status";
+import { AgentPlannerAuditSummary, executionPhaseLabel, GenerationTaskRuntimeSummary, generationTaskPointsLabel } from "./generation-operation-task-details";
 import { generationOperationStatusTagClass, generationOperationThemeClasses } from "./generation-operations-theme";
 
 const PAGE_SIZE = 20;
@@ -117,8 +119,7 @@ export function GenerationOperationsClient() {
                     <div className="min-w-0">
                         <div className="flex items-center gap-2">
                             <TaskTypeTag type={task.type} />
-                            <StatusTag status={task.status} />
-                            {task.canReview ? <ReviewTag /> : null}
+                            {task.canReview ? <ReviewTag /> : <StatusTag status={task.status} />}
                         </div>
                         <Tooltip title={task.id}>
                             <div className="mt-2 truncate font-mono text-xs text-zinc-500 dark:text-zinc-400">{task.id}</div>
@@ -142,6 +143,7 @@ export function GenerationOperationsClient() {
                             {task.channelId ? ` · 渠道 ${task.channelId}` : ""}
                             {task.projectId ? ` · 项目 ${task.projectId.slice(0, 8)}` : ""}
                         </div>
+                        <AgentPlannerAuditSummary task={task} />
                     </div>
                 ),
             },
@@ -151,10 +153,16 @@ export function GenerationOperationsClient() {
                     <div>
                         <div className="line-clamp-2 text-sm leading-5">{task.prompt || task.error || "无请求摘要"}</div>
                         <div className="mt-1 text-xs text-zinc-500">
-                            {formatDuration(task.durationMs)} · {task.pointsCost} 积分{task.attempts && task.attempts.length > 1 ? ` · ${task.attempts.length} 次渠道尝试` : ""}
+                            {formatDuration(task.durationMs)} · {generationTaskPointsLabel(task)}
+                            {task.attempts && task.attempts.length > 1 ? ` · ${task.attempts.length} 次渠道尝试` : ""}
                         </div>
                     </div>
                 ),
+            },
+            {
+                title: "执行诊断",
+                width: 220,
+                render: (_, task) => <GenerationTaskRuntimeSummary task={task} />,
             },
             {
                 title: "操作",
@@ -295,7 +303,7 @@ export function GenerationOperationsClient() {
 
                     <section className="min-w-0 p-3 sm:p-4">
                         <div className="hidden overflow-hidden rounded-lg border border-zinc-200 dark:border-zinc-800 md:block">
-                            <Table rowKey="id" size="middle" loading={loading} columns={columns} dataSource={data?.items || []} pagination={false} scroll={{ x: 980 }} />
+                            <Table rowKey="id" size="middle" loading={loading} columns={columns} dataSource={data?.items || []} pagination={false} scroll={{ x: 1200 }} />
                         </div>
                         <div className="space-y-3 md:hidden">
                             {(data?.items || []).map((task) => (
@@ -310,42 +318,7 @@ export function GenerationOperationsClient() {
                     </section>
                 </Panel>
 
-                <Panel>
-                    <PanelHeader title="渠道运行状态" description="只读展示真实业务请求产生的运行时冷却、规划协议和调用样本。" />
-                    <section className="grid gap-3 p-3 sm:p-4 lg:grid-cols-2">
-                        {(data?.channels || []).map((channel) => {
-                            return (
-                                <article key={channelKey(channel)} className="min-w-0 rounded-lg border border-zinc-200 p-3.5 dark:border-zinc-800">
-                                    <div className="flex items-start justify-between gap-3">
-                                        <div className="min-w-0">
-                                            <div className="flex flex-wrap items-center gap-1.5">
-                                                <span className="truncate text-sm font-semibold text-zinc-950 dark:text-zinc-100">{channel.name}</span>
-                                                <Tag className={generationOperationThemeClasses.neutralTag}>{taskTypeLabel(channel.capability)}</Tag>
-                                                {!channel.enabled ? <Tag className={generationOperationThemeClasses.neutralTag}>已停用</Tag> : null}
-                                                {channel.runtimeHealth.status === "cooling" ? <Tag className={generationOperationThemeClasses.reviewTag}>冷却中</Tag> : null}
-                                            </div>
-                                            <div className="mt-2 truncate text-xs text-zinc-500 dark:text-zinc-400">
-                                                {channel.logicalModelName} → {channel.upstreamModel}
-                                            </div>
-                                        </div>
-                                    </div>
-                                    {channel.runtimeHealth.status === "cooling" ? <div className="mt-3 line-clamp-2 text-xs leading-5 text-amber-700 dark:text-amber-300">{channel.runtimeHealth.lastError || "连续失败，等待自动恢复"}</div> : null}
-                                    <div className="mt-3 flex flex-wrap items-center gap-2 border-t border-zinc-100 pt-3 text-xs text-zinc-500 dark:border-zinc-900 dark:text-zinc-400">
-                                        {channel.planningRuntime ? (
-                                            <span>
-                                                规划 {planningProtocolLabel(channel.planningRuntime.protocol)} · 平均 {formatDuration(channel.planningRuntime.averageLatencyMs || 0)} · {channel.planningRuntime.successCount} 成功 /{" "}
-                                                {channel.planningRuntime.failureCount} 失败
-                                            </span>
-                                        ) : (
-                                            <span>暂无规划调用样本</span>
-                                        )}
-                                    </div>
-                                </article>
-                            );
-                        })}
-                        {!loading && !data?.channels.length ? <div className="py-8 text-center text-sm text-zinc-500 dark:text-zinc-400 lg:col-span-2">暂无可用渠道</div> : null}
-                    </section>
-                </Panel>
+                <GenerationChannelStatus channels={data?.channels || []} loading={loading} />
             </div>
 
             <Modal
@@ -398,13 +371,6 @@ export function GenerationOperationsClient() {
     );
 }
 
-function planningProtocolLabel(protocol?: "responses" | "chat" | "gemini" | "custom") {
-    if (protocol === "responses") return "Responses";
-    if (protocol === "gemini") return "Gemini";
-    if (protocol === "custom") return "自定义";
-    return "Chat";
-}
-
 function SummaryMetric({ icon, label, value, detail, tone = "default" }: { icon: React.ReactNode; label: string; value: string | number; detail: string; tone?: "default" | "danger" }) {
     return (
         <div className="flex min-h-[94px] min-w-0 flex-col justify-between bg-white p-3 dark:bg-zinc-950 sm:min-h-28 sm:p-4">
@@ -436,8 +402,7 @@ function TaskCard({ task, actingId, onAction, onReview }: { task: AdminGeneratio
             <div className="flex items-start justify-between gap-3">
                 <div className="flex min-w-0 flex-wrap gap-1.5">
                     <TaskTypeTag type={task.type} />
-                    <StatusTag status={task.status} />
-                    {task.canReview ? <ReviewTag /> : null}
+                    {task.canReview ? <ReviewTag /> : <StatusTag status={task.status} />}
                 </div>
                 <div className="flex shrink-0 gap-0.5">
                     {task.canCancel ? (
@@ -467,8 +432,10 @@ function TaskCard({ task, actingId, onAction, onReview }: { task: AdminGeneratio
                 <TaskCardFact label="模型" value={task.model || "未记录"} />
                 <TaskCardFact label="入口" value={surfaceLabel(task.surface)} />
                 <TaskCardFact label="耗时" value={formatDuration(task.durationMs)} />
-                <TaskCardFact label="积分" value={`${task.pointsCost} 积分`} />
+                <TaskCardFact label="积分" value={generationTaskPointsLabel(task)} />
             </div>
+            <AgentPlannerAuditSummary task={task} />
+            <GenerationTaskRuntimeSummary task={task} compact />
             <div className="mt-3">
                 <div className="text-[11px] font-medium text-zinc-400 dark:text-zinc-500">请求摘要</div>
                 <p className="mt-1 line-clamp-3 text-sm leading-5 text-zinc-700 dark:text-zinc-300">{task.prompt || task.error || "无请求摘要"}</p>
@@ -510,10 +477,4 @@ function surfaceLabel(value?: string) {
 function formatDuration(ms: number) {
     if (!ms) return "0 秒";
     return ms < 60_000 ? `${Math.max(1, Math.round(ms / 1000))} 秒` : `${Math.floor(ms / 60_000)} 分 ${Math.round((ms % 60_000) / 1000)} 秒`;
-}
-function channelKey(channel: AdminGenerationChannel) {
-    return `${channel.id}:${channel.capability}:${channel.logicalModelId}:${channel.upstreamModel}`;
-}
-function executionPhaseLabel(value?: AdminGenerationTask["executionPhase"]) {
-    return ({ created: "已创建", submitting: "提交中", submitted: "已提交", polling: "查询结果", result_ready: "结果待保存", persisting: "保存结果", needs_review: "待人工确认", completed: "已结束" } as Record<string, string>)[value || ""] || "未记录";
 }

@@ -70,17 +70,17 @@ export function CreativeConversationList({ items, activeId, loading, onNew, onOp
 
     return (
         <div className="flex h-full min-h-0 flex-col bg-white dark:bg-[#181b20]">
-            <div className="shrink-0 border-b border-[#e6eaee] px-4 py-4 dark:border-[#2b3037]">
+            <div className="shrink-0 border-b border-[#e6eaee] px-3 py-3 dark:border-[#2b3037]">
                 <button
                     type="button"
-                    className="flex h-10 w-full items-center justify-center gap-2 rounded-lg border border-[#20242a] !bg-[#20242a] px-3 text-sm font-medium !text-white transition hover:border-[#343a42] hover:!bg-[#343a42] dark:border-[#f3f5f7] dark:!bg-[#f3f5f7] dark:!text-[#20242a] dark:hover:border-white dark:hover:!bg-white"
+                    className="flex h-9 w-full items-center justify-center gap-2 rounded-lg border border-[#20242a] !bg-[#20242a] px-3 text-sm font-medium !text-white transition hover:border-[#343a42] hover:!bg-[#343a42] dark:border-[#f3f5f7] dark:!bg-[#f3f5f7] dark:!text-[#20242a] dark:hover:border-white dark:hover:!bg-white"
                     onClick={onNew}
                 >
                     <Plus className="size-4 text-current" /> 新建对话
                 </button>
             </div>
 
-            <div className="flex h-12 shrink-0 items-center justify-between gap-3 border-b border-[#edf0f2] px-4 dark:border-[#252a30]">
+            <div className="flex h-11 shrink-0 items-center justify-between gap-2 border-b border-[#edf0f2] px-3 dark:border-[#252a30]">
                 {managing ? (
                     <Checkbox checked={allSelected} indeterminate={selectedIds.length > 0 && !allSelected} onChange={(event) => setSelectedIds(event.target.checked ? items.map((item) => item.id) : [])}>
                         全选
@@ -98,7 +98,7 @@ export function CreativeConversationList({ items, activeId, loading, onNew, onOp
                 </button>
             </div>
 
-            <div className="min-h-0 flex-1 overflow-y-auto px-3 py-3">
+            <div className="min-h-0 flex-1 overflow-y-auto px-2 py-2">
                 {loading ? <div className="py-10 text-center text-sm text-stone-400">正在读取...</div> : null}
                 {!loading && !items.length ? <div className="py-10 text-center text-sm text-stone-400">暂无创作会话</div> : null}
                 <div className="space-y-1.5">
@@ -108,7 +108,7 @@ export function CreativeConversationList({ items, activeId, loading, onNew, onOp
                             <div
                                 key={item.id}
                                 className={cn(
-                                    "group flex min-h-14 items-center gap-1 rounded-lg border px-1 transition",
+                                    "group flex min-h-13 items-center gap-1 rounded-lg border px-1 transition",
                                     activeId === item.id ? "border-[#d5dbe1] bg-[#f0f2f4] dark:border-[#3b424c] dark:bg-[#252a31]" : "border-transparent hover:border-[#e4e8ec] hover:bg-[#f7f8fa] dark:hover:border-[#30363e] dark:hover:bg-[#20242a]",
                                 )}
                             >

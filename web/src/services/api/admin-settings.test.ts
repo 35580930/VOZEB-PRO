@@ -10,7 +10,10 @@ describe("admin settings api", () => {
         vi.stubGlobal("fetch", fetchMock);
 
         await expect(revealAdminChannelApiKey("channel/a")).resolves.toBe("saved-secret");
-        expect(fetchMock).toHaveBeenCalledWith("/api/admin/settings/channels/channel%2Fa/api-key", { cache: "no-store" });
+        expect(fetchMock).toHaveBeenCalledWith("/api/admin/settings/channels/channel%2Fa/api-key", {
+            method: "POST",
+            cache: "no-store",
+        });
     });
 
     it("surfaces the server error without returning an empty key", async () => {

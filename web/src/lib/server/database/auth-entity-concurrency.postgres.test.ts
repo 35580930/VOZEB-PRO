@@ -28,6 +28,7 @@ describe("PostgreSQL auth entity concurrency", () => {
                 displayName: "并发测试用户",
                 bio: "",
                 role: "user",
+                adminPermissions: [],
                 status: "active",
                 planId,
                 pointsBalance: 100,

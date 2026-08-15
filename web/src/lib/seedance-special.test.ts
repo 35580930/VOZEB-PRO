@@ -25,6 +25,48 @@ describe("Seedance special request", () => {
         });
     });
 
+    it("builds distinct first-frame and last-frame content entries", () => {
+        expect(
+            buildSeedanceSpecialRequest({
+                model: "sd_2.0_fast_special_720p",
+                prompt: "continuous camera move",
+                ratio: "16:9",
+                duration: 5,
+                references: [
+                    { type: "image", url: "https://cdn.example.com/first.png", role: "first_frame" },
+                    { type: "image", url: "https://cdn.example.com/last.png", role: "last_frame" },
+                ],
+            }),
+        ).toMatchObject({
+            content: [
+                { type: "text", text: "continuous camera move" },
+                { type: "image_url", role: "first_frame", image_url: { url: "https://cdn.example.com/first.png" } },
+                { type: "image_url", role: "last_frame", image_url: { url: "https://cdn.example.com/last.png" } },
+            ],
+        });
+    });
+
+    it.each([
+        [
+            [
+                { type: "image", url: "https://cdn.example.com/first.png", role: "first_frame" },
+                { type: "image", url: "https://cdn.example.com/reference.png", role: "reference" },
+            ],
+            "不能混用普通图片、视频或音频参考",
+        ],
+        [[{ type: "image", url: "https://cdn.example.com/first.png", role: "first_frame" }], "视频参考模型不能用于首帧或首尾帧模式"],
+    ])("rejects invalid frame-mode combinations", (references, message) => {
+        expect(() =>
+            buildSeedanceSpecialRequest({
+                model: message.includes("视频参考模型") ? "sd_2.0_fast_special_720p_with_video_ref" : "sd_2.0_fast_special_720p",
+                prompt: "continuous camera move",
+                ratio: "16:9",
+                duration: 5,
+                references: references as Parameters<typeof buildSeedanceSpecialRequest>[0]["references"],
+            }),
+        ).toThrow(message);
+    });
+
     it.each([
         [{ model: "unknown", prompt: "test", ratio: "16:9", duration: 5 }, "模型不在接口文档允许列表"],
         [{ model: "sd_2.0_fast_special_720p", prompt: "test", ratio: "2:1", duration: 5 }, "不支持画幅"],

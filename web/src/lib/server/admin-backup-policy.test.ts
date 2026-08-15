@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 import { mergeAuthBackupSecrets, sanitizeAuthBackup } from "./admin-backup-policy";
 
 const current = {
-    users: [{ id: "user-1", username: "admin", email: "admin@example.com", passwordHash: "hash-current", pointsBalance: 10 }],
+    users: [{ id: "user-1", username: "admin", email: "admin@example.com", passwordHash: "hash-current", mfaSecretCiphertext: "mfa-current", mfaEnabledAt: "2026-08-09T00:00:00.000Z", pointsBalance: 10 }],
     sessions: [{ id: "session-1", tokenHash: "token-hash" }],
     emailCodes: [{ id: "code-1", codeHash: "code-hash" }],
     cdkCodes: [{ id: "cdk-1", codeHash: "cdk-hash" }],
@@ -16,7 +16,7 @@ const current = {
 describe("admin backup policy", () => {
     it("removes authentication and upstream secrets from exported auth data", () => {
         expect(sanitizeAuthBackup(current)).toEqual({
-            users: [{ id: "user-1", username: "admin", pointsBalance: 10 }],
+            users: [{ id: "user-1", username: "admin", mfaEnabledAt: "2026-08-09T00:00:00.000Z", pointsBalance: 10 }],
             sessions: [],
             emailCodes: [],
             cdkCodes: [],
@@ -34,7 +34,7 @@ describe("admin backup policy", () => {
         });
 
         expect(mergeAuthBackupSecrets(imported, current)).toMatchObject({
-            users: [{ email: "admin@example.com", passwordHash: "hash-current", pointsBalance: 99 }],
+            users: [{ email: "admin@example.com", passwordHash: "hash-current", mfaSecretCiphertext: "mfa-current", mfaEnabledAt: "2026-08-09T00:00:00.000Z", pointsBalance: 99 }],
             sessions: current.sessions,
             emailCodes: current.emailCodes,
             cdkCodes: current.cdkCodes,

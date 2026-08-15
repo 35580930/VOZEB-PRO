@@ -19,9 +19,9 @@ describe("resolveImageTaskOptions", () => {
 });
 
 describe("resolveImageGenerationCount", () => {
-    it("keeps the effective backend or user count within the supported range", () => {
+    it("keeps the effective backend or user count without an unconfigured cap", () => {
         expect(resolveImageGenerationCount("3")).toBe(3);
-        expect(resolveImageGenerationCount(20)).toBe(10);
+        expect(resolveImageGenerationCount(20)).toBe(20);
         expect(resolveImageGenerationCount(0)).toBe(1);
     });
 });

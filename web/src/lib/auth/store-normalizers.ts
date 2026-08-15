@@ -1,4 +1,4 @@
-import { randomBytes, randomUUID } from "node:crypto";
+import { randomUUID } from "node:crypto";
 
 import { formatAccountId, parseAccountId } from "@/lib/account-id";
 import { decryptSecretValue, encryptSecretValue, isEncryptedSecretValue } from "@/lib/server/secret-crypto";
@@ -6,6 +6,7 @@ import { ECOMMERCE_IMAGE_SKILL } from "@/lib/server/agent-skills/ecommerce-image
 import { YANAI_BEAUTY_SKILL } from "@/lib/server/agent-skills/yanai-beauty";
 import { DEFAULT_CREATIVE_SHORTCUT_SKILLS } from "@/lib/server/agent-skills/creative-shortcuts";
 import { deriveLogicalModelsConfig, normalizeDefaultModelsConfig, normalizeLogicalModelsConfig } from "@/lib/model-routing-config";
+import { applyChannelProtocol } from "@/lib/channel-protocol-registry";
 import { resolveConfiguredModelPointCost } from "@/lib/model-point-cost";
 import { normalizeSystemChannelAdvancedConfig } from "./store-normalizers-channel";
 import {
@@ -23,6 +24,8 @@ import {
     type GenerationConcurrencySettings,
     type GenerationDefaultSettings,
     type GenerationPointMultipliers,
+    type GenerationCostControlSettings,
+    type DataLifecycleSettings,
     type EntitlementPlanLimits,
     type EntitlementPlan,
     type EntitlementSettings,
@@ -34,8 +37,6 @@ import {
     type StoredCdkCode,
     type PublicAnnouncement,
     type SiteSettings,
-    type SiteShowcaseMode,
-    type SiteShowcaseItem,
     type SiteFriendLink,
     type SiteSocialKey,
     type SiteSocialSettings,
@@ -76,6 +77,8 @@ import {
 
 export { normalizeApiPath, normalizeSystemChannelAdvancedConfig, textOrEmpty } from "./store-normalizers-channel";
 import { currentQuotaDate, hashToken, normalizeEmail, normalizeUserBio } from "./store-auth-utils";
+import { normalizeRegistrationPolicyConsent } from "@/lib/registration-consent";
+import { ALL_ADMIN_PERMISSIONS, isFullAdminPermissions, normalizeAdminPermissions } from "@/lib/admin-permissions";
 
 export { currentQuotaDate, hashToken, normalizeDisplayName, normalizeEmail, normalizeUserBio, normalizeUsername, parseSessionCookie, randomNumericCode, validateEmail, validatePassword, validateUsername } from "./store-auth-utils";
 
@@ -86,6 +89,7 @@ export function normalizeDb(db: Partial<AuthDatabase>): AuthDatabase {
     const users = Array.isArray(db.users)
         ? db.users.map((user) => {
               const legacyUser = user as Partial<StoredUser> & { quota?: Partial<LegacyUserQuota> };
+              const role = user.role === "admin" ? "admin" : "user";
               const requestedAccountId = parseAccountId(legacyUser.accountId);
               while (usedAccountIds.has(nextGeneratedAccountId)) nextGeneratedAccountId += 1;
               const accountId = requestedAccountId && !usedAccountIds.has(requestedAccountId) ? requestedAccountId : nextGeneratedAccountId;
@@ -93,15 +97,22 @@ export function normalizeDb(db: Partial<AuthDatabase>): AuthDatabase {
               nextGeneratedAccountId = Math.max(nextGeneratedAccountId, accountId + 1);
               return {
                   ...user,
+                  role,
+                  adminPermissions: role === "admin" ? normalizeAdminPermissions(legacyUser.adminPermissions) : [],
                   accountId: formatAccountId(accountId),
                   bio: normalizeUserBio(legacyUser.bio),
+                  registrationConsent: normalizeRegistrationPolicyConsent(legacyUser.registrationConsent),
                   planId: resolvePlanById(settings.entitlements, user.planId).id,
                   pointsBalance: normalizePoints(legacyUser.pointsBalance, legacyQuotaToPoints(legacyUser.quota, resolveInitialUserPoints({ settings } as AuthDatabase, resolvePlanById(settings.entitlements, user.planId)))),
               } as StoredUser;
           })
         : [];
+    const activeAdministrators = users.filter((user) => user.role === "admin" && user.status === "active");
+    if (activeAdministrators.length && !activeAdministrators.some((user) => isFullAdminPermissions(user.adminPermissions))) {
+        activeAdministrators.sort((left, right) => Date.parse(left.createdAt) - Date.parse(right.createdAt) || left.id.localeCompare(right.id))[0].adminPermissions = [...ALL_ADMIN_PERMISSIONS];
+    }
     const configuredNextAccountId = parseAccountId(db.nextUserAccountId) || 1;
-    return pruneExpiredSessions({
+    return {
         version: 1,
         nextUserAccountId: Math.max(configuredNextAccountId, nextGeneratedAccountId),
         users,
@@ -111,14 +122,9 @@ export function normalizeDb(db: Partial<AuthDatabase>): AuthDatabase {
         dailyPlanPointWallets: Array.isArray(db.dailyPlanPointWallets) ? db.dailyPlanPointWallets.map(normalizeDailyPlanPointWallet).filter((item) => item.userId && item.date) : [],
         emailCodes: Array.isArray(db.emailCodes) ? db.emailCodes.map(normalizeEmailCode).filter((item) => item.email) : [],
         cdkCodes: Array.isArray(db.cdkCodes) ? db.cdkCodes.map(normalizeCdkCodeRecord).filter((item) => item.codeHash) : [],
-        announcements: Array.isArray(db.announcements)
-            ? db.announcements
-                  .map(normalizeAnnouncement)
-                  .filter((item) => item.title && item.content)
-                  .slice(0, 200)
-            : [],
+        announcements: Array.isArray(db.announcements) ? db.announcements.map(normalizeAnnouncement).filter((item) => item.title && item.content) : [],
         settings,
-    });
+    };
 }
 
 export function emptyDb(): AuthDatabase {
@@ -154,18 +160,6 @@ export function encryptAuthSettingsSecrets(settings: AuthSettings): AuthSettings
             webhookSecret: encryptSecretValue(channel.webhookSecret || ""),
         })),
     };
-}
-
-export function pruneExpiredSessions(db: AuthDatabase) {
-    const now = Date.now();
-    db.sessions = db.sessions.filter((session) => Date.parse(session.expiresAt) > now);
-    const minQuotaUsageDate = new Date(now - 1000 * 60 * 60 * 24 * 45).toISOString().slice(0, 10);
-    db.quotaUsage = db.quotaUsage.filter((usage) => usage.date >= minQuotaUsageDate);
-    db.pointRecords = (db.pointRecords || []).slice(-10000);
-    db.emailCodes = (db.emailCodes || []).filter((item) => !item.consumedAt && Date.parse(item.expiresAt) > now);
-    db.cdkCodes = db.cdkCodes || [];
-    db.announcements = (db.announcements || []).slice(0, 200);
-    return db;
 }
 
 export function resolveInitialUserPoints(db: Pick<AuthDatabase, "settings">, plan = resolveDefaultPlan(db.settings.entitlements)) {
@@ -236,19 +230,26 @@ export function countActiveAdmins(db: AuthDatabase, excludingUserId?: string) {
     return db.users.filter((user) => user.id !== excludingUserId && user.role === "admin" && user.status === "active").length;
 }
 
+export function countActiveFullAdmins(db: AuthDatabase, excludingUserId?: string) {
+    return db.users.filter((user) => user.id !== excludingUserId && user.role === "admin" && user.status === "active" && isFullAdminPermissions(user.adminPermissions)).length;
+}
+
 export function normalizeSettings(settings: AuthSettings): AuthSettings {
     const systemChannels = Array.isArray(settings.systemChannels) ? settings.systemChannels.map(normalizeSystemChannel).filter((channel) => channel.name || channel.baseUrl || channel.models.length) : [];
     const logicalModels = normalizeLogicalModels(settings.logicalModels, systemChannels);
+    const site = normalizeSiteSettings(settings.site);
     return {
-        site: normalizeSiteSettings(settings.site),
+        site,
         registrationEnabled: Boolean(settings.registrationEnabled),
         emailRegistrationEnabled: Boolean(settings.emailRegistrationEnabled),
         freeDailyPointsEnabled: settings.freeDailyPointsEnabled !== false,
         freeDailyPoints: normalizePoints(settings.freeDailyPoints, 0),
-        mail: normalizeMailSettings(settings.mail),
+        mail: normalizeMailSettings(settings.mail, site.title),
         allowUserApiConfig: false,
         modelPointCosts: normalizeModelPointCosts(settings.modelPointCosts),
         generationPointMultipliers: normalizeGenerationPointMultipliers(settings.generationPointMultipliers),
+        generationCostControl: normalizeGenerationCostControl(settings.generationCostControl),
+        dataLifecycle: normalizeDataLifecycle(settings.dataLifecycle),
         entitlements: normalizeEntitlementSettings(settings.entitlements),
         generationConcurrency: normalizeGenerationConcurrency(settings.generationConcurrency),
         generationDefaults: normalizeGenerationDefaults(settings.generationDefaults),
@@ -341,19 +342,26 @@ export function normalizeAgentSkills(skills: AgentSkill[] | undefined) {
 
 export function normalizeGenerationDefaults(settings: Partial<GenerationDefaultSettings> | undefined): GenerationDefaultSettings {
     return {
-        canvasImageCount: Math.max(1, Math.min(10, Math.floor(Number(settings?.canvasImageCount) || DEFAULT_SETTINGS.generationDefaults.canvasImageCount))),
+        canvasImageCount: normalizePositiveSafeInteger(settings?.canvasImageCount, DEFAULT_SETTINGS.generationDefaults.canvasImageCount),
         imageSize: allowedText(settings?.imageSize, ["auto", "1:1", "3:2", "2:3", "4:3", "3:4", "16:9", "9:16"], DEFAULT_SETTINGS.generationDefaults.imageSize),
         imageQuality: allowedText(settings?.imageQuality, ["auto", "low", "medium", "high"], DEFAULT_SETTINGS.generationDefaults.imageQuality),
-        imageCount: Math.max(1, Math.min(10, Math.floor(Number(settings?.imageCount) || DEFAULT_SETTINGS.generationDefaults.imageCount))),
-        videoQuality: allowedText(settings?.videoQuality, ["480", "720", "1080"], DEFAULT_SETTINGS.generationDefaults.videoQuality),
-        videoSeconds: Math.max(1, Math.min(20, Math.floor(Number(settings?.videoSeconds) || DEFAULT_SETTINGS.generationDefaults.videoSeconds))),
+        imageCount: normalizePositiveSafeInteger(settings?.imageCount, DEFAULT_SETTINGS.generationDefaults.imageCount),
+        videoQuality: normalizeText(settings?.videoQuality, DEFAULT_SETTINGS.generationDefaults.videoQuality, 40),
+        videoSeconds: normalizeDefaultVideoSeconds(settings?.videoSeconds),
         audioVoice: normalizeText(settings?.audioVoice, DEFAULT_SETTINGS.generationDefaults.audioVoice, 80),
         audioFormat: allowedText(settings?.audioFormat, ["mp3", "wav", "opus", "aac", "flac"], DEFAULT_SETTINGS.generationDefaults.audioFormat),
-        workbenchSmartPlanning: {
-            image: settings?.workbenchSmartPlanning?.image !== false,
-            video: settings?.workbenchSmartPlanning?.video !== false,
-        },
     };
+}
+
+function normalizeDefaultVideoSeconds(value: unknown) {
+    const seconds = Number(value);
+    if (seconds === -1) return -1;
+    return Number.isSafeInteger(seconds) && seconds > 0 ? seconds : DEFAULT_SETTINGS.generationDefaults.videoSeconds;
+}
+
+function normalizePositiveSafeInteger(value: unknown, fallback: number) {
+    const number = Number(value);
+    return Number.isSafeInteger(number) && number > 0 ? number : fallback;
 }
 
 export function allowedText(value: unknown, allowed: string[], fallback: string) {
@@ -369,7 +377,7 @@ export function normalizeEntitlementSettings(settings: Partial<EntitlementSettin
     return {
         enabled: settings?.enabled === true,
         defaultPlanId: defaultPlan.id,
-        plans: mergedPlans.slice(0, 20),
+        plans: mergedPlans,
     };
 }
 
@@ -414,87 +422,74 @@ export function normalizeFeatureList(value: unknown) {
 
 export function normalizeGenerationConcurrency(settings: Partial<GenerationConcurrencySettings> | undefined): GenerationConcurrencySettings {
     return {
-        agent: Math.max(1, Math.min(10, Math.floor(Number(settings?.agent) || DEFAULT_SETTINGS.generationConcurrency.agent))),
-        image: Math.max(1, Math.min(10, Math.floor(Number(settings?.image) || DEFAULT_SETTINGS.generationConcurrency.image))),
-        video: Math.max(1, Math.min(5, Math.floor(Number(settings?.video) || DEFAULT_SETTINGS.generationConcurrency.video))),
-        audio: Math.max(1, Math.min(10, Math.floor(Number(settings?.audio) || DEFAULT_SETTINGS.generationConcurrency.audio))),
-        text: Math.max(1, Math.min(20, Math.floor(Number(settings?.text) || DEFAULT_SETTINGS.generationConcurrency.text))),
-        render: Math.max(1, Math.min(5, Math.floor(Number(settings?.render) || DEFAULT_SETTINGS.generationConcurrency.render))),
+        agent: normalizePositiveSafeInteger(settings?.agent, DEFAULT_SETTINGS.generationConcurrency.agent),
+        image: normalizePositiveSafeInteger(settings?.image, DEFAULT_SETTINGS.generationConcurrency.image),
+        video: normalizePositiveSafeInteger(settings?.video, DEFAULT_SETTINGS.generationConcurrency.video),
+        audio: normalizePositiveSafeInteger(settings?.audio, DEFAULT_SETTINGS.generationConcurrency.audio),
+        text: normalizePositiveSafeInteger(settings?.text, DEFAULT_SETTINGS.generationConcurrency.text),
+        render: normalizePositiveSafeInteger(settings?.render, DEFAULT_SETTINGS.generationConcurrency.render),
+    };
+}
+
+export function normalizeGenerationCostControl(settings: Partial<GenerationCostControlSettings> | undefined): GenerationCostControlSettings {
+    return {
+        maxPointsPerTask: Math.max(0, normalizePointAmount(settings?.maxPointsPerTask, 0)),
+        dailyUserPointSpend: Math.max(0, normalizePointAmount(settings?.dailyUserPointSpend, 0)),
+        dailyTotalPointSpend: Math.max(0, normalizePointAmount(settings?.dailyTotalPointSpend, 0)),
+    };
+}
+
+export function normalizeDataLifecycle(settings: Partial<DataLifecycleSettings> | undefined): DataLifecycleSettings {
+    return {
+        cleanupExpiredSessions: settings?.cleanupExpiredSessions !== false,
+        cleanupExpiredEmailCodes: settings?.cleanupExpiredEmailCodes !== false,
+        cleanupExpiredGenerationTasks: settings?.cleanupExpiredGenerationTasks !== false,
+        cleanupExpiredTemporaryMedia: settings?.cleanupExpiredTemporaryMedia !== false,
+        maintenanceBatchSize: Math.max(1, Math.min(500, Math.floor(Number(settings?.maintenanceBatchSize) || 100))),
     };
 }
 
 export function normalizeSiteSettings(settings: Partial<SiteSettings> | undefined): SiteSettings {
     const title = normalizeText(settings?.title, DEFAULT_SITE_SETTINGS.title, 40);
-    const seoTitle = normalizeText(settings?.seoTitle, title, 72);
+    const seoTitle = normalizeBrandDefault(settings?.seoTitle, DEFAULT_SITE_SETTINGS.seoTitle, title, title, 72);
     return {
         title,
         logoUrl: normalizeLogoUrl(settings?.logoUrl),
         iconUrl: normalizeSiteIconUrl(settings?.iconUrl),
         seoTitle,
         seoDescription: normalizeText(settings?.seoDescription, DEFAULT_SITE_SETTINGS.seoDescription, 180),
-        seoKeywords: normalizeText(settings?.seoKeywords, DEFAULT_SITE_SETTINGS.seoKeywords, 240),
-        footerCopyright: normalizeText(settings?.footerCopyright, DEFAULT_SITE_SETTINGS.footerCopyright, 120),
+        seoKeywords: normalizeBrandDefault(settings?.seoKeywords, DEFAULT_SITE_SETTINGS.seoKeywords, title, DEFAULT_SITE_SETTINGS.seoKeywords.replace(DEFAULT_SITE_SETTINGS.title, title), 240),
+        footerCopyright: normalizeBrandDefault(settings?.footerCopyright, DEFAULT_SITE_SETTINGS.footerCopyright, title, DEFAULT_SITE_SETTINGS.footerCopyright.replace(DEFAULT_SITE_SETTINGS.title, title), 120),
         termsUrl: normalizeLinkUrl(settings?.termsUrl, DEFAULT_SITE_SETTINGS.termsUrl),
+        termsVersion: normalizeText(settings?.termsVersion, DEFAULT_SITE_SETTINGS.termsVersion, 80),
         privacyUrl: normalizeLinkUrl(settings?.privacyUrl, DEFAULT_SITE_SETTINGS.privacyUrl),
-        homeShowcaseMode: settings?.homeShowcaseMode === "custom" ? "custom" : "random",
-        homeShowcaseItems: normalizeSiteShowcaseItems(settings?.homeShowcaseItems),
-        friendLinks: normalizeSiteFriendLinks(settings?.friendLinks),
+        privacyVersion: normalizeText(settings?.privacyVersion, DEFAULT_SITE_SETTINGS.privacyVersion, 80),
+        friendLinks: normalizeSiteFriendLinks(settings?.friendLinks, title),
         socials: normalizeSiteSocials(settings?.socials),
     };
 }
 
-export function normalizeSiteShowcaseItems(settings: unknown): SiteShowcaseItem[] {
-    if (!Array.isArray(settings)) return [];
-    return settings
-        .map((item, index) => {
-            const value = item as Partial<SiteShowcaseItem>;
-            const title = normalizeText(value.title, "", 80);
-            const prompt = normalizeText(value.prompt, "", 3000);
-            if (!title || !prompt) return null;
-            return {
-                id: normalizeText(value.id, `showcase-${index + 1}`, 80),
-                title,
-                coverUrl: normalizeLinkUrl(value.coverUrl, ""),
-                prompt,
-                tags: normalizeShowcaseTags(value.tags),
-                category: normalizeText(value.category, "精选展示", 40),
-            };
-        })
-        .filter((item): item is SiteShowcaseItem => Boolean(item))
-        .slice(0, 8);
+function normalizeBrandDefault(value: unknown, defaultValue: string, siteTitle: string, fallback: string, maxLength: number) {
+    const text = typeof value === "string" ? value.trim() : "";
+    if (!text || (siteTitle !== DEFAULT_SITE_SETTINGS.title && text === defaultValue)) return fallback.slice(0, maxLength);
+    return normalizeText(text, fallback, maxLength);
 }
 
-export function normalizeShowcaseTags(value: unknown): string[] {
-    const raw = Array.isArray(value) ? value : String(value || "").split(/[,，\n]/);
-    return Array.from(new Set(raw.map((tag) => String(tag || "").trim()).filter(Boolean))).slice(0, 4);
-}
-
-export function normalizeSiteFriendLinks(settings: unknown): SiteFriendLink[] {
+export function normalizeSiteFriendLinks(settings: unknown, siteTitle = DEFAULT_SITE_SETTINGS.title): SiteFriendLink[] {
     const links = Array.isArray(settings) ? settings : DEFAULT_SITE_FRIEND_LINKS;
-    const normalized = links
+    return links
         .map((link, index) => {
             const value = link as Partial<SiteFriendLink>;
+            const defaultHomeLink = value.id === "vozeb-pro-home" && value.url?.replace(/\/$/, "") === "https://www.vozeb.com";
             return {
                 id: normalizeText(value.id, `friend-${index + 1}`, 80),
-                label: normalizeText(value.url?.replace(/\/$/, "") === "https://www.vozeb.com" ? "MOCREAI" : value.label, "友情链接", 32),
+                label: normalizeText(defaultHomeLink && (!value.label || value.label === DEFAULT_SITE_SETTINGS.title) ? siteTitle : value.label, "友情链接", 32),
                 url: normalizeLinkUrl(value.url, ""),
                 enabled: value.enabled !== false,
             };
         })
         .filter((link) => link.url)
         .slice(0, 12);
-    for (const link of DEFAULT_SITE_FRIEND_LINKS) {
-        if (normalized.some((item) => item.id === link.id || item.url.replace(/\/$/, "") === link.url.replace(/\/$/, ""))) continue;
-        normalized.push(link);
-    }
-    const defaultOrdered = DEFAULT_SITE_FRIEND_LINKS.flatMap((link) => {
-        const normalizedUrl = link.url.replace(/\/$/, "");
-        const matched = normalized.find((item) => item.id === link.id || item.url.replace(/\/$/, "") === normalizedUrl);
-        return matched ? [matched] : [];
-    });
-    const defaultKeys = new Set(DEFAULT_SITE_FRIEND_LINKS.flatMap((link) => [link.id, link.url.replace(/\/$/, "")]));
-    const others = normalized.filter((link) => !defaultKeys.has(link.id) && !defaultKeys.has(link.url.replace(/\/$/, "")));
-    return [...defaultOrdered, ...others].slice(0, 12);
 }
 
 export function normalizeSiteSocials(settings: Partial<SiteSocialSettings> | undefined): SiteSocialSettings {
@@ -508,14 +503,33 @@ export function normalizeSiteSocials(settings: Partial<SiteSocialSettings> | und
 
 export function normalizeSiteSocial(key: SiteSocialKey, setting: Partial<SiteSocialSettings[SiteSocialKey]> | undefined) {
     const fallback = DEFAULT_SITE_SOCIALS[key];
+    if (!setting) return { ...fallback };
     return {
-        enabled: typeof setting?.enabled === "boolean" ? setting.enabled : fallback.enabled,
-        label: normalizeText(setting?.label, fallback.label, 32),
-        url: normalizeLinkUrl(setting?.url, fallback.url),
+        enabled: typeof setting.enabled === "boolean" ? setting.enabled : fallback.enabled,
+        label: setting.label === undefined ? fallback.label : normalizeText(setting.label, "", 32),
+        url: setting.url === undefined ? fallback.url : normalizeSiteSocialUrl(key, setting.url),
     };
 }
 
-export function normalizeMailSettings(settings: Partial<MailSettings> | undefined): MailSettings {
+function normalizeSiteSocialUrl(key: SiteSocialKey, value: unknown) {
+    const url = typeof value === "string" ? value.trim() : "";
+    if (!url) return "";
+    if (url.startsWith("mailto:")) return normalizeLinkUrl(url, "");
+    if (key === "email" && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(url)) return `mailto:${url}`;
+    if (url.startsWith("@")) {
+        const handle = url.slice(1);
+        if (key === "telegram" && /^[a-zA-Z0-9_]{5,32}$/.test(handle)) return `https://t.me/${handle}`;
+        if (key === "x" && /^[a-zA-Z0-9_]{1,15}$/.test(handle)) return `https://x.com/${handle}`;
+        if (key === "instagram" && /^[a-zA-Z0-9._]{1,30}$/.test(handle)) return `https://instagram.com/${handle}`;
+    }
+    const socialHost = url.replace(/^\/+/, "");
+    if (key === "telegram" && /^(?:www\.)?(?:t\.me|telegram\.me)\//i.test(socialHost)) return `https://${socialHost}`;
+    if (key === "x" && /^(?:www\.)?(?:x\.com|twitter\.com)\//i.test(socialHost)) return `https://${socialHost}`;
+    if (key === "instagram" && /^(?:www\.)?instagram\.com\//i.test(socialHost)) return `https://${socialHost}`;
+    return normalizeLinkUrl(url, "");
+}
+
+export function normalizeMailSettings(settings: Partial<MailSettings> | undefined, siteTitle = DEFAULT_SITE_SETTINGS.title): MailSettings {
     const port = Math.max(1, Math.min(65535, Math.floor(Number(settings?.port) || DEFAULT_MAIL_SETTINGS.port)));
     return {
         provider: normalizeText(settings?.provider, DEFAULT_MAIL_SETTINGS.provider, 40),
@@ -525,7 +539,7 @@ export function normalizeMailSettings(settings: Partial<MailSettings> | undefine
         username: normalizeText(settings?.username, DEFAULT_MAIL_SETTINGS.username, 160),
         password: normalizeSecretText(settings?.password, DEFAULT_MAIL_SETTINGS.password, 512),
         fromEmail: normalizeText(settings?.fromEmail, DEFAULT_MAIL_SETTINGS.fromEmail, 160),
-        fromName: normalizeText(settings?.fromName, DEFAULT_MAIL_SETTINGS.fromName, 60),
+        fromName: normalizeText(!settings?.fromName || settings.fromName === DEFAULT_MAIL_SETTINGS.fromName ? siteTitle : settings.fromName, siteTitle, 60),
     };
 }
 
@@ -541,9 +555,9 @@ export function normalizeText(value: unknown, fallback: string, maxLength: numbe
 }
 
 export function repairKnownMojibakeText(value: string) {
-    if (value.includes("MOCREAI") && value.includes("AI") && !value.includes("绘图") && value.includes(",")) return DEFAULT_SITE_SETTINGS.seoKeywords;
-    if (value.includes("MOCREAI") && value.includes("AI") && !value.includes("工作台")) return DEFAULT_SITE_SETTINGS.seoDescription;
-    if (value.includes("2026 MOCREAI") && !value.startsWith("©")) return "© 2026 MOCREAI. All rights reserved.";
+    if (value.includes("VOZEB PRO") && value.includes("AI") && !value.includes("绘图") && value.includes(",")) return DEFAULT_SITE_SETTINGS.seoKeywords;
+    if (value.includes("VOZEB PRO") && value.includes("AI") && !value.includes("工作台")) return DEFAULT_SITE_SETTINGS.seoDescription;
+    if (value.includes("2026 VOZEB PRO") && !value.startsWith("©")) return "© 2026 VOZEB PRO. All rights reserved.";
     if (value.startsWith("QQ ") && !value.includes("邮箱")) return "QQ 邮箱";
     return repairUtf8MojibakeText(value);
 }
@@ -595,7 +609,7 @@ export function normalizeLinkUrl(value: unknown, fallback: string) {
 }
 
 export function normalizeSystemChannel(channel: Partial<SystemModelChannel>): SystemModelChannel {
-    return {
+    const normalized: SystemModelChannel = {
         id: channel.id?.trim() || randomUUID(),
         name: repairKnownMojibakeText(channel.name?.trim() || "") || "通用接口",
         baseUrl: channel.baseUrl?.trim() || "",
@@ -606,6 +620,7 @@ export function normalizeSystemChannel(channel: Partial<SystemModelChannel>): Sy
         enabled: channel.enabled !== false,
         advancedConfig: normalizeSystemChannelAdvancedConfig(channel.advancedConfig),
     };
+    return normalized.advancedConfig?.protocol === "yumeng" ? applyChannelProtocol(normalized, "yumeng") : normalized;
 }
 
 export function normalizePoints(value: unknown, fallback: number) {
@@ -751,15 +766,16 @@ export function normalizeCdkCode(value: string) {
         .replace(/[^A-Z0-9]/g, "");
 }
 
-export function generateCdkPlainCode() {
-    const alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
-    const chars = Array.from(randomBytes(20), (byte) => alphabet[byte % alphabet.length]).join("");
-    return `VZ-${chars.slice(0, 5)}-${chars.slice(5, 10)}-${chars.slice(10, 15)}-${chars.slice(15, 20)}`;
+export function generateCdkPlainCode(id = randomUUID()) {
+    const value = id.replaceAll("-", "").toUpperCase();
+    if (!/^[A-F0-9]{32}$/.test(value)) throw new Error("CDK 标识无效");
+    return `VZ-${value.slice(0, 8)}-${value.slice(8, 16)}-${value.slice(16, 24)}-${value.slice(24)}`;
 }
 
 export function formatCdkCodeForDisplay(value: string) {
     const code = normalizeCdkCode(value);
     if (!code) return "";
+    if (code.startsWith("VZ") && code.length === 34) return `VZ-${code.slice(2, 10)}-${code.slice(10, 18)}-${code.slice(18, 26)}-${code.slice(26)}`;
     if (code.startsWith("VZ") && code.length === 22) return `${code.slice(0, 2)}-${code.slice(2, 7)}-${code.slice(7, 12)}-${code.slice(12, 17)}-${code.slice(17, 22)}`;
     return code;
 }

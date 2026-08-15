@@ -7,6 +7,7 @@ const mocks = vi.hoisted(() => ({
     getUserById: vi.fn(),
     getTemplateById: vi.fn(),
     getTemplateByCode: vi.fn(),
+    listTemplates: vi.fn(),
     countUserCoupons: vi.fn(),
     createUserCoupon: vi.fn(),
     incrementTemplateIssuedCount: vi.fn(),
@@ -17,6 +18,7 @@ vi.mock("@/lib/server/database", async (importOriginal) => ({
     createPostgresRepositories: vi.fn(() => ({
         users: { getById: mocks.getUserById },
         coupons: {
+            listTemplates: mocks.listTemplates,
             getTemplateById: mocks.getTemplateById,
             getTemplateByCode: mocks.getTemplateByCode,
             countUserCoupons: mocks.countUserCoupons,
@@ -29,7 +31,7 @@ vi.mock("@/lib/server/database", async (importOriginal) => ({
     withPostgresTransaction: vi.fn(async (callback: (client: typeof mocks.client) => unknown) => callback(mocks.client)),
 }));
 
-import { issueCoupon } from "./coupon-service";
+import { issueCoupon, listCouponTemplates } from "./coupon-service";
 
 const template = {
     id: "new-user",
@@ -53,6 +55,16 @@ const template = {
     createdAt: "2026-01-01T00:00:00.000Z",
     updatedAt: "2026-01-01T00:00:00.000Z",
 } satisfies CouponTemplateRecord;
+
+describe("coupon template listing", () => {
+    it("normalizes the optional search and selected template before querying", async () => {
+        mocks.listTemplates.mockResolvedValue({ items: [], total: 0, page: 1, pageSize: 20 });
+
+        await listCouponTemplates({ page: 1, pageSize: 20, includeDisabled: false, keyword: "  新客券  ", selectedId: " current template " });
+
+        expect(mocks.listTemplates).toHaveBeenCalledWith({ page: 1, pageSize: 20, includeDisabled: false, keyword: "新客券", selectedId: "currenttemplate" });
+    });
+});
 
 describe("coupon issuance", () => {
     beforeEach(() => {

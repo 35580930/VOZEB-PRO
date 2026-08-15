@@ -77,10 +77,10 @@ describe("audio API service", () => {
     });
 
     it("stops polling when the upstream submission needs manual review", async () => {
-        const fetchMock = vi.fn().mockResolvedValue(json({ task: { id: "audio-review", status: "running", model: "voice", needsReview: true } }));
+        const fetchMock = vi.fn().mockResolvedValue(json({ task: { id: "audio-review", status: "running", model: "voice", needsReview: true, reviewReason: "音频提交结果无法确认" } }));
         vi.stubGlobal("fetch", fetchMock);
 
-        await expect(waitForAudioGenerationTask(config, { id: "audio-review", status: "running", model: "voice" })).rejects.toThrow("上游创建状态待确认");
+        await expect(waitForAudioGenerationTask(config, { id: "audio-review", status: "running", model: "voice" })).rejects.toThrow("音频提交结果无法确认");
         expect(fetchMock).toHaveBeenCalledTimes(1);
     });
 });

@@ -29,7 +29,7 @@ describe("Docker Compose contracts", () => {
 
     it("rejects mutable latest release images", () => {
         const profile = composeProfiles.find(({ file }) => file === "docker-compose.yml");
-        const source = readFileSync(path.join(repoRoot, profile.file), "utf8").replaceAll("ghcr.io/csyqlz/vozeb-pro:v0.0.5", "ghcr.io/csyqlz/vozeb-pro:latest");
+        const source = readFileSync(path.join(repoRoot, profile.file), "utf8").replaceAll("ghcr.io/csyqlz/vozeb-pro:v0.0.6", "ghcr.io/csyqlz/vozeb-pro:latest");
 
         expect(() => validateComposeContract(source, profile)).toThrow("app 必须使用当前发布版本的明确镜像");
     });
@@ -39,6 +39,13 @@ describe("Docker Compose contracts", () => {
         const source = readFileSync(path.join(repoRoot, profile.file), "utf8").replace('    command: ["node", "/app/web/scripts/generation-worker.mjs"]', '    command: ["node", "/app/web/scripts/generation-worker.mjs"]\n    env_file:\n      - .env');
 
         expect(() => validateComposeContract(source, profile)).toThrow("generation-worker 不得读取包含安装令牌和业务密钥的 .env");
+    });
+
+    it("rejects exposing the external maintenance token to the Worker", () => {
+        const profile = composeProfiles.find(({ file }) => file === "docker-compose.external-db.yml");
+        const source = readFileSync(path.join(repoRoot, profile.file), "utf8").replace("      VOZEB_PRO_WORKER_API_ORIGIN: http://app:3000", "      VOZEB_PRO_WORKER_API_ORIGIN: http://app:3000\n      VOZEB_PRO_MAINTENANCE_TOKEN: leaked");
+
+        expect(() => validateComposeContract(source, profile)).toThrow("generation-worker 不得获得外部维护令牌");
     });
 
     it("rejects Baota-only host networking in the public default topology", () => {

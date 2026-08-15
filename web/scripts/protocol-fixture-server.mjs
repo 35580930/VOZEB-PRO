@@ -13,6 +13,7 @@ const models = [
 ];
 
 const GLOBAL_AIOPC_IMAGE_PATHS = new Set(["/image2/images", "/banana/images"]);
+const YUMENG_MODEL_CENTER_TASK_PATH = "/kyyReactApiServer/v2/model-center/tasks";
 const GLOBAL_AIOPC_VIDEO_PATHS = new Set([
     "/sora/videos",
     "/veo/videos",
@@ -76,8 +77,13 @@ async function handleFixtureRequest({ request, response, url, body, tasks, reque
         tasks.clear();
         return sendJson(response, 200, { ok: true });
     }
-    if (request.method === "GET" && ["/models", "/api/v3/models"].includes(path)) return sendJson(response, 200, { object: "list", data: models });
-    if (request.method === "GET" && path === "/sdapi/v1/sd-models") return sendJson(response, 200, [{ title: "mock-image", model_name: "mock-image", id: "mock-image" }]);
+    if (request.method === "GET" && ["/models", "/api/v3/models"].includes(path)) {
+        const catalog = url.searchParams.has("protocol") ? [...models, { id: "opaque-catalog-model" }] : models;
+        return sendJson(response, 200, { object: "list", data: catalog });
+    }
+    if (request.method === "GET" && path === "/sdapi/v1/sd-models") {
+        return sendJson(response, 200, [{ title: "mock-image", model_name: "mock-image", id: "mock-image" }, ...(url.searchParams.has("protocol") ? [{ id: "opaque-catalog-model" }] : [])]);
+    }
 
     if (request.method === "POST" && ["/responses", "/chat/completions", "/messages"].includes(path)) {
         const payload = jsonBody(body);
@@ -104,13 +110,32 @@ async function handleFixtureRequest({ request, response, url, body, tasks, reque
     if (request.method === "POST" && /\/models\/[^/]+:generateContent$/.test(path)) {
         const payload = jsonBody(body);
         if (payload.generationConfig?.responseModalities?.includes("IMAGE")) {
-            return sendJson(response, 200, { candidates: [{ content: { parts: [{ inlineData: { mimeType: "image/png", data: PNG_BASE64 } }] } }] });
+            return sendJson(response, 200, { candidates: [{ content: { parts: [{ inlineData: { mimeType: "image/png", data: (await fixtureImage(options)).toString("base64") } }] } }] });
         }
         const toolName = selectedToolName(payload);
         const text = toolName ? JSON.stringify(toolArguments(toolName, payload)) : "协议测试文本返回成功";
         return sendJson(response, 200, { candidates: [{ content: { parts: [{ text }] } }], usageMetadata: { promptTokenCount: 8, candidatesTokenCount: 8, totalTokenCount: 16 } });
     }
     if (request.method === "POST" && path === "/planner/run") return sendJson(response, 200, { data: { plan: JSON.stringify({}) } });
+
+    const geminiCreate = path.match(/^\/models\/([^/]+):predictLongRunning$/);
+    if (request.method === "POST" && geminiCreate) {
+        const id = nextTaskId("gemini-operation");
+        tasks.set(id, { kind: "gemini-video", status: "completed", model: decodeURIComponent(geminiCreate[1]) });
+        return sendJson(response, 200, { name: `models/${decodeURIComponent(geminiCreate[1])}/operations/${id}`, done: false });
+    }
+    const geminiOperation = path.match(/^\/models\/([^/]+)\/operations\/([^/]+)$/);
+    if (request.method === "GET" && geminiOperation) {
+        const id = decodeURIComponent(geminiOperation[2]);
+        const model = decodeURIComponent(geminiOperation[1]);
+        const task = tasks.get(id);
+        if (!task || task.kind !== "gemini-video") return sendJson(response, 404, { error: { message: "Gemini operation not found" } });
+        return sendJson(response, 200, {
+            name: `models/${model}/operations/${id}`,
+            done: task.status === "completed",
+            ...(task.status === "completed" ? { response: { generateVideoResponse: { generatedSamples: [{ video: { uri: `${url.origin}/media/fixture.mp4` } }] } } } : {}),
+        });
+    }
 
     if (request.method === "POST" && GLOBAL_AIOPC_IMAGE_PATHS.has(path)) {
         const id = nextTaskId("image");
@@ -120,10 +145,10 @@ async function handleFixtureRequest({ request, response, url, body, tasks, reque
     if (request.method === "POST" && ["/images/generations", "/images/edits"].includes(path)) {
         const model = requestedModel(body, request.headers["content-type"] || "");
         if (options.failImage || shouldFailRequest(request, model)) return sendJson(response, options.failImage || model.includes("-fail") ? 400 : 503, { error: { message: "fixture image failure" } });
-        return sendJson(response, 200, { created: Math.floor(Date.now() / 1000), data: [{ b64_json: PNG_BASE64, revised_prompt: "protocol fixture" }] });
+        return sendJson(response, 200, { created: Math.floor(Date.now() / 1000), data: [{ b64_json: (await fixtureImage(options)).toString("base64"), revised_prompt: "protocol fixture" }] });
     }
     if (request.method === "POST" && ["/sdapi/v1/txt2img", "/sdapi/v1/img2img"].includes(path)) {
-        return sendJson(response, 200, { images: [PNG_BASE64], info: "{}" });
+        return sendJson(response, 200, { images: [(await fixtureImage(options)).toString("base64")], info: "{}" });
     }
     if (request.method === "POST" && path === "/custom/images") {
         return sendJson(response, 200, { data: { image_url: `${url.origin}/media/fixture.png` } });
@@ -148,6 +173,23 @@ async function handleFixtureRequest({ request, response, url, body, tasks, reque
         const id = nextTaskId("vozeb-video");
         tasks.set(id, { kind: "vozeb-video", status: "completed" });
         return sendJson(response, 200, { id, task_id: id, object: "video", model: payload.model, status: "queued", progress: 0, created_at: 0 });
+    }
+    if (request.method === "POST" && path === YUMENG_MODEL_CENTER_TASK_PATH) {
+        const payload = jsonBody(body);
+        const model = String(payload.model || "");
+        const kind = /image|seedream/i.test(model) ? "yumeng-image" : "yumeng-video";
+        const id = nextTaskId(kind);
+        tasks.set(id, { kind, status: "completed", model });
+        return sendJson(response, 200, { task_id: id, status: "queued" });
+    }
+    const yumengTaskPrefix = `${YUMENG_MODEL_CENTER_TASK_PATH}/`;
+    const yumengTaskId = path.startsWith(yumengTaskPrefix) ? path.slice(yumengTaskPrefix.length) : "";
+    if (request.method === "GET" && yumengTaskId) {
+        const id = decodeURIComponent(yumengTaskId);
+        const task = tasks.get(id);
+        if (!task || !String(task.kind).startsWith("yumeng-")) return sendJson(response, 404, { code: 404, message: "昱梦任务不存在" });
+        const resultUrl = task.kind === "yumeng-image" ? `${url.origin}/media/fixture.png` : `${url.origin}/media/fixture.mp4`;
+        return sendJson(response, 200, { task_id: id, status: "completed", result_url: resultUrl });
     }
     if (request.method === "POST" && path === "/custom/videos") {
         const id = nextTaskId("custom-video");
@@ -176,7 +218,7 @@ async function handleFixtureRequest({ request, response, url, body, tasks, reque
         const bytes = options.videoPath ? await readFile(options.videoPath) : FALLBACK_MP4;
         return sendBytes(response, 200, "video/mp4", bytes);
     }
-    if (request.method === "GET" && path === "/media/fixture.png") return sendBytes(response, 200, "image/png", Buffer.from(PNG_BASE64, "base64"));
+    if (request.method === "GET" && path === "/media/fixture.png") return sendBytes(response, 200, "image/png", await fixtureImage(options));
 
     if (request.method === "POST" && path === "/audio/speech") {
         const model = requestedModel(body, request.headers["content-type"] || "");
@@ -301,7 +343,7 @@ function videoTaskId(path) {
 
 function fixturePath(pathname) {
     const internal = pathname.replace(/^\/api\/ai\/system\/[^/]+(?=\/)/, "");
-    return internal.replace(/^\/(?:v1beta|v1)(?=\/)/, "");
+    return internal.replace(/^\/(?:api\/v3|v1beta|v1)(?=\/)/, "");
 }
 
 function createWave() {
@@ -323,6 +365,10 @@ function createWave() {
     wave.writeUInt32LE(dataSize, 40);
     for (let index = 0; index < samples; index += 1) wave.writeInt16LE(Math.round(Math.sin((2 * Math.PI * 440 * index) / sampleRate) * 4_000), 44 + index * 2);
     return wave;
+}
+
+function fixtureImage(options) {
+    return options.imagePath ? readFile(options.imagePath) : Promise.resolve(Buffer.from(PNG_BASE64, "base64"));
 }
 
 async function readRequestBody(request) {
@@ -370,6 +416,11 @@ function delay(ms) {
 if (import.meta.url === pathToFileURL(process.argv[1] || "").href) {
     const port = Number(process.env.VOZEB_PRO_PROTOCOL_FIXTURE_PORT) || 4010;
     const host = process.env.VOZEB_PRO_PROTOCOL_FIXTURE_HOST || "127.0.0.1";
-    const fixture = createProtocolFixtureServer({ videoPath: process.env.VOZEB_PRO_PROTOCOL_FIXTURE_VIDEO, responseDelayMs: process.env.VOZEB_PRO_PROTOCOL_FIXTURE_DELAY_MS, failImage: process.env.VOZEB_PRO_PROTOCOL_FIXTURE_FAIL_IMAGE === "1" });
+    const fixture = createProtocolFixtureServer({
+        imagePath: process.env.VOZEB_PRO_PROTOCOL_FIXTURE_IMAGE,
+        videoPath: process.env.VOZEB_PRO_PROTOCOL_FIXTURE_VIDEO,
+        responseDelayMs: process.env.VOZEB_PRO_PROTOCOL_FIXTURE_DELAY_MS,
+        failImage: process.env.VOZEB_PRO_PROTOCOL_FIXTURE_FAIL_IMAGE === "1",
+    });
     fixture.server.listen(port, host, () => console.log(`Protocol fixture ready at http://${host}:${port}`));
 }

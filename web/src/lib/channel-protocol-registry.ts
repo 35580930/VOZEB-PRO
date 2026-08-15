@@ -1,6 +1,7 @@
 import type { ApiCallFormat, LogicalModelCapability, SystemChannelAdvancedConfig, SystemChannelAuthMode, SystemChannelModelConfig, SystemChannelProtocol, SystemModelChannel } from "@/lib/auth/store-types";
 import { inferModelCapability, normalizeModelId } from "@/lib/model-capability";
 import { SEEDANCE_SPECIAL_MODELS } from "@/lib/seedance-special";
+import { normalizeYumengModelCenterBaseUrl, YUMENG_DEFAULT_IMAGE_OPERATION, YUMENG_DEFAULT_VIDEO_OPERATION, YUMENG_MODEL_CENTER_BASE_URL, YUMENG_MODEL_CENTER_MODELS } from "@/lib/yumeng-model-center";
 
 type ProtocolOperation = Omit<SystemChannelModelConfig, "capability" | "source" | "protocol" | "apiFormat"> & {
     capability: LogicalModelCapability;
@@ -16,7 +17,7 @@ export type ChannelProtocolDefinition = {
     modelCatalogPaths: string[];
     capabilities: LogicalModelCapability[];
     operations: Partial<Record<LogicalModelCapability, ProtocolOperation>>;
-    builtInModels?: Array<{ id: string; label: string; capability: LogicalModelCapability }>;
+    builtInModels?: ReadonlyArray<{ id: string; label: string; capability: LogicalModelCapability; operation?: ProtocolOperation }>;
     strict?: boolean;
     advanced?: boolean;
 };
@@ -46,16 +47,32 @@ const openAiOperations: ChannelProtocolDefinition["operations"] = {
     audio: { capability: "audio", createPath: "/audio/speech", requestTemplate: '{"model":"{{model}}","input":"{{prompt}}","voice":"alloy","response_format":"mp3"}', resultField: "binary" },
 };
 
+const geminiVideoOperation: ProtocolOperation = {
+    capability: "video",
+    createPath: "/models/:model:predictLongRunning",
+    imageToVideoPath: "/models/:model:predictLongRunning",
+    queryPath: "/models/:model/operations/:task_id",
+    requestTemplate:
+        '{"instances":[{"prompt":"{{prompt}}","image":"{{image}}","lastFrame":"{{last_frame}}","referenceImages":"{{references}}"}],"parameters":{"durationSeconds":"{{duration}}","aspectRatio":"{{ratio}}","resolution":"{{resolution}}","generateAudio":"{{generate_audio}}"}}',
+    resultField: "response.generateVideoResponse.generatedSamples[0].video.uri",
+    statusField: "done",
+    durationRange: "4、6、8 秒",
+    referenceRule: "服务端将参考图片转为 inlineData；支持普通参考图、首帧和尾帧，不支持参考视频或参考音频。",
+    supportsReferenceImage: true,
+    supportsReferenceVideo: false,
+    supportsReferenceAudio: false,
+};
+
 const seedanceOperation: ProtocolOperation = {
     capability: "video",
     createPath: "/contents/generations/tasks",
     imageToVideoPath: "/contents/generations/tasks",
     queryPath: "/contents/generations/tasks/:task_id",
-    requestTemplate: '{"model":"{{model}}","content":[{"type":"text","text":"{{prompt}}"}],"ratio":"{{ratio}}","resolution":"{{resolution}}","duration":"{{duration}}","generate_audio":true,"watermark":false}',
+    requestTemplate: '{"model":"{{model}}","content":"{{content}}","ratio":"{{ratio}}","resolution":"{{resolution}}","duration":"{{duration}}","generate_audio":true,"watermark":false}',
     resultField: "content.video_url",
     statusField: "status",
     durationRange: "4-15 秒，具体范围以模型文档为准",
-    referenceRule: "图片、视频和音频使用 content 多模态数组；媒体必须使用上游可访问的 URL 或供应商素材 ID。",
+    referenceRule: "图片、视频和音频使用 content 多模态数组；首帧与尾帧分别使用 first_frame、last_frame 角色；媒体必须使用上游可访问的 URL 或供应商素材 ID。",
     supportsReferenceImage: true,
     supportsReferenceVideo: true,
     supportsReferenceAudio: true,
@@ -65,7 +82,7 @@ const seedanceSpecialOperation: ProtocolOperation = {
     capability: "video",
     createPath: "/v1/seedance-special/videos",
     imageToVideoPath: "/v1/seedance-special/videos",
-    queryPath: "/v1/videos/:task_id",
+    queryPath: "/v1/result/:task_id",
     requestTemplate: '{"model":"{{model}}","ratio":"{{ratio}}","duration":"{{duration}}","generate_audio":true,"return_last_frame":false,"seed":-1,"content":"{{content}}"}',
     resultField: "video_url",
     statusField: "status",
@@ -102,7 +119,7 @@ const stableDiffusionOperation: ProtocolOperation = {
     supportsReferenceImage: true,
 };
 
-const definitions: ChannelProtocolDefinition[] = [
+export const registeredChannelProtocolDefinitions: ChannelProtocolDefinition[] = [
     {
         id: "openai",
         label: "OpenAI",
@@ -112,6 +129,31 @@ const definitions: ChannelProtocolDefinition[] = [
         modelCatalogPaths: ["/v1/models"],
         capabilities: ["text", "image", "video", "audio"],
         operations: openAiOperations,
+        strict: true,
+    },
+    {
+        id: "yumeng",
+        label: "昱梦",
+        description: "昱梦新版模型中心协议，统一提交和查询图片、视频异步任务。",
+        apiFormat: "openai",
+        authMode: "bearer",
+        defaultBaseUrl: YUMENG_MODEL_CENTER_BASE_URL,
+        modelCatalogPaths: [],
+        builtInModels: YUMENG_MODEL_CENTER_MODELS,
+        capabilities: ["image", "video"],
+        operations: { image: YUMENG_DEFAULT_IMAGE_OPERATION, video: YUMENG_DEFAULT_VIDEO_OPERATION },
+        strict: true,
+    },
+    {
+        id: "gemini",
+        label: "Google Gemini / Veo",
+        description: "Google Gemini API 的 Veo 异步视频协议，使用 predictLongRunning 与 operation 轮询。",
+        apiFormat: "gemini",
+        authMode: "custom-header",
+        defaultBaseUrl: "https://generativelanguage.googleapis.com",
+        modelCatalogPaths: ["/v1beta/models"],
+        capabilities: ["video"],
+        operations: { video: geminiVideoOperation },
         strict: true,
     },
     {
@@ -249,14 +291,22 @@ const definitions: ChannelProtocolDefinition[] = [
     },
 ];
 
-export const channelProtocolDefinitions = definitions;
+const retiredProtocolIds = new Set<SystemChannelProtocol>(["vozeb-recommended", "seedance-special", "globalaiopc"]);
+
+export const channelProtocolDefinitions = registeredChannelProtocolDefinitions.filter((definition) => !retiredProtocolIds.has(definition.id));
 
 export function channelProtocolDefinition(protocol: SystemChannelProtocol) {
-    return definitions.find((item) => item.id === protocol) || definitions.at(-1)!;
+    return registeredChannelProtocolDefinitions.find((item) => item.id === protocol) || registeredChannelProtocolDefinitions.at(-1)!;
 }
 
 export function channelProtocolOptions() {
-    return definitions.map(({ id: value, label, description, advanced }) => ({ value, label, description, advanced }));
+    return channelProtocolDefinitions.map(({ id: value, label, description, advanced }) => ({ value, label, description, advanced }));
+}
+
+export function channelSupportsModelCatalog(channel: Pick<SystemModelChannel, "advancedConfig">) {
+    const advanced = channel.advancedConfig;
+    const paths = advanced?.modelCatalogPaths ?? channelProtocolDefinition(advanced?.protocol || "auto").modelCatalogPaths;
+    return paths.some((path) => Boolean(path.trim()));
 }
 
 export function protocolCatalogCapability(protocol: SystemChannelProtocol): LogicalModelCapability | undefined {
@@ -264,21 +314,22 @@ export function protocolCatalogCapability(protocol: SystemChannelProtocol): Logi
     return definition.strict && definition.capabilities.length === 1 ? definition.capabilities[0] : undefined;
 }
 
-export function protocolModelConfig(protocol: SystemChannelProtocol, capability: LogicalModelCapability): SystemChannelModelConfig | undefined {
+export function protocolModelConfig(protocol: SystemChannelProtocol, capability: LogicalModelCapability, model?: string): SystemChannelModelConfig | undefined {
     const definition = channelProtocolDefinition(protocol);
-    const operation = definition.operations[capability];
+    const builtIn = model ? definition.builtInModels?.find((item) => normalizeModelId(item.id) === normalizeModelId(model)) : undefined;
+    const operation = builtIn?.capability === capability && builtIn.operation ? builtIn.operation : definition.operations[capability];
     if (!operation) return undefined;
     return { ...operation, capability, source: "manual", protocol, apiFormat: definition.apiFormat };
 }
 
-export function applyModelProtocol(config: SystemChannelModelConfig, protocol: SystemChannelProtocol): SystemChannelModelConfig {
-    return protocolModelConfig(protocol, config.capability) || { ...config, source: "manual", protocol };
+export function applyModelProtocol(config: SystemChannelModelConfig, protocol: SystemChannelProtocol, model?: string): SystemChannelModelConfig {
+    return protocolModelConfig(protocol, config.capability, model) || { ...config, source: "manual", protocol };
 }
 
-export function normalizeStrictProtocolModelConfig(config: SystemChannelModelConfig, fallbackProtocol: SystemChannelProtocol): SystemChannelModelConfig {
+export function normalizeStrictProtocolModelConfig(config: SystemChannelModelConfig, fallbackProtocol: SystemChannelProtocol, model?: string): SystemChannelModelConfig {
     const protocol = config.protocol || fallbackProtocol;
     if (!channelProtocolDefinition(protocol).strict) return config;
-    return protocolModelConfig(protocol, config.capability) || config;
+    return protocolModelConfig(protocol, config.capability, model) || config;
 }
 
 export function resolveChannelModelConfig(config: SystemChannelAdvancedConfig | undefined, model: string) {
@@ -314,7 +365,7 @@ export function applyChannelProtocol(channel: SystemModelChannel, protocol: Syst
         const key = normalizeModelId(model);
         const builtIn = definition.builtInModels?.find((item) => normalizeModelId(item.id) === key);
         const capability = builtIn?.capability || protocolCatalogCapability(protocol) || modelConfigs[key]?.capability || modelCapabilities[key] || inferModelCapability(model);
-        const strict = protocolModelConfig(protocol, capability);
+        const strict = protocolModelConfig(protocol, capability, model);
         if (strict) modelConfigs[key] = strict;
         modelCapabilities[key] = capability;
     }
@@ -322,7 +373,7 @@ export function applyChannelProtocol(channel: SystemModelChannel, protocol: Syst
     const primaryAdvanced = primary ? Object.fromEntries(Object.entries(primary).filter(([key]) => key !== "capability")) : {};
     return {
         ...channel,
-        baseUrl: definition.defaultBaseUrl || channel.baseUrl,
+        baseUrl: protocol === "yumeng" ? normalizeYumengModelCenterBaseUrl(channel.baseUrl) : channel.baseUrl.trim() || definition.defaultBaseUrl || "",
         apiFormat: definition.apiFormat,
         models,
         advancedConfig: {
@@ -339,6 +390,7 @@ export function applyChannelProtocol(channel: SystemModelChannel, protocol: Syst
 }
 
 export function protocolAuthHeaders(apiKey: string, input: Pick<SystemChannelAdvancedConfig, "protocol" | "authMode" | "authHeader" | "authPrefix"> | undefined, fallback: ApiCallFormat = "openai"): Record<string, string> {
+    if (input?.protocol === "gemini") return { "x-goog-api-key": apiKey };
     const mode = resolveChannelAuthMode(input);
     if (mode === "none") return {};
     if (fallback === "gemini" && !input?.authMode) return { "x-goog-api-key": apiKey };
@@ -388,7 +440,7 @@ export function channelProtocolValidationErrors(channel: SystemModelChannel) {
         }
         if (!definition.strict) continue;
         const capability = config?.capability || advanced.modelCapabilities?.[key] || inferModelCapability(model);
-        const expected = protocolModelConfig(protocol, capability);
+        const expected = protocolModelConfig(protocol, capability, model);
         if (!expected) {
             errors.push(`${definition.label} 不支持 ${capability} 模型 ${model}`);
             continue;

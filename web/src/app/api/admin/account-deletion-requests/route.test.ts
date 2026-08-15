@@ -10,7 +10,7 @@ import { GET } from "./route";
 describe("administrator account deletion request API", () => {
     beforeEach(() => {
         vi.clearAllMocks();
-        mocks.user.mockResolvedValue({ id: "admin-one", role: "admin" });
+        mocks.user.mockResolvedValue({ id: "admin-one", role: "admin", status: "active", adminPermissions: ["users.manage"] });
         mocks.list.mockResolvedValue({ items: [], total: 0, page: 2, pageSize: 20 });
     });
 

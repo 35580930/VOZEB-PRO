@@ -7,6 +7,9 @@ import { createPostgresRepositories, ensurePostgresSchema, isPostgresDatabaseEna
 import { assertInstallToken, InstallTokenError } from "@/lib/server/install-token";
 import { adjustPermanentPointsInAuthDb, adjustPermanentPointsInPostgresTransaction, walletClock } from "@/lib/server/points-wallet-service";
 import { bindReferralRelationshipAfterRegistration, normalizeReferralCode } from "@/lib/server/referral-service";
+import { createRegistrationPolicyConsent } from "@/lib/registration-consent";
+import { verifyAdminMfaForLogin } from "@/lib/server/admin-mfa-service";
+import { ALL_ADMIN_PERMISSIONS, hasAdminPermission, hasAllAdminPermissions, normalizeAdminPermissions, type AdminPermission } from "@/lib/admin-permissions";
 
 import { hashPassword, verifyPasswordWithDummy } from "./password";
 import { consumePostgresEmailCode } from "./postgres-email-code-service";
@@ -30,7 +33,7 @@ import { mutateAuthDb, readAuthDb, readPostgresAuthSettings } from "./store-repo
 import { publicUserFromAuthenticatedRecord, toPublicUser } from "./store-user-projection";
 import { type AuthDatabase, type EmailCodePurpose, type StoredUser, type UserRole, type UserStatus } from "./store-types";
 
-export async function createUser(input: { username: string; email?: string; emailCode?: string; displayName?: string; password: string; referralCode?: string; referralSource?: string; referralClientIp?: string }) {
+export async function createUser(input: { username: string; email?: string; emailCode?: string; displayName?: string; password: string; policyAccepted: boolean; referralCode?: string; referralSource?: string; referralClientIp?: string }) {
     const referralCode = normalizeReferralCode(input.referralCode);
     if (referralCode && !isPostgresDatabaseEnabled()) throw new AuthInputError("邀请功能需要启用 PostgreSQL", 501);
     const username = normalizeUsername(input.username);
@@ -49,6 +52,7 @@ export async function createUser(input: { username: string; email?: string; emai
             const settings = await readPostgresAuthSettings(client);
             if ((await repos.users.count()) === 0) throw new AuthInputError("请先通过安装向导创建管理员", 503);
             if (!settings.registrationEnabled) throw new AuthInputError("注册已关闭");
+            if (!input.policyAccepted) throw new AuthInputError("请先阅读并同意服务条款和隐私政策");
             if (settings.emailRegistrationEnabled && !email) throw new AuthInputError("请填写邮箱地址");
             assertNoIdentityConflict(await repos.users.findIdentityConflict({ username, email: email || undefined }), username, email);
             if (settings.emailRegistrationEnabled) {
@@ -64,10 +68,20 @@ export async function createUser(input: { username: string; email?: string; emai
                 displayName,
                 bio: "",
                 role: "user",
+                adminPermissions: [],
                 status: "active",
                 planId: resolveDefaultPlan(settings.entitlements).id,
                 pointsBalance: 0,
-                passwordHash: hashPassword(input.password),
+                passwordHash: await hashPassword(input.password),
+                registrationConsent: createRegistrationPolicyConsent(
+                    {
+                        termsVersion: settings.site.termsVersion,
+                        termsUrl: settings.site.termsUrl,
+                        privacyVersion: settings.site.privacyVersion,
+                        privacyUrl: settings.site.privacyUrl,
+                    },
+                    now,
+                ),
                 createdAt: now,
                 updatedAt: now,
             });
@@ -93,9 +107,10 @@ export async function createUser(input: { username: string; email?: string; emai
         return outcome.user;
     }
 
-    return mutateAuthDb((db) => {
+    return mutateAuthDb(async (db) => {
         if (db.users.length === 0) throw new AuthInputError("请先通过安装向导创建管理员", 503);
         if (!db.settings.registrationEnabled) throw new AuthInputError("注册已关闭");
+        if (!input.policyAccepted) throw new AuthInputError("请先阅读并同意服务条款和隐私政策");
         if (db.settings.emailRegistrationEnabled && !email) throw new AuthInputError("请填写邮箱地址");
         if (db.users.some((user) => user.username.toLowerCase() === username.toLowerCase())) throw new AuthInputError("用户名已存在");
         if (email && db.users.some((user) => user.email?.toLowerCase() === email.toLowerCase())) throw new AuthInputError("邮箱已被注册");
@@ -110,10 +125,20 @@ export async function createUser(input: { username: string; email?: string; emai
             displayName,
             bio: "",
             role: "user",
+            adminPermissions: [],
             status: "active",
             planId: resolveDefaultPlan(db.settings.entitlements).id,
             pointsBalance: 0,
-            passwordHash: hashPassword(input.password),
+            passwordHash: await hashPassword(input.password),
+            registrationConsent: createRegistrationPolicyConsent(
+                {
+                    termsVersion: db.settings.site.termsVersion,
+                    termsUrl: db.settings.site.termsUrl,
+                    privacyVersion: db.settings.site.privacyVersion,
+                    privacyUrl: db.settings.site.privacyUrl,
+                },
+                now,
+            ),
             createdAt: now,
             updatedAt: now,
         };
@@ -154,10 +179,11 @@ export async function createFirstAdmin(input: { username: string; email?: string
                 displayName,
                 bio: "",
                 role: "admin",
+                adminPermissions: [...ALL_ADMIN_PERMISSIONS],
                 status: "active",
                 planId: resolveDefaultPlan(settings.entitlements).id,
                 pointsBalance: 0,
-                passwordHash: hashPassword(input.password),
+                passwordHash: await hashPassword(input.password),
                 createdAt: now,
                 updatedAt: now,
             });
@@ -167,7 +193,7 @@ export async function createFirstAdmin(input: { username: string; email?: string
         });
     }
 
-    return mutateAuthDb((db) => {
+    return mutateAuthDb(async (db) => {
         if (db.users.length !== 0) throw new AuthInputError("项目已完成安装，禁止重复创建首个管理员", 409);
         const now = new Date().toISOString();
         const user: StoredUser = {
@@ -178,10 +204,11 @@ export async function createFirstAdmin(input: { username: string; email?: string
             displayName,
             bio: "",
             role: "admin",
+            adminPermissions: [...ALL_ADMIN_PERMISSIONS],
             status: "active",
             planId: resolveDefaultPlan(db.settings.entitlements).id,
             pointsBalance: 0,
-            passwordHash: hashPassword(input.password),
+            passwordHash: await hashPassword(input.password),
             createdAt: now,
             updatedAt: now,
         };
@@ -190,7 +217,18 @@ export async function createFirstAdmin(input: { username: string; email?: string
     });
 }
 
-export async function createUserByAdmin(input: { username: string; email?: string; displayName?: string; password: string; role?: UserRole; status?: UserStatus; pointsBalance?: number; planId?: string }) {
+export async function createUserByAdmin(input: {
+    actorId: string;
+    username: string;
+    email?: string;
+    displayName?: string;
+    password: string;
+    role?: UserRole;
+    adminPermissions?: AdminPermission[];
+    status?: UserStatus;
+    pointsBalance?: number;
+    planId?: string;
+}) {
     const username = normalizeUsername(input.username);
     const email = normalizeEmail(input.email);
     const displayName = normalizeDisplayName(input.displayName || username);
@@ -204,6 +242,8 @@ export async function createUserByAdmin(input: { username: string; email?: strin
         return withPostgresTransaction(async (client) => {
             await lockAuthMutation(client);
             const repos = createPostgresRepositories(client);
+            const actor = await repos.users.getById(input.actorId, true);
+            assertCanCreateManagedUser(actor, input);
             const settings = await readPostgresAuthSettings(client);
             assertNoIdentityConflict(await repos.users.findIdentityConflict({ username, email: email || undefined }), username, email);
             const plan = resolvePlanById(settings.entitlements, input.planId);
@@ -217,10 +257,11 @@ export async function createUserByAdmin(input: { username: string; email?: strin
                 displayName,
                 bio: "",
                 role: input.role === "admin" ? "admin" : "user",
+                adminPermissions: input.role === "admin" ? normalizeAdminPermissions(input.adminPermissions) : [],
                 status: "active",
                 planId: plan.id,
                 pointsBalance: 0,
-                passwordHash: hashPassword(input.password),
+                passwordHash: await hashPassword(input.password),
                 createdAt: now,
                 updatedAt: now,
             });
@@ -241,7 +282,9 @@ export async function createUserByAdmin(input: { username: string; email?: strin
         });
     }
 
-    return mutateAuthDb((db) => {
+    return mutateAuthDb(async (db) => {
+        const actor = db.users.find((user) => user.id === input.actorId);
+        assertCanCreateManagedUser(actor, input);
         if (db.users.some((user) => user.username.toLowerCase() === username.toLowerCase())) throw new AuthInputError("用户名已存在");
         if (email && db.users.some((user) => user.email?.toLowerCase() === email.toLowerCase())) throw new AuthInputError("邮箱已被注册");
 
@@ -257,10 +300,11 @@ export async function createUserByAdmin(input: { username: string; email?: strin
             displayName,
             bio: "",
             role: input.role === "admin" ? "admin" : "user",
+            adminPermissions: input.role === "admin" ? normalizeAdminPermissions(input.adminPermissions) : [],
             status: "active",
             planId: plan.id,
             pointsBalance: 0,
-            passwordHash: hashPassword(input.password),
+            passwordHash: await hashPassword(input.password),
             createdAt: now,
             updatedAt: now,
         };
@@ -271,15 +315,17 @@ export async function createUserByAdmin(input: { username: string; email?: strin
     });
 }
 
-export async function authenticateUser(input: { username: string; password: string }) {
+export async function authenticateUser(input: { username: string; password: string; totpCode?: string }) {
     const account = normalizeUsername(input.username);
     const accountEmail = normalizeEmail(input.username);
     if (isPostgresDatabaseEnabled()) {
         await ensurePostgresSchema();
         const repos = createPostgresRepositories();
         const user = await repos.users.getByLogin(account, accountEmail || undefined);
-        if (!user || !verifyPasswordWithDummy(input.password, user.passwordHash)) throw new AuthInputError("用户名或密码不正确");
+        const passwordMatches = await verifyPasswordWithDummy(input.password, user?.passwordHash);
+        if (!user || !passwordMatches) throw new AuthInputError("用户名或密码不正确");
         if (user.status !== "active") throw new AuthInputError("账号已被禁用");
+        verifyAdminMfaForLogin(user, input.totpCode);
 
         const lastLoginAt = new Date().toISOString();
         await repos.users.update(user.id, { lastLoginAt });
@@ -290,8 +336,10 @@ export async function authenticateUser(input: { username: string; password: stri
     }
     const db = await readAuthDb();
     const user = db.users.find((item) => item.username.toLowerCase() === account.toLowerCase() || (accountEmail && item.email?.toLowerCase() === accountEmail));
-    if (!user || !verifyPasswordWithDummy(input.password, user.passwordHash)) throw new AuthInputError("用户名或密码不正确");
+    const passwordMatches = await verifyPasswordWithDummy(input.password, user?.passwordHash);
+    if (!user || !passwordMatches) throw new AuthInputError("用户名或密码不正确");
     if (user.status !== "active") throw new AuthInputError("账号已被禁用");
+    verifyAdminMfaForLogin(user, input.totpCode);
 
     await mutateAuthDb((nextDb) => {
         const nextUser = nextDb.users.find((item) => item.id === user.id);
@@ -389,4 +437,20 @@ function assertNoIdentityConflict(conflict: StoredUser | null, username: string,
     if (!conflict) return;
     if (conflict.username.toLowerCase() === username.toLowerCase()) throw new AuthInputError("用户名已存在");
     if (email && conflict.email?.toLowerCase() === email.toLowerCase()) throw new AuthInputError("邮箱已被注册");
+}
+
+function assertCanCreateManagedUser(actor: StoredUser | null | undefined, input: { role?: UserRole; adminPermissions?: AdminPermission[]; pointsBalance?: number; planId?: string }) {
+    if (input.role === "admin") {
+        assertAdminPermission(actor, "administrators.manage");
+        const permissions = normalizeAdminPermissions(input.adminPermissions);
+        if (!permissions.length) throw new AuthInputError("管理员至少需要一项职责权限");
+        if (!hasAllAdminPermissions(actor, permissions)) throw new AuthInputError("不能授予超出当前管理员职责范围的权限", 403);
+    } else {
+        assertAdminPermission(actor, "users.manage");
+    }
+    if ((Number(input.pointsBalance) || 0) !== 0 || input.planId !== undefined) assertAdminPermission(actor, "billing.manage");
+}
+
+function assertAdminPermission(actor: StoredUser | null | undefined, permission: AdminPermission) {
+    if (!hasAdminPermission(actor, permission)) throw new AuthInputError("当前管理员没有执行此操作的职责权限", 403);
 }

@@ -84,7 +84,18 @@ describe("image task runtime submission safety", () => {
         expect(state.config.channelId).toBe("channel-two");
         expect(state.candidateConfigs).toEqual([]);
         expect(state.attempts?.map(({ status }) => status)).toEqual(["failed", "running"]);
-        expect(mocks.schedule).toHaveBeenLastCalledWith("image", "image-one", expect.objectContaining({ channelId: "channel-two", provider: "gemini" }));
+        expect(mocks.schedule).toHaveBeenLastCalledWith("image", "image-one", expect.objectContaining({ executionPhase: "submitted", upstreamTaskId: "upstream-two", channelId: "channel-two", provider: "gemini", lastUpstreamStatus: "submitted" }));
+    });
+
+    it("routes Yumeng image tasks through the declarative async runtime", async () => {
+        state.config = { ...state.config, advancedConfig: { ...state.config.advancedConfig!, protocol: "yumeng", createPath: "/kyyReactApiServer/v2/model-center/tasks", queryPath: "/kyyReactApiServer/v2/model-center/tasks/:task_id" } };
+        state.candidateConfigs = [];
+        mocks.runCustom.mockResolvedValueOnce({ dataUrl: "", pending: { id: "yumeng-task", mediaBaseUrl: "https://zcbservice.aizfw.cn/kyyReactApiServer", pollBaseUrl: "https://zcbservice.aizfw.cn/kyyReactApiServer" } });
+
+        await expect(createImageTaskUpstreamStep(state, "http://internal", "https://public.example")).resolves.toMatchObject({ state: "pending", upstream: { id: "yumeng-task" } });
+        expect(mocks.runCustom).toHaveBeenCalledOnce();
+        expect(mocks.runOpenAi).not.toHaveBeenCalled();
+        expect(mocks.runGemini).not.toHaveBeenCalled();
     });
 
     it("does not switch candidates when the submission outcome is unknown", async () => {
@@ -113,6 +124,17 @@ describe("image task runtime submission safety", () => {
         expect(mocks.runGemini).not.toHaveBeenCalled();
         expect(state.upstream?.id).toBe("upstream-one");
         expect(state.billing).toMatchObject({ pointsRecordId: "record-one", refunded: false });
+        expect(mocks.schedule).toHaveBeenLastCalledWith(
+            "image",
+            "image-one",
+            expect.objectContaining({
+                executionPhase: "needs_review",
+                upstreamTaskId: "upstream-one",
+                channelId: "channel-one",
+                nextPollAt: undefined,
+                resultPayload: { reviewReason: "OpenAI 图片接口未返回图片，且渠道没有声明异步查询路径" },
+            }),
+        );
         expect(mocks.refund).not.toHaveBeenCalled();
     });
 
@@ -125,6 +147,7 @@ describe("image task runtime submission safety", () => {
 
         const step = await createImageTaskUpstreamStep(state, "http://internal", "https://public.example");
         expect(step).toMatchObject({ state: "result_ready", resultUrl: "inline://image-task-result" });
+        expect(mocks.schedule).toHaveBeenLastCalledWith("image", "image-one", expect.objectContaining({ executionPhase: "result_ready", resultPayload: { url: "inline://image-task-result" }, lastUpstreamStatus: "completed" }));
         if (step.state !== "result_ready") throw new Error("image result was not ready");
         await expect(persistImageTaskResult(state, "http://internal", step.resultUrl)).rejects.toThrow("pngload_buffer");
         expect(mocks.refund).not.toHaveBeenCalled();

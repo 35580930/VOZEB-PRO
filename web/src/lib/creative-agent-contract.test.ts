@@ -36,6 +36,29 @@ describe("creative agent contract", () => {
         expect(normalizeCreativeDeliverables([], { title: "当前视频", type: "video", role: "核心视频" })).toHaveLength(1);
     });
 
+    it("keeps complete planner and review collections", () => {
+        const taskIds = Array.from({ length: 12 }, (_, index) => `image-${index}`);
+        const review = normalizeCreativeReview(
+            {
+                mode: "visual",
+                status: "needs_revision",
+                summary: "需要逐项调整",
+                issues: taskIds.map((taskId) => ({ taskId, category: "一致性", severity: "high", message: `${taskId} 需要调整` })),
+                retryTaskIds: taskIds,
+            },
+            new Set(taskIds),
+        );
+
+        expect(
+            normalizeCreativeDeliverables(
+                taskIds.map((id) => ({ title: id, type: "image", role: "候选图" })),
+                { title: "回退", type: "image", role: "回退" },
+            ),
+        ).toHaveLength(12);
+        expect(review?.issues).toHaveLength(12);
+        expect(review?.retryTaskIds).toEqual(taskIds);
+    });
+
     it("validates review scores, issues and retry task ids", () => {
         expect(
             normalizeCreativeReview(

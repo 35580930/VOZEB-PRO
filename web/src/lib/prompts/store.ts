@@ -58,6 +58,7 @@ type PromptListOptions = {
     random?: boolean;
     page?: number;
     pageSize?: number;
+    includeFacets?: boolean;
 };
 
 const PROMPT_DATA_FILE = "prompts.json";
@@ -75,21 +76,22 @@ export async function listPrompts(options: PromptListOptions) {
     const keyword = (options.keyword || "").trim().toLowerCase();
     const tags = options.tags || [];
     const category = options.category || "";
+    const includeFacets = options.includeFacets !== false;
     const page = Math.max(1, options.page || 1);
     const pageSize = Math.max(1, Math.min(100, options.pageSize || 20));
     const base = db.prompts
         .filter((item) => item.scope === options.scope)
         .filter((item) => (options.scope === "user" ? item.ownerUserId === options.ownerUserId : true))
         .sort((a, b) => Date.parse(b.updatedAt) - Date.parse(a.updatedAt));
-    const withoutTagFilter = filterPrompts(base, { keyword, category, tags: [] });
+    const withoutTagFilter = includeFacets ? filterPrompts(base, { keyword, category, tags: [] }) : [];
     const filtered = options.random ? shufflePrompts(filterPrompts(base, { keyword, category, tags })) : filterPrompts(base, { keyword, category, tags });
 
     return {
         items: filtered.slice((page - 1) * pageSize, page * pageSize),
-        tags: collectTags(withoutTagFilter),
-        categories: collectCategories(base),
+        tags: includeFacets ? collectTags(withoutTagFilter) : [],
+        categories: includeFacets ? collectCategories(base) : [],
         total: filtered.length,
-        scopeTotal: base.length,
+        ...(includeFacets ? { scopeTotal: base.length } : {}),
     };
 }
 
@@ -293,13 +295,15 @@ async function listPostgresPrompts(options: PromptListOptions) {
     const page = Math.max(1, options.page || 1);
     const pageSize = Math.max(1, Math.min(100, options.pageSize || 20));
     const repository = createPostgresRepositories().prompts;
-    const [result, facets] = await Promise.all([repository.list({ ...options, page, pageSize }), repository.facets({ scope: options.scope, ownerUserId: options.ownerUserId, keyword: options.keyword, category: options.category })]);
+    const resultPromise = repository.list({ ...options, page, pageSize });
+    const facetsPromise = options.includeFacets === false ? undefined : repository.facets({ scope: options.scope, ownerUserId: options.ownerUserId, keyword: options.keyword, category: options.category });
+    const [result, facets] = await Promise.all([resultPromise, facetsPromise]);
     return {
         items: result.items.map(toStoredPrompt),
-        tags: facets.tags.filter(isUsefulPromptTag),
-        categories: facets.categories,
+        tags: facets?.tags.filter(isUsefulPromptTag) || [],
+        categories: facets?.categories || [],
         total: result.total,
-        scopeTotal: facets.scopeTotal,
+        ...(facets ? { scopeTotal: facets.scopeTotal } : {}),
     };
 }
 

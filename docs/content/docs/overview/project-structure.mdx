@@ -65,47 +65,48 @@ VOZEB-PRO/
 
 ## 关键文件入口
 
-| 文件                                             | 打开它能看到什么                                                          |
-| ------------------------------------------------ | ------------------------------------------------------------------------- |
-| `web/src/app/layout.tsx`                         | 应用根布局、站点元信息、主题与全局 Provider 入口                          |
-| `web/src/app/(user)/layout.tsx`                  | 登录用户工作区的鉴权、安装状态判断和统一壳层                              |
-| `web/src/app/admin/page.tsx`                     | 管理后台入口与一级业务分区                                                |
-| `web/src/app/api/**/route.ts`                    | 本站 API 的参数读取、Session/管理员鉴权、服务调用和响应映射                |
-| `web/src/components/layout/app-workspace-shell.tsx` | 用户工作区侧栏、顶部栏和内容滚动边界                                  |
-| `web/src/services/api/request.ts`                | 浏览器请求本站 API 的通用响应解析与错误映射                               |
-| `web/src/lib/server/agent-run-executor.ts`       | Agent Run 的认领、执行、终态处理和失败记录                                |
-| `web/src/lib/server/logical-model-router.ts`     | 逻辑模型到真实渠道、上游模型和候选优先级的解析                            |
-| `web/src/lib/server/generation-task-store.ts`    | 统一生成任务状态、并发、认领、取消和统计                                  |
-| `web/src/lib/server/object-storage-service.ts`   | S3 写入、签名读取、对象管理和本地媒体迁移                                 |
-| `web/src/lib/server/local-media-registry.ts`     | 媒体用户归属、来源、原名、存储 Provider 和业务关联登记                     |
-| `web/src/lib/server/database/schema.ts`          | PostgreSQL 表、索引、约束和初始化结构                                     |
-| `web/src/lib/server/database/repositories.ts`    | 数据库 Repository 聚合入口                                                |
-| `web/scripts/start-standalone.mjs`               | Docker/standalone 生产进程启动和运行目录准备                              |
-| `web/scripts/reset-admin-password.mjs`           | 服务端管理员密码重置                                                      |
-| `web/scripts/release-check.mjs`                  | 版本、品牌、文档、Git 跟踪文件和敏感文件发布检查                           |
-| `.github/workflows/quality.yml`                  | Web/Docs 依赖安装、类型检查、测试、格式检查和生产构建                      |
-| `.github/workflows/docker-image.yml`             | 主应用 amd64/arm64 镜像构建、GHCR 推送和 manifest 合并                     |
-| `.github/workflows/docs-docker-image.yml`        | 文档站 amd64/arm64 镜像构建、GHCR 推送和 manifest 合并                     |
+| 文件                                                | 打开它能看到什么                                            |
+| --------------------------------------------------- | ----------------------------------------------------------- |
+| `web/src/app/layout.tsx`                            | 应用根布局、站点元信息、主题与全局 Provider 入口            |
+| `web/src/app/(user)/layout.tsx`                     | 登录用户工作区的鉴权、安装状态判断和统一壳层                |
+| `web/src/app/admin/page.tsx`                        | 管理后台入口与一级业务分区                                  |
+| `web/src/app/api/**/route.ts`                       | 本站 API 的参数读取、Session/管理员鉴权、服务调用和响应映射 |
+| `web/src/components/layout/app-workspace-shell.tsx` | 用户工作区侧栏、顶部栏和内容滚动边界                        |
+| `web/src/services/api/request.ts`                   | 浏览器请求本站 API 的通用响应解析与错误映射                 |
+| `web/src/lib/server/agent-run-executor.ts`          | Agent Run 的认领、执行、终态处理和失败记录                  |
+| `web/src/lib/server/logical-model-router.ts`        | 逻辑模型到真实渠道、上游模型和候选优先级的解析              |
+| `web/src/lib/server/generation-task-store.ts`       | 统一生成任务状态、并发、认领、取消和统计                    |
+| `web/src/lib/server/object-storage-service.ts`      | S3 写入、签名读取、对象管理和本地媒体迁移                   |
+| `web/src/lib/server/local-media-registry.ts`        | 媒体用户归属、来源、原名、存储 Provider 和业务关联登记      |
+| `web/src/lib/server/database/schema.ts`             | PostgreSQL 表、索引、约束和初始化结构                       |
+| `web/src/lib/server/database/repositories.ts`       | 数据库 Repository 聚合入口                                  |
+| `web/scripts/start-standalone.mjs`                  | Docker/standalone 生产进程启动和运行目录准备                |
+| `web/scripts/reset-admin-password.mjs`              | 服务端管理员密码重置                                        |
+| `web/scripts/reset-admin-mfa.mjs`                   | 文件/PostgreSQL Provider 的管理员 MFA 恢复与 Session 撤销   |
+| `web/scripts/release-check.mjs`                     | 版本、品牌、文档、Git 跟踪文件和敏感文件发布检查            |
+| `.github/workflows/quality.yml`                     | Web/Docs 依赖安装、类型检查、测试、格式检查和生产构建       |
+| `.github/workflows/docker-image.yml`                | 主应用 amd64/arm64 镜像构建、GHCR 推送和 manifest 合并      |
+| `.github/workflows/docs-docker-image.yml`           | 文档站 amd64/arm64 镜像构建、GHCR 推送和 manifest 合并      |
 
 页面目录中的 `page.tsx` 是页面入口；同目录 `use-*.ts(x)`、`*-records.ts` 或 `components/` 通常承载该页面私有控制逻辑。服务端同名 `*.test.ts(x)` 用于保护任务、计费、媒体、数据库和协议边界。
 
 ## 主要服务边界
 
-| 模块                         | 负责内容                                               |
-| ---------------------------- | ------------------------------------------------------ |
-| `creative-runtime-*`         | 创作会话、消息、稳定资产、Run 和事件持久化             |
-| `agent-run-*`                | Agent 计划校验、Skill 策略、子任务调度、事件和结果回写 |
-| `workbench-agent-service.ts` | 图片与视频工作台的规划和手动模型执行入口               |
-| `logical-model-router.ts`    | 逻辑模型到真实渠道、上游模型和候选优先级的解析         |
-| `*-task-store.ts`            | 文本、图片、视频、音频任务的状态、幂等和退款边界       |
-| `generation-task-store.ts`   | 统一生成任务状态机、并发约束和任务认领                 |
-| `generation-log-*`           | 用户生成记录、媒体结果和运营统计                       |
-| `reference-asset-*`          | 参考素材上传、归属校验和给上游使用的短期签名 URL       |
-| `local-media-*`              | 本地媒体登记、分类、引用保护、读取和清理               |
-| `object-storage-*.ts`        | S3 兼容配置、对象访问、签名、对象管理和本地媒体迁移    |
-| `billing-*` / `payment-*`    | 商品、订单、支付、退款、对账和积分入账                 |
-| `canvas-project-*`           | Canvas 项目校验、保存和用户隔离                        |
-| `drama-project-*`            | 短剧剧本、资产、分镜、版本、成本和成片状态             |
+| 模块                       | 负责内容                                                                          |
+| -------------------------- | --------------------------------------------------------------------------------- |
+| `creative-runtime-*`       | 创作会话、消息、稳定资产、Run 和事件持久化                                        |
+| `agent-run-*`              | `/create` 统一 Agent 的计划校验、Skill 策略、媒体子任务调度、事件、结果回写与恢复 |
+| `logical-model-router.ts`  | 逻辑模型到真实渠道、上游模型和候选优先级的解析                                    |
+| `*-task-store.ts`          | 文本、图片、视频、音频任务的状态、幂等和退款边界                                  |
+| `generation-task-store.ts` | 统一生成任务状态机、并发约束和任务认领                                            |
+| `generation-log-*`         | 用户生成记录、媒体结果和运营统计                                                  |
+| `reference-asset-*`        | 参考素材上传、归属校验和给上游使用的短期签名 URL                                  |
+| `local-media-*`            | 本地媒体登记、分类、引用保护、读取和清理                                          |
+| `object-storage-*.ts`      | S3 兼容配置、对象访问、签名、对象管理和本地媒体迁移                               |
+| `billing-*` / `payment-*`  | 商品、订单、支付、退款、对账和积分入账                                            |
+| `admin-mfa-service.ts`     | 管理员 TOTP 设置、登录挑战、密文状态与 Session 撤销                               |
+| `canvas-project-*`         | Canvas 项目校验、保存和用户隔离                                                   |
+| `drama-project-*`          | 短剧剧本、资产、分镜、版本、成本和成片状态                                        |
 
 ## 标准页面请求
 
@@ -215,4 +216,4 @@ flowchart LR
     REPO --> TEST["同域测试与数据库契约"]
 ```
 
-例如图片任务历史异常，应从图片工作台 Controller 找到 `services/api/image.ts`，再进入 `api/image-tasks`、图片任务 Store、生成记录和媒体登记；不要在页面层直接增加数据库或上游兼容分支。
+例如 `/create` 图片任务历史异常，应从页面私有 Hook 找到 `services/api/creative.ts`，再进入 Creative Conversation / Agent Run Route、任务 Store、生成记录和媒体登记；不要在页面层直接增加数据库或上游兼容分支。底层 `services/api/image.ts` 与 `api/image-tasks` 仍负责真实图片子任务，不代表存在独立图片工作台页面。

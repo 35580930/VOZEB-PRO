@@ -4,7 +4,7 @@ import { formatAgentMessageText, friendlyAgentError } from "@/components/agent/a
 describe("Canvas Agent 消息清理", () => {
     it("hides upstream JSON errors", () => {
         expect(formatAgentMessageText('{"error":{"message":"not available","code":"convert_request_failed"}}')).toBe("当前模型暂不可用，请切换模型或稍后重试。");
-        expect(formatAgentMessageText('{"error":{"message":"/backend-api/conversation failed: status=422, body="}}')).toBe("当前模型暂不可用，请切换模型或稍后重试。");
+        expect(formatAgentMessageText('{"error":{"message":"/backend-api/conversation failed: status=422, body="}}')).toBe("当前请求参数不被模型支持，请检查模型与生成参数。");
         expect(formatAgentMessageText("<html><head><title>502 Bad Gateway</title></head><body>nginx</body></html>")).toBe("当前模型暂不可用，请切换模型或稍后重试。");
     });
 
@@ -14,7 +14,7 @@ describe("Canvas Agent 消息清理", () => {
     });
 
     it("shows a safe fix for protocol mismatches", () => {
-        expect(formatAgentMessageText('{"error":{"message":"MetaJing video requests must use application/json"}}')).toBe("当前视频渠道要求 application/json，请在后台选择“VOZEB推荐”协议。");
+        expect(formatAgentMessageText('{"error":{"message":"MetaJing video requests must use application/json"}}')).toBe("当前视频渠道要求 application/json，请在后台选择匹配的内置协议，或使用自定义协议配置请求模板。");
     });
 
     it("replaces legacy task internals", () => {

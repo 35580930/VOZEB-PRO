@@ -15,4 +15,9 @@ describe("site metadata", () => {
     it("keeps an independently configured browser icon", () => {
         expect(browserIconHref({ iconUrl: "https://cdn.example.com/favicon.png", logoUrl: "/custom-logo.svg" })).toBe("https://cdn.example.com/favicon.png");
     });
+
+    it("does not send legacy reserved favicon paths back through a redirect", () => {
+        expect(browserIconHref({ iconUrl: "/favicon.ico", logoUrl: "/logo.svg" })).toBe("/logo.svg");
+        expect(browserIconHref({ iconUrl: "/api/site-icon", logoUrl: "/logo.svg" })).toBe("/logo.svg");
+    });
 });

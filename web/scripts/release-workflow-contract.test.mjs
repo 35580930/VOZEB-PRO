@@ -13,9 +13,10 @@ describe("release workflow contract", () => {
         const parsed = parseDocument(source);
 
         expect(parsed.errors).toEqual([]);
+        const jobs = parsed.toJS().jobs;
         expect(source).not.toContain('branches: ["main"]');
         expect(source).toContain("quality:");
-        expect(source).toMatch(/build:\s+needs:\s+- quality\s+- meta/s);
+        expect(jobs.build.needs).toEqual(["quality", "security", "meta"]);
         expect(source).toContain("type=raw,value=latest,enable=${{ startsWith(github.ref, 'refs/tags/v')");
         expect(source).toContain("anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610");
         expect(source).toContain("cosign sign --yes");
@@ -36,6 +37,17 @@ describe("release workflow contract", () => {
         expect(source).toContain("gitleaks/gitleaks-action@ff98106e4c7b2bc287b24eaf42907196329070c7");
         expect(source).toContain("github/codeql-action/analyze@47be0dbd5113ab1b79fe2dd3f68bdf7e426cdc87");
         expect(source).not.toMatch(/uses:\s+[^\s]+@(v\d|main|master)\b/);
+    });
+
+    it.each([
+        ["quality.yml", "web"],
+        ["docker-image.yml", "quality"],
+    ])("serializes shared PostgreSQL integration tests in %s", (file, job) => {
+        const document = parseDocument(workflow(file));
+        expect(document.errors).toEqual([]);
+
+        const step = document.toJS().jobs[job].steps.find((item) => item.name === "PostgreSQL integration tests");
+        expect(step?.run).toContain("pnpm exec vitest run --no-file-parallelism");
     });
 
     it("declares one pnpm version for the repository and both Docker builds", () => {
@@ -60,9 +72,9 @@ describe("release workflow contract", () => {
 
         expect(web.groups["web-runtime"]["update-types"]).toEqual(["minor", "patch"]);
         expect(web.groups["web-development"]["update-types"]).toEqual(["minor", "patch"]);
-        expect(web.ignore.map((item) => item["dependency-name"])).toEqual(["@types/node", "eslint", "typescript"]);
+        expect(web.ignore.map((item) => item["dependency-name"])).toEqual(["*"]);
         expect(docs.groups["docs-dependencies"]["update-types"]).toEqual(["minor", "patch"]);
-        expect(docs.ignore.map((item) => item["dependency-name"])).toEqual(["@types/node", "typescript"]);
+        expect(docs.ignore.map((item) => item["dependency-name"])).toEqual(["*"]);
         expect(actions.ignore.map((item) => item["dependency-name"])).toEqual(["*"]);
         expect([...web.ignore, ...docs.ignore, ...actions.ignore, ...docker.flatMap((item) => item.ignore)].every((item) => item["update-types"][0] === "version-update:semver-major")).toBe(true);
         expect(docker).toHaveLength(2);

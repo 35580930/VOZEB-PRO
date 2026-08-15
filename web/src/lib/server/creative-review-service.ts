@@ -30,7 +30,7 @@ export async function reviewCreativeOutputs(input: { origin: string; cookie: str
     if (!model || !resolved?.channel) return unavailableCreativeReview("后台没有可用的默认文本模型，生成结果已保留，但本轮未执行自动复盘。");
 
     const mode = imageInputs.length ? "visual" : "text";
-    const system = `你是 MOCREAI 创作质检 Agent。${mode === "visual" ? "你必须结合实际图片检查主体、构图、色彩、光线、文字可读性、参考一致性和整套视觉一致性。" : "当前只有文本结果，只能进行文本一致性检查，禁止声称看过图片或视频画面。"}只有存在明确影响使用的问题才返回 needs_revision；一般审美偏好不应触发自动重做。retryTaskIds 只能选择确实需要重做的任务，最多 10 个。必须调用 review_creative_outputs，不得暴露隐藏思维链。`;
+    const system = `你是 VOZEB PRO 创作质检 Agent。${mode === "visual" ? "你必须结合实际图片检查主体、构图、色彩、光线、文字可读性、参考一致性和整套视觉一致性。" : "当前只有文本结果，只能进行文本一致性检查，禁止声称看过图片或视频画面。"}只有存在明确影响使用的问题才返回 needs_revision；一般审美偏好不应触发自动重做。retryTaskIds 只能选择确实需要重做的任务。必须调用 review_creative_outputs，不得暴露隐藏思维链。`;
     const reviewContext = JSON.stringify({ foundation: input.foundation, tasks: input.tasks.map(({ imageUrls: _imageUrls, ...task }) => task), mode });
     const responsesInput = [
         { role: "system", content: system },
@@ -99,7 +99,7 @@ async function callChat(origin: string, channelId: string, upstreamModel: string
 }
 
 async function reviewImages(tasks: CreativeReviewTaskInput[], origin: string, cookie: string) {
-    const candidates = tasks.flatMap((task) => (task.imageUrls || []).map((url) => ({ taskId: task.id, url }))).slice(0, 6);
+    const candidates = tasks.flatMap((task) => (task.imageUrls || []).map((url) => ({ taskId: task.id, url })));
     const images = await Promise.all(candidates.map(async (item) => ({ ...item, url: await normalizeReviewImage(item.url, origin, cookie) })));
     return images.filter((item): item is { taskId: string; url: string } => Boolean(item.url));
 }
@@ -144,24 +144,23 @@ const reviewTool = {
             mode: { type: "string", enum: ["visual", "text", "unavailable"] },
             status: { type: "string", enum: ["passed", "needs_revision", "unavailable"] },
             score: { type: "number", minimum: 0, maximum: 100 },
-            summary: { type: "string", maxLength: 1200 },
+            summary: { type: "string" },
             issues: {
                 type: "array",
-                maxItems: 8,
                 items: {
                     type: "object",
                     properties: {
-                        taskId: { type: "string", maxLength: 120 },
-                        category: { type: "string", maxLength: 80 },
+                        taskId: { type: "string" },
+                        category: { type: "string" },
                         severity: { type: "string", enum: ["low", "medium", "high"] },
-                        message: { type: "string", maxLength: 500 },
-                        correction: { type: "string", maxLength: 500 },
+                        message: { type: "string" },
+                        correction: { type: "string" },
                     },
                     required: ["category", "severity", "message"],
                     additionalProperties: false,
                 },
             },
-            retryTaskIds: { type: "array", maxItems: 10, items: { type: "string", maxLength: 120 } },
+            retryTaskIds: { type: "array", items: { type: "string" } },
         },
         required: ["mode", "status", "summary", "issues", "retryTaskIds"],
         additionalProperties: false,

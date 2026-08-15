@@ -1,98 +1,19 @@
 "use client";
 
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import type { ChangeEvent as ReactChangeEvent, DragEvent as ReactDragEvent, MouseEvent as ReactMouseEvent, PointerEvent as ReactPointerEvent } from "react";
-import dynamic from "next/dynamic";
-import { useParams, useRouter } from "next/navigation";
-import { ImageIcon, List, Music2, Settings2, Video } from "lucide-react";
-import { saveAs } from "file-saver";
-
-import { createImageGenerationTask, waitForImageGenerationTask, type ImageGenerationTask } from "@/services/api/image";
-import { createTextGenerationTask, waitForTextGenerationTask, type TextGenerationTask } from "@/services/api/text";
-import { createServerVideoGenerationTask, storeGeneratedVideo, waitForVideoGenerationTask } from "@/services/api/video";
-import { defaultConfig, modelMatchesCapability, modelOptionName, type AiConfig, useConfigStore, useEffectiveConfig } from "@/stores/use-config-store";
 import { browserReadableMediaUrl } from "@/lib/browser-media-url";
-import { droppedFiles, preventFileDragEvent } from "@/lib/file-drop";
+import { readImageMeta } from "@/lib/image-utils";
 import { resolveImageUrl, resolveStoredImageDataUrl, uploadImage, type UploadedImage } from "@/services/image-storage";
-import { resolveMediaUrl, uploadMediaFile, type UploadedFile } from "@/services/file-storage";
-import { nanoid } from "nanoid";
-import { getDataUrlByteSize, readImageMeta } from "@/lib/image-utils";
-import { preloadOnIdle } from "@/lib/preload-on-idle";
-import { canvasThemes, type CanvasBackgroundMode } from "@/lib/canvas-theme";
-import { useAssetStore } from "@/stores/use-asset-store";
-import { useUserStore } from "@/stores/use-user-store";
-import { useThemeStore } from "@/stores/use-theme-store";
-import { cropDataUrl, splitDataUrl, upscaleDataUrl } from "../utils/canvas-image-data";
-import { fitNodeSize, nodeSizeFromRatio, resizeImageNodeToNaturalRatio } from "../utils/canvas-node-size";
-import { App, Button, Modal } from "antd";
-import { NODE_DEFAULT_SIZE, getNodeSpec } from "../constants";
-import { ActiveConnectionPath, ConnectionPath } from "../components/canvas-connections";
-import { CanvasConfigComposer } from "../components/canvas-config-composer";
-import { CanvasConfigNodePanel } from "../components/canvas-config-node-panel";
-import { CANVAS_AGENT_PANEL_MOTION_MS } from "../components/canvas-agent-panel-motion";
-import { CanvasNodeContextMenu } from "../components/canvas-context-menu";
-import { CanvasNodeAngleDialog, type CanvasImageAngleParams } from "../components/canvas-node-angle-dialog";
-import { CanvasNodeCropDialog, type CanvasImageCropRect } from "../components/canvas-node-crop-dialog";
-import { CanvasNodeMaskEditDialog, type CanvasImageMaskEditPayload } from "../components/canvas-node-mask-edit-dialog";
-import { CanvasNodeSplitDialog, type CanvasImageSplitParams } from "../components/canvas-node-split-dialog";
-import { CanvasNodeUpscaleDialog, type CanvasImageUpscaleParams } from "../components/canvas-node-upscale-dialog";
-import { buildNodeGenerationContext, buildNodeGenerationInputs, buildNodeResponseMessages, hydrateNodeGenerationContext, type NodeGenerationInput } from "../components/canvas-node-generation";
-import { CanvasNodeHoverToolbar, CanvasNodeInfoModal } from "../components/canvas-node-hover-toolbar";
-import { VozebProCanvas } from "../components/vozeb-pro-canvas";
-import { Minimap } from "../components/canvas-mini-map";
-import { CanvasNode } from "../components/canvas-node";
-import { CanvasNodePromptPanel, type CanvasNodeGenerationMode } from "../components/canvas-node-prompt-panel";
-import { CanvasTopBar } from "../components/canvas-top-bar";
-import { CanvasToolbar } from "../components/canvas-toolbar";
-import type { InsertAssetPayload } from "../components/asset-picker-modal";
-import { CanvasZoomControls } from "../components/canvas-zoom-controls";
-import { useCanvasStore } from "../stores/use-canvas-store";
-import { applyCanvasAgentOps, type CanvasAgentOp, type CanvasAgentSnapshot } from "../utils/canvas-agent-ops";
-import { buildCanvasResourceReferences, buildNodeMentionReferences } from "../utils/canvas-resource-references";
-import { PANORAMA_IMAGE_SIZE } from "../utils/canvas-panorama";
-import { useCanvasLocalAgentBridge } from "../use-canvas-local-agent-bridge";
-import {
-    CanvasNodeType,
-    isCanvasImageNodeType,
-    type CanvasAssistantImage,
-    type CanvasAssistantSession,
-    type CanvasConnection,
-    type CanvasImageGenerationType,
-    type CanvasNodeData,
-    type CanvasNodeMetadata,
-    type ConnectionHandle,
-    type ContextMenuState,
-    type Position,
-    type SelectionBox,
-    type ViewportTransform,
-} from "../types";
-
-const CanvasAssistantPanel = dynamic(() => import("../components/canvas-assistant-panel").then((mod) => mod.CanvasAssistantPanel), { ssr: false });
-const loadAssetPickerModal = () => import("../components/asset-picker-modal").then((mod) => mod.AssetPickerModal);
-const AssetPickerModal = dynamic(loadAssetPickerModal, { ssr: false, loading: () => null });
+import { resolveMediaUrl, type UploadedFile } from "@/services/file-storage";
+import { defaultConfig, type AiConfig } from "@/stores/use-config-store";
 import type { ReferenceImage } from "@/types/image";
-
-import {
-    CanvasClipboard,
-    PendingConnectionCreate,
-    ConnectionDropTarget,
-    CanvasHistoryEntry,
-    CanvasGenerationRequest,
-    VIDEO_NODE_MAX_WIDTH,
-    VIDEO_NODE_MAX_HEIGHT,
-    CANVAS_DROP_NODE_OFFSET,
-    CONNECTION_HANDLE_HIT_RADIUS,
-    CONNECTION_NODE_HIT_PADDING,
-    NODE_STATUS_IDLE,
-    NODE_STATUS_LOADING,
-    NODE_STATUS_SUCCESS,
-    NODE_STATUS_ERROR,
-    IMAGE_PROMPT_REVERSE_PRESET,
-    createCanvasNode,
-    CanvasRefreshShell,
-    ConnectionCreateMenu,
-    ConnectionCreateOption,
-} from "./canvas-page-elements";
+import { CANVAS_CONFIG_NODE_HEIGHT, NODE_DEFAULT_SIZE } from "../constants";
+import type { CanvasImageAngleParams } from "../components/canvas-node-angle-dialog";
+import type { NodeGenerationInput } from "../components/canvas-node-generation";
+import type { CanvasNodeGenerationMode } from "../components/canvas-node-prompt-panel";
+import { resolveCanvasGenerationModel } from "../utils/canvas-node-config";
+import { nodeSizeFromRatio, resizeImageNodeToNaturalRatio } from "../utils/canvas-node-size";
+import { PANORAMA_IMAGE_SIZE } from "../utils/canvas-panorama";
+import { CanvasNodeType, isCanvasImageNodeType, type CanvasAssistantSession, type CanvasConnection, type CanvasImageGenerationType, type CanvasNodeData, type CanvasNodeMetadata, type ConnectionHandle } from "../types";
 
 export function imageExtension(dataUrl: string) {
     return dataUrl.match(/^data:image[/]([^;]+)/)?.[1] || dataUrl.match(/image[/]([^;]+)/)?.[1] || "png";
@@ -178,7 +99,50 @@ export function videoMetadata(video: UploadedFile): CanvasNodeMetadata {
 }
 
 export function audioMetadata(audio: UploadedFile): CanvasNodeMetadata {
-    return { content: audio.url, storageKey: audio.storageKey, status: "success", bytes: audio.bytes, mimeType: audio.mimeType || "audio/mpeg", durationMs: audio.durationMs };
+    return { content: audio.url, storageKey: audio.storageKey, remoteUrl: audio.remoteUrl, serverUrl: audio.serverUrl, status: "success", bytes: audio.bytes, mimeType: audio.mimeType || "audio/mpeg", durationMs: audio.durationMs };
+}
+
+export function replaceCanvasNodeMediaMetadata(current: CanvasNodeMetadata | undefined, media: CanvasNodeMetadata, patch: CanvasNodeMetadata = {}): CanvasNodeMetadata {
+    return {
+        ...current,
+        prompt: undefined,
+        sourcePrompt: undefined,
+        panoramaSourcePrompt: undefined,
+        generationType: undefined,
+        model: undefined,
+        size: undefined,
+        quality: undefined,
+        count: undefined,
+        seconds: undefined,
+        vquality: undefined,
+        generateAudio: undefined,
+        watermark: undefined,
+        videoReferenceMode: undefined,
+        videoFirstFrame: undefined,
+        videoLastFrame: undefined,
+        videoReferences: undefined,
+        audioVoice: undefined,
+        audioFormat: undefined,
+        audioSpeed: undefined,
+        audioInstructions: undefined,
+        cameraControl: undefined,
+        panoramaProjection: undefined,
+        references: undefined,
+        isBatchRoot: undefined,
+        batchRootId: undefined,
+        batchChildIds: undefined,
+        batchUsesReferenceImages: undefined,
+        primaryImageId: undefined,
+        imageBatchExpanded: undefined,
+        imageTask: undefined,
+        videoTask: undefined,
+        textTask: undefined,
+        audioTask: undefined,
+        errorDetails: undefined,
+        freeResize: false,
+        ...media,
+        ...patch,
+    };
 }
 
 export function buildImageGenerationMetadata(type: CanvasImageGenerationType, config: AiConfig, count: number, references: ReferenceImage[]): CanvasNodeMetadata {
@@ -287,16 +251,28 @@ export async function hydrateAssistantImages(sessions: CanvasAssistantSession[])
 }
 
 export function getGenerationCount(count: string) {
-    return Math.max(1, Math.min(15, Math.floor(Math.abs(Number(count)) || 1)));
+    const value = Math.floor(Number(count));
+    return Number.isSafeInteger(value) && value > 0 ? value : 1;
 }
 
 export function applyNodeConfigPatch(node: CanvasNodeData, patch: Partial<CanvasNodeData["metadata"]>) {
     const safePatch = patch || {};
     const next = { ...node, metadata: { ...node.metadata, ...safePatch } };
+    if (node.type === CanvasNodeType.Config && typeof safePatch.configDetailsOpen === "boolean") {
+        return { ...next, height: safePatch.configDetailsOpen ? CANVAS_CONFIG_NODE_HEIGHT.expanded : CANVAS_CONFIG_NODE_HEIGHT.collapsed };
+    }
     const spec = node.type === CanvasNodeType.Video ? NODE_DEFAULT_SIZE[CanvasNodeType.Video] : node.type === CanvasNodeType.Panorama ? NODE_DEFAULT_SIZE[CanvasNodeType.Panorama] : NODE_DEFAULT_SIZE[CanvasNodeType.Image];
     const size = typeof safePatch.size === "string" && !node.metadata?.content ? nodeSizeFromRatio(safePatch.size, spec.width, spec.height) : null;
     if (node.type === CanvasNodeType.Panorama) return { ...next, metadata: { ...next.metadata, size: PANORAMA_IMAGE_SIZE } };
     return size && (node.type === CanvasNodeType.Image || node.type === CanvasNodeType.Video) ? { ...next, ...size, position: { x: node.position.x + node.width / 2 - size.width / 2, y: node.position.y + node.height / 2 - size.height / 2 } } : next;
+}
+
+export function normalizeCanvasConfigNodeLayout(node: CanvasNodeData) {
+    if (node.type !== CanvasNodeType.Config) return node;
+    const configDetailsOpen = node.metadata?.configDetailsOpen === true;
+    const height = configDetailsOpen ? CANVAS_CONFIG_NODE_HEIGHT.expanded : CANVAS_CONFIG_NODE_HEIGHT.collapsed;
+    if (node.height === height && node.metadata?.configDetailsOpen === configDetailsOpen) return node;
+    return { ...node, height, metadata: { ...node.metadata, configDetailsOpen } };
 }
 
 export function getConnectionTargetAnchor(node: CanvasNodeData, current: ConnectionHandle) {
@@ -327,9 +303,7 @@ export function getInputSummary(inputs: NodeGenerationInput[]) {
 }
 
 export function buildGenerationConfig(config: AiConfig, node: CanvasNodeData | undefined, mode: CanvasNodeGenerationMode): AiConfig {
-    const defaultModel = mode === "image" ? config.imageModel : mode === "video" ? config.videoModel : mode === "audio" ? config.audioModel : config.textModel;
-    const metadataModel = node?.metadata?.model || "";
-    const model = metadataModel && modelMatchesCanvasGenerationMode(metadataModel, mode) ? metadataModel : defaultModel || (mode === "audio" ? defaultConfig.audioModel : config.model || defaultConfig.model);
+    const model = resolveCanvasGenerationModel(config, mode, node?.metadata?.model);
     return {
         ...config,
         model,
@@ -345,11 +319,6 @@ export function buildGenerationConfig(config: AiConfig, node: CanvasNodeData | u
         audioInstructions: node?.metadata?.audioInstructions || defaultConfig.audioInstructions,
         count: String(node?.metadata?.count || (mode === "image" ? config.canvasImageCount || config.count : config.count) || defaultConfig.count),
     };
-}
-
-export function modelMatchesCanvasGenerationMode(model: string, mode: CanvasNodeGenerationMode) {
-    if (mode === "image" && modelOptionName(model).toLowerCase() === "auto") return true;
-    return modelMatchesCapability(model, mode);
 }
 
 export function isGenerationCanceled(error: unknown) {

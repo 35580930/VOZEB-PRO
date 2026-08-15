@@ -1,5 +1,5 @@
 import type { Metadata } from "next";
-import { ArrowUpRight, CalendarDays, Eye } from "lucide-react";
+import { ArrowUpRight, CalendarDays, DatabaseZap, Eye } from "lucide-react";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { cache } from "react";
@@ -14,6 +14,7 @@ import { imagePreviewUrl } from "@/lib/media-image-url";
 import { absoluteSiteUrl, getPublicSiteSettings, siteMetadataBase } from "@/lib/server/site-metadata";
 import { buildCreativeWorkStructuredData, serializeStructuredData } from "@/lib/structured-data";
 import { userAvatarFallback } from "@/lib/user-avatar";
+import type { SiteSettings } from "@/lib/auth/store";
 import { WorkViewTracker } from "./work-view-tracker";
 import { WorkGovernanceActions } from "./work-governance-actions";
 import { WorkPromptActions } from "./work-prompt-actions";
@@ -25,6 +26,7 @@ const getSharedWork = cache(async (slug: string) => {
         return await getPublicWorkPublication(slug);
     } catch (error) {
         if (error instanceof WorkPublicationServiceError && error.status === 404) return null;
+        if (isPublicationUnavailable(error)) return undefined;
         throw error;
     }
 });
@@ -32,6 +34,7 @@ const getSharedWork = cache(async (slug: string) => {
 export async function generateMetadata({ params }: SharePageProps): Promise<Metadata> {
     const { slug } = await params;
     const [work, site] = await Promise.all([getSharedWork(slug), getPublicSiteSettings()]);
+    if (work === undefined) return { title: `作品分享暂不可用 | ${site.title}`, robots: { index: false, follow: false } };
     if (!work) return { title: `作品不存在 | ${site.title}`, robots: { index: false, follow: false } };
 
     const base = siteMetadataBase();
@@ -69,7 +72,26 @@ export async function generateMetadata({ params }: SharePageProps): Promise<Meta
 export default async function SharePage({ params }: SharePageProps) {
     const { slug } = await params;
     const [work, site] = await Promise.all([getSharedWork(slug), getPublicSiteSettings()]);
-    if (!work) notFound();
+    if (work === null) notFound();
+    if (work === undefined) {
+        return (
+            <main className="app-scroll-page bg-[#f7f8fa] text-[#20242a] dark:bg-[#0f1114] dark:text-[#f3f5f7]">
+                <ShareHeader site={site} />
+                <section className="mx-auto flex min-h-[calc(100vh-4rem)] w-full max-w-xl flex-col items-center justify-center px-6 py-16 text-center" aria-labelledby="share-unavailable-title">
+                    <span className="grid size-12 place-items-center rounded-full border border-[#dfe3e8] bg-[#eef1f4] text-[#747d89] dark:border-[#2c3036] dark:bg-[#191d22] dark:text-[#939ca8]" aria-hidden="true">
+                        <DatabaseZap className="size-5" />
+                    </span>
+                    <h1 id="share-unavailable-title" className="mt-4 text-xl font-semibold sm:text-2xl">
+                        作品分享暂不可用
+                    </h1>
+                    <p className="mt-2 text-sm leading-6 text-[#747d89] dark:text-[#939ca8]">当前部署未启用 PostgreSQL，公开作品与分享数据暂时无法读取。</p>
+                    <Link href="/" className="mt-5 inline-flex h-10 items-center rounded-md bg-[#20242a] px-4 text-sm font-semibold text-white transition hover:opacity-85 dark:bg-[#f3f5f7] dark:text-[#17191d]">
+                        返回首页
+                    </Link>
+                </section>
+            </main>
+        );
+    }
     const contentAssets = work.assets.filter((asset) => asset.role === "content").sort((left, right) => left.sortOrder - right.sortOrder);
     const createHref = createAgentPromptHref(work.publicPrompt);
     const base = siteMetadataBase();
@@ -103,15 +125,7 @@ export default async function SharePage({ params }: SharePageProps) {
         <main className="app-scroll-page bg-[#f7f8fa] text-[#20242a] dark:bg-[#0f1114] dark:text-[#f3f5f7]">
             {structuredData ? <script id="creative-work-json-ld" type="application/ld+json" dangerouslySetInnerHTML={{ __html: serializeStructuredData(structuredData) }} /> : null}
             <WorkViewTracker slug={work.slug} />
-            <header className="sticky top-0 z-20 border-b border-[#e3e6ea] bg-white/95 backdrop-blur-xl dark:border-[#292d33] dark:bg-[#0f1114]/95">
-                <div className="mx-auto flex h-14 w-full max-w-[1600px] items-center justify-between gap-3 px-3 sm:h-16 sm:px-6">
-                    <Link href="/" className="flex min-w-0 items-center gap-2.5 text-[#20242a] dark:text-[#f3f5f7]" aria-label={site.title}>
-                        <SiteLogo logoUrl={site.logoUrl || "/logo.svg"} className="size-7 sm:size-8" />
-                        <span className="truncate text-sm font-semibold sm:text-base">{site.title}</span>
-                    </Link>
-                    <GalleryThemeToggle />
-                </div>
-            </header>
+            <ShareHeader site={site} />
 
             <div className="mx-auto w-full max-w-[1600px] px-3 pb-10 pt-3 sm:px-6 sm:pb-16 sm:pt-4">
                 <section className="flex min-w-0 flex-col gap-3 border-b border-border pb-3 sm:flex-row sm:items-center sm:justify-between sm:pb-4">
@@ -216,4 +230,22 @@ function sourceTypeLabel(sourceType: "media" | "canvas" | "drama") {
 
 function formatPublishedDate(value: string) {
     return new Intl.DateTimeFormat("zh-CN", { year: "numeric", month: "long", day: "numeric" }).format(new Date(value));
+}
+
+function ShareHeader({ site }: { site: SiteSettings }) {
+    return (
+        <header className="sticky top-0 z-20 border-b border-[#e3e6ea] bg-white/95 backdrop-blur-xl dark:border-[#292d33] dark:bg-[#0f1114]/95">
+            <div className="mx-auto flex h-14 w-full max-w-[1600px] items-center justify-between gap-3 px-3 sm:h-16 sm:px-6">
+                <Link href="/" className="flex min-w-0 items-center gap-2.5 text-[#20242a] dark:text-[#f3f5f7]" aria-label={site.title}>
+                    <SiteLogo logoUrl={site.logoUrl || "/logo.svg"} className="size-7 sm:size-8" />
+                    <span className="truncate text-sm font-semibold sm:text-base">{site.title}</span>
+                </Link>
+                <GalleryThemeToggle />
+            </div>
+        </header>
+    );
+}
+
+function isPublicationUnavailable(error: unknown) {
+    return error instanceof WorkPublicationServiceError && error.status === 409 && error.message.includes("需要启用 PostgreSQL");
 }

@@ -1,4 +1,4 @@
-import { defaultConfig, type AiConfig } from "@/stores/use-config-store";
+import { defaultConfig, modelOptionName, selectableModelsByCapability, type AiConfig } from "@/stores/use-config-store";
 import type { CanvasAudioSettingKey } from "../components/canvas-audio-settings-popover";
 import type { CanvasGenerationMode, CanvasNodeData } from "../types";
 
@@ -18,6 +18,19 @@ export function buildCanvasNodeConfig(globalConfig: AiConfig, node: CanvasNodeDa
         audioInstructions: node.metadata?.audioInstructions || defaultConfig.audioInstructions,
         count: String(node.metadata?.count || (mode === "image" ? globalConfig.canvasImageCount || globalConfig.count : globalConfig.count) || defaultConfig.count),
     };
+}
+
+export function resolveCanvasGenerationModel(config: AiConfig, mode: CanvasGenerationMode, currentModel = "") {
+    const models = selectableModelsByCapability(config, mode);
+    const current = findModelOption(models, currentModel);
+    if (current) return current;
+    const preferred = mode === "image" ? config.imageModel : mode === "video" ? config.videoModel : mode === "audio" ? config.audioModel : config.textModel;
+    return findModelOption(models, preferred) || models[0] || "";
+}
+
+function findModelOption(options: string[], value: string) {
+    const normalized = modelOptionName(value).trim().toLowerCase();
+    return normalized ? options.find((option) => modelOptionName(option).trim().toLowerCase() === normalized) || "" : "";
 }
 
 export function canvasVideoConfigPatch(key: keyof AiConfig, value: string) {

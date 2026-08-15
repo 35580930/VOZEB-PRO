@@ -1,6 +1,6 @@
 {
   "name": "vozeb-pro-docs",
-  "version": "0.0.5",
+  "version": "0.0.6",
   "private": true,
   "scripts": {
     "build": "next build",
@@ -11,11 +11,11 @@
     "postinstall": "npm run generate:source"
   },
   "dependencies": {
-    "fumadocs-core": "16.14.0",
-    "fumadocs-mdx": "15.2.1",
-    "fumadocs-ui": "16.14.0",
-    "lucide-react": "^1.28.0",
-    "next": "16.2.12",
+    "fumadocs-core": "16.14.3",
+    "fumadocs-mdx": "15.2.3",
+    "fumadocs-ui": "16.14.3",
+    "lucide-react": "^1.31.0",
+    "next": "16.3.0",
     "react": "^19.2.8",
     "react-dom": "^19.2.8",
     "tailwind-merge": "^3.6.0",
@@ -27,7 +27,7 @@
     "@types/node": "^25.9.1",
     "@types/react": "^19.2.18",
     "@types/react-dom": "^19.2.4",
-    "postcss": "8.5.25",
+    "postcss": "8.5.26",
     "tailwindcss": "^4.3.3",
     "typescript": "^6.0.3"
   }

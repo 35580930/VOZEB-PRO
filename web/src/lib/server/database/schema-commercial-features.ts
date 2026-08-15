@@ -102,6 +102,7 @@ CREATE INDEX IF NOT EXISTS billing_orders_status_created_idx ON billing_orders (
 CREATE INDEX IF NOT EXISTS billing_orders_created_idx ON billing_orders (created_at DESC);
 CREATE INDEX IF NOT EXISTS billing_orders_pending_expires_idx ON billing_orders (expires_at, id) WHERE status = 'pending' AND expires_at IS NOT NULL;
 CREATE INDEX IF NOT EXISTS billing_orders_provider_idx ON billing_orders (provider, provider_order_id);
+CREATE INDEX IF NOT EXISTS billing_orders_provider_payment_idx ON billing_orders (provider, provider_payment_id);
 
 ALTER TABLE billing_orders ADD COLUMN IF NOT EXISTS product_id text REFERENCES billing_products(id);
 ALTER TABLE billing_orders ADD COLUMN IF NOT EXISTS product_kind text NOT NULL DEFAULT 'plan';
@@ -206,7 +207,6 @@ CREATE TABLE IF NOT EXISTS billing_refund_jobs (
     status text NOT NULL DEFAULT 'pending',
     provider_refund_id text,
     attempts integer NOT NULL DEFAULT 0,
-    max_attempts integer NOT NULL DEFAULT 8,
     next_attempt_at timestamptz,
     last_error text,
     raw_payload jsonb NOT NULL DEFAULT '{}'::jsonb,
@@ -216,7 +216,7 @@ CREATE TABLE IF NOT EXISTS billing_refund_jobs (
     created_at timestamptz NOT NULL DEFAULT now(),
     updated_at timestamptz NOT NULL DEFAULT now(),
     CONSTRAINT billing_refund_jobs_status CHECK (status IN ('pending', 'processing', 'compensating', 'completed', 'manual', 'failed')),
-    CONSTRAINT billing_refund_jobs_attempts CHECK (attempts >= 0 AND max_attempts > 0)
+    CONSTRAINT billing_refund_jobs_attempts CHECK (attempts >= 0)
 );
 
 CREATE INDEX IF NOT EXISTS billing_refund_jobs_due_idx ON billing_refund_jobs (next_attempt_at, lease_until, id) WHERE status IN ('pending', 'processing', 'compensating');

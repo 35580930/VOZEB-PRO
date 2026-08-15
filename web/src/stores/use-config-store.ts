@@ -11,7 +11,7 @@ import { inferModelCapability, normalizeModelId } from "@/lib/model-capability";
 import { materializeLogicalModelPointCosts } from "@/lib/model-point-cost";
 
 type ApiCallFormat = "openai" | "gemini";
-type SystemChannelProtocol = "auto" | "openai" | "sub2api" | "newapi" | "vozeb-recommended" | "globalaiopc" | "seedance" | "stable-diffusion" | "volcengine-video" | "seedance-special" | "custom" | "compatible";
+type SystemChannelProtocol = "auto" | "openai" | "yumeng" | "gemini" | "sub2api" | "newapi" | "vozeb-recommended" | "globalaiopc" | "seedance" | "stable-diffusion" | "volcengine-video" | "seedance-special" | "custom" | "compatible";
 
 type SystemChannelAdvancedConfig = {
     protocol: SystemChannelProtocol;
@@ -140,10 +140,6 @@ export type PublicSystemSettings = {
         videoSeconds?: number;
         audioVoice?: string;
         audioFormat?: string;
-        workbenchSmartPlanning?: {
-            image?: boolean;
-            video?: boolean;
-        };
     };
     defaultModels?: {
         imageModel?: string;
@@ -342,17 +338,22 @@ function normalizeMultiplierMap(settings: Record<string, unknown> | undefined, d
 
 function normalizeGenerationConcurrency(settings?: Partial<GenerationConcurrencySettings>) {
     return {
-        agent: clampInteger(settings?.agent, 1, 10, defaultConfig.generationConcurrency.agent),
-        image: clampInteger(settings?.image, 1, 10, defaultConfig.generationConcurrency.image),
-        video: clampInteger(settings?.video, 1, 5, defaultConfig.generationConcurrency.video),
-        audio: clampInteger(settings?.audio, 1, 10, defaultConfig.generationConcurrency.audio),
-        text: clampInteger(settings?.text, 1, 20, defaultConfig.generationConcurrency.text),
-        render: clampInteger(settings?.render, 1, 5, defaultConfig.generationConcurrency.render),
+        agent: positiveInteger(settings?.agent, defaultConfig.generationConcurrency.agent),
+        image: positiveInteger(settings?.image, defaultConfig.generationConcurrency.image),
+        video: positiveInteger(settings?.video, defaultConfig.generationConcurrency.video),
+        audio: positiveInteger(settings?.audio, defaultConfig.generationConcurrency.audio),
+        text: positiveInteger(settings?.text, defaultConfig.generationConcurrency.text),
+        render: positiveInteger(settings?.render, defaultConfig.generationConcurrency.render),
     };
 }
 
 function normalizeCanvasImageCount(value: unknown) {
-    return String(clampInteger(value, 1, 10, Number(defaultConfig.canvasImageCount) || 1));
+    return String(positiveInteger(value, Number(defaultConfig.canvasImageCount) || 1));
+}
+
+function positiveInteger(value: unknown, fallback: number) {
+    const numberValue = Number(value);
+    return Number.isSafeInteger(numberValue) && numberValue > 0 ? numberValue : fallback;
 }
 
 function clampInteger(value: unknown, min: number, max: number, fallback: number) {

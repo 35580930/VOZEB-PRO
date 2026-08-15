@@ -1,8 +1,12 @@
 import { nanoid } from "nanoid";
 
 import type { CreateDramaProjectInput, DramaAssetProfile, DramaAssetReference, DramaEpisode, DramaNamedAsset, DramaProject, DramaShot, DramaShotContinuity, DramaUtterance, DramaVideoMode } from "@/lib/drama-project-contract";
+import { dramaRichContentToPlainText, normalizeDramaScriptRichContent } from "@/lib/drama-script-rich-content";
 import { normalizeDramaImageSize } from "@/lib/drama-image-size";
-import { createCreativeConversation, updateCreativeConversation } from "@/lib/server/creative-runtime-store";
+import { resolveDramaShotDuration } from "@/lib/server/drama-shot-config";
+import { listAgentRuns } from "@/lib/server/agent-run-store";
+import { CreativeEntityDeletionConflict, deleteDramaConversationAggregate } from "@/lib/server/creative-entity-deletion-store";
+import { createCreativeConversation, getCreativeConversation, listCreativeConversations, updateCreativeConversation } from "@/lib/server/creative-runtime-store";
 import { createDramaProject, deleteDramaProject, DramaProjectStoreError, findDramaProjectBySourceHandoffId, getDramaProject, listDramaProjectSummaries, updateDramaProject } from "@/lib/server/drama-project-store";
 import { createDramaProjectVersion, getDramaProjectVersion, listDramaProjectVersions } from "@/lib/server/drama-project-version-store";
 import { collectLocalMediaStorageKeys } from "@/lib/server/local-media-references";
@@ -24,7 +28,7 @@ export function listDramaProjectSummariesForUser(userId: string, input: { page?:
 }
 
 export async function getDramaProjectForUser(userId: string, id: string) {
-    const project = await getDramaProject(cleanText(id, 160), userId);
+    const project = await getDramaProject(cleanText(id), userId);
     if (!project) throw new DramaProjectServiceError("短剧项目不存在", 404);
     return project;
 }
@@ -94,23 +98,23 @@ export async function updateDramaProjectForUser(userId: string, id: string, valu
 }
 
 export async function listDramaProjectVersionsForUser(userId: string, id: string) {
-    await getDramaProjectForUser(userId, cleanText(id, 160));
-    return listDramaProjectVersions(userId, cleanText(id, 160));
+    await getDramaProjectForUser(userId, cleanText(id));
+    return listDramaProjectVersions(userId, cleanText(id));
 }
 
 export async function createDramaProjectVersionForUser(userId: string, id: string, value: unknown) {
-    const current = await getDramaProjectForUser(userId, cleanText(id, 160));
+    const current = await getDramaProjectForUser(userId, cleanText(id));
     const input = object(value);
     const snapshot = normalizeProject(input.snapshot, current);
     if (Buffer.byteLength(JSON.stringify(snapshot)) > MAX_PROJECT_BYTES) throw new DramaProjectServiceError("短剧版本数据过大", 413);
-    const reason = cleanText(input.reason, 200) || "手动保存版本";
+    const reason = cleanText(input.reason) || "手动保存版本";
     return createDramaProjectVersion(userId, current.id, reason, snapshot);
 }
 
 export async function restoreDramaProjectVersionForUser(userId: string, id: string, versionId: string) {
-    const projectId = cleanText(id, 160);
+    const projectId = cleanText(id);
     const current = await getDramaProjectForUser(userId, projectId);
-    const version = await getDramaProjectVersion(userId, projectId, cleanText(versionId, 160));
+    const version = await getDramaProjectVersion(userId, projectId, cleanText(versionId));
     if (!version) throw new DramaProjectServiceError("短剧版本不存在", 404);
     await createDramaProjectVersion(userId, projectId, "恢复前自动快照", current);
     try {
@@ -122,7 +126,7 @@ export async function restoreDramaProjectVersionForUser(userId: string, id: stri
 }
 
 export async function deleteDramaProjectForUser(userId: string, id: string) {
-    const projectId = cleanText(id, 160);
+    const projectId = cleanText(id);
     const current = await getDramaProject(projectId, userId);
     const deleted = await deleteDramaProject(userId, projectId);
     if (!deleted) throw new DramaProjectServiceError("短剧项目不存在", 404);
@@ -130,19 +134,54 @@ export async function deleteDramaProjectForUser(userId: string, id: string) {
     if (current) await deleteUserLocalMediaAssets(userId, collectLocalMediaStorageKeys(current));
 }
 
+export async function deleteDramaAgentConversationForUser(userId: string, projectIdValue: string, conversationIdValue: unknown) {
+    const project = await getDramaProjectForUser(userId, projectIdValue);
+    const conversationId = cleanText(conversationIdValue);
+    if (!conversationId) throw new DramaProjectServiceError("请选择要删除的对话", 400);
+    const conversation = await getCreativeConversation(conversationId, userId);
+    if (!conversation || conversation.surface !== "drama" || conversation.projectId !== project.id) throw new DramaProjectServiceError("Agent 对话与当前短剧项目不匹配", 409);
+
+    const activeRuns = await listAgentRuns({ userId, conversationId, surface: "drama", statuses: ["planning", "running", "paused"], limit: 1 });
+    if (activeRuns.length) throw new DramaProjectServiceError("运行中的对话需先停止任务再删除", 409);
+
+    let replacementConversationId: string | undefined;
+    let createdReplacement = false;
+    if (project.creativeConversationId === conversationId) {
+        const candidates = await listCreativeConversations(userId, { surface: "drama", source: "drama", projectId: project.id, status: "active", limit: 2 });
+        let replacement = candidates.find((item) => item.id !== conversationId);
+        if (!replacement) {
+            replacement = await createCreativeConversation(userId, { surface: "drama", source: "drama", projectId: project.id, title: "新对话" });
+            createdReplacement = true;
+        }
+        replacementConversationId = replacement.id;
+    }
+
+    let result: Awaited<ReturnType<typeof deleteDramaConversationAggregate>>;
+    try {
+        result = await deleteDramaConversationAggregate(userId, project.id, conversationId, replacementConversationId);
+    } catch (error) {
+        if (createdReplacement && replacementConversationId) await updateCreativeConversation(replacementConversationId, userId, { status: "archived" }).catch(() => null);
+        if (error instanceof CreativeEntityDeletionConflict) throw new DramaProjectServiceError(error.message, 409);
+        throw error;
+    }
+    await deleteUserLocalMediaAssets(userId, result.mediaStorageKeys);
+    const updatedProject = result.dramaProject || project;
+    return { deleted: result.deletedConversations > 0, activeConversationId: updatedProject.creativeConversationId || "", project: updatedProject };
+}
+
 function normalizeCreateInput(value: unknown): Required<Omit<CreateDramaProjectInput, "sourceAssets" | "sourceHandoffId">> & Pick<CreateDramaProjectInput, "sourceAssets" | "sourceHandoffId"> {
     const input = object(value);
-    const title = cleanText(input.title, 120);
+    const title = cleanText(input.title);
     if (!title) throw new DramaProjectServiceError("项目名称不能为空", 400);
     const ratio = input.ratio === undefined ? "9:16" : normalizeDramaImageSize(input.ratio);
     if (!ratio) throw new DramaProjectServiceError("短剧尺寸无效", 400);
     return {
         title,
-        sourceHandoffId: optionalText(input.sourceHandoffId, 160),
-        summary: cleanText(input.summary, 2000),
-        style: cleanText(input.style, 500) || "电影感国漫",
+        sourceHandoffId: optionalText(input.sourceHandoffId),
+        summary: cleanText(input.summary),
+        style: cleanText(input.style) || "电影感国漫",
         ratio,
-        initialScript: cleanText(input.initialScript, 100_000),
+        initialScript: cleanText(input.initialScript),
         sourceAssets: normalizeSourceAssets(input.sourceAssets),
         defaultVideoMode: videoMode(input.defaultVideoMode),
     };
@@ -151,26 +190,25 @@ function normalizeCreateInput(value: unknown): Required<Omit<CreateDramaProjectI
 export function normalizeProject(value: unknown, current: DramaProject): DramaProject {
     const input = object(value);
     const episodes = array(input.episodes)
-        .slice(0, 100)
         .map(normalizeEpisode)
         .filter((episode): episode is DramaEpisode => Boolean(episode));
     if (!episodes.length) throw new DramaProjectServiceError("短剧项目至少需要一集", 400);
-    const activeEpisodeId = cleanText(input.activeEpisodeId, 160);
+    const activeEpisodeId = cleanText(input.activeEpisodeId);
     const ratio = input.ratio === undefined ? normalizeDramaImageSize(current.ratio) : normalizeDramaImageSize(input.ratio);
     if (!ratio) throw new DramaProjectServiceError("短剧尺寸无效", 400);
     return {
         id: current.id,
         sourceHandoffId: current.sourceHandoffId,
-        title: cleanText(input.title, 120) || current.title,
-        summary: cleanText(input.summary, 2000),
-        style: cleanText(input.style, 500),
+        title: cleanText(input.title) || current.title,
+        summary: cleanText(input.summary),
+        style: cleanText(input.style),
         ratio,
         status: input.status === "archived" ? "archived" : "active",
         creativeConversationId: current.creativeConversationId,
         activeEpisodeId: episodes.some((episode) => episode.id === activeEpisodeId) ? activeEpisodeId : episodes[0].id,
-        characters: normalizeNamedAssets(input.characters, "character", 200, true),
-        scenes: normalizeNamedAssets(input.scenes, "scene", 200),
-        props: normalizeNamedAssets(input.props, "prop", 200),
+        characters: normalizeNamedAssets(input.characters, "character", true),
+        scenes: normalizeNamedAssets(input.scenes, "scene"),
+        props: normalizeNamedAssets(input.props, "prop"),
         clues: normalizeClues(input.clues),
         defaultVideoMode: videoMode(input.defaultVideoMode),
         episodes,
@@ -182,29 +220,32 @@ export function normalizeProject(value: unknown, current: DramaProject): DramaPr
 
 function normalizeEpisode(value: unknown): DramaEpisode | null {
     const input = object(value);
-    const id = cleanText(input.id, 160);
+    const id = cleanText(input.id);
     if (!id) return null;
     const render = object(input.renderTask);
     const renderStatus = render.status;
     const renderTask =
-        cleanText(render.id, 160) && ["pending", "running", "success", "error", "cancelled"].includes(String(renderStatus))
+        cleanText(render.id) && ["pending", "running", "success", "error", "cancelled"].includes(String(renderStatus))
             ? {
-                  id: cleanText(render.id, 160),
+                  id: cleanText(render.id),
                   status: renderStatus as "pending" | "running" | "success" | "error" | "cancelled",
                   result: stableUrl(object(render.result).url) ? { url: stableUrl(object(render.result).url) } : undefined,
-                  error: optionalText(render.error, 1000),
+                  error: optionalText(render.error),
               }
             : undefined;
+    const script = cleanText(input.script);
+    const scriptRichContent = normalizeDramaScriptRichContent(input.scriptRichContent);
     return {
         id,
-        title: cleanText(input.title, 120) || "未命名剧集",
-        script: cleanText(input.script, 100_000),
-        outline: cleanText(input.outline, 4000),
-        hook: cleanText(input.hook, 2000),
-        nextPreview: cleanText(input.nextPreview, 2000),
-        sourceRange: cleanText(input.sourceRange, 500),
+        title: cleanText(input.title) || "未命名剧集",
+        script: scriptRichContent ? dramaRichContentToPlainText(scriptRichContent).trim() : script,
+        scriptRichContent,
+        outline: cleanText(input.outline),
+        hook: cleanText(input.hook),
+        nextPreview: cleanText(input.nextPreview),
+        sourceRange: cleanText(input.sourceRange),
         reviewStatus: reviewStatus(input.reviewStatus),
-        shots: array(input.shots).slice(0, 500).map(normalizeShot),
+        shots: array(input.shots).map(normalizeShot),
         renderTask,
         visualReview: normalizeVisualReview(input.visualReview),
     };
@@ -214,27 +255,25 @@ function normalizeVisualReview(value: unknown): DramaEpisode["visualReview"] {
     const input = object(value);
     const mode = input.mode === "visual" || input.mode === "text" || input.mode === "unavailable" ? input.mode : null;
     const status = input.status === "passed" || input.status === "needs_revision" || input.status === "unavailable" ? input.status : null;
-    const summary = cleanText(input.summary, 1200);
+    const summary = cleanText(input.summary);
     if (!mode || !status || !summary) return undefined;
     const scoreValue = Number(input.score);
-    const issues = array(input.issues)
-        .slice(0, 8)
-        .flatMap((item) => {
-            const issue = object(item);
-            const category = cleanText(issue.category, 80);
-            const message = cleanText(issue.message, 500);
-            if (!category || !message) return [];
-            const severity: "low" | "medium" | "high" = issue.severity === "high" || issue.severity === "medium" ? issue.severity : "low";
-            return [
-                {
-                    taskId: optionalText(issue.taskId, 160),
-                    category,
-                    severity,
-                    message,
-                    correction: optionalText(issue.correction, 500),
-                },
-            ];
-        });
+    const issues = array(input.issues).flatMap((item) => {
+        const issue = object(item);
+        const category = cleanText(issue.category);
+        const message = cleanText(issue.message);
+        if (!category || !message) return [];
+        const severity: "low" | "medium" | "high" = issue.severity === "high" || issue.severity === "medium" ? issue.severity : "low";
+        return [
+            {
+                taskId: optionalText(issue.taskId),
+                category,
+                severity,
+                message,
+                correction: optionalText(issue.correction),
+            },
+        ];
+    });
     return {
         mode,
         status,
@@ -248,74 +287,72 @@ function normalizeVisualReview(value: unknown): DramaEpisode["visualReview"] {
 function normalizeShot(value: unknown, index: number): DramaShot {
     const input = object(value);
     return {
-        id: cleanText(input.id, 160) || `shot-${nanoid()}`,
+        id: cleanText(input.id) || `shot-${nanoid()}`,
         order: Math.max(1, Math.floor(Number(input.order) || index + 1)),
-        title: cleanText(input.title, 160) || `镜头 ${index + 1}`,
-        description: cleanText(input.description, 4000),
-        sourceText: cleanText(input.sourceText, 8000),
-        shotBoundary: cleanText(input.shotBoundary, 500),
-        dialogue: cleanText(input.dialogue, 4000),
-        narration: cleanText(input.narration, 4000),
+        title: cleanText(input.title) || `镜头 ${index + 1}`,
+        description: cleanText(input.description),
+        sourceText: cleanText(input.sourceText),
+        shotBoundary: cleanText(input.shotBoundary),
+        dialogue: cleanText(input.dialogue),
+        narration: cleanText(input.narration),
         utterances: normalizeUtterances(input.utterances),
-        imagePrompt: cleanText(input.imagePrompt, 8000),
-        videoPrompt: cleanText(input.videoPrompt, 8000),
-        cameraMotion: cleanText(input.cameraMotion, 2000),
-        startFramePrompt: optionalText(input.startFramePrompt, 8000),
-        endFramePrompt: optionalText(input.endFramePrompt, 8000),
-        negativePrompt: optionalText(input.negativePrompt, 2000),
+        imagePrompt: cleanText(input.imagePrompt),
+        videoPrompt: cleanText(input.videoPrompt),
+        cameraMotion: cleanText(input.cameraMotion),
+        startFramePrompt: optionalText(input.startFramePrompt),
+        endFramePrompt: optionalText(input.endFramePrompt),
+        negativePrompt: optionalText(input.negativePrompt),
         continuity: normalizeContinuity(input.continuity),
-        duration: Math.max(1, Math.min(20, Number(input.duration) || 5)),
+        duration: resolveDramaShotDuration(input.duration, 5),
         characterIds: array(input.characterIds)
-            .map((id) => cleanText(id, 160))
-            .filter(Boolean)
-            .slice(0, 50),
+            .map((id) => cleanText(id))
+            .filter(Boolean),
         propIds: ids(input.propIds),
         clueIds: ids(input.clueIds),
-        sceneId: optionalText(input.sceneId, 160),
+        sceneId: optionalText(input.sceneId),
         videoMode: videoMode(input.videoMode),
         storyboardFrameMode: input.storyboardFrameMode === "first_last" ? "first_last" : "single",
         storyboardStatus: taskStatus(input.storyboardStatus),
         storyboardAttempt: optionalPositiveInteger(input.storyboardAttempt),
-        storyboardTaskId: optionalText(input.storyboardTaskId, 160),
-        storyboardError: optionalText(input.storyboardError, 1000),
+        storyboardTaskId: optionalText(input.storyboardTaskId),
+        storyboardError: optionalText(input.storyboardError),
         storyboardImageUrl: stableUrl(input.storyboardImageUrl),
         storyboardImageWidth: optionalPositiveInteger(input.storyboardImageWidth),
         storyboardImageHeight: optionalPositiveInteger(input.storyboardImageHeight),
         storyboardEndStatus: taskStatus(input.storyboardEndStatus),
         storyboardEndAttempt: optionalPositiveInteger(input.storyboardEndAttempt),
-        storyboardEndTaskId: optionalText(input.storyboardEndTaskId, 160),
-        storyboardEndError: optionalText(input.storyboardEndError, 1000),
+        storyboardEndTaskId: optionalText(input.storyboardEndTaskId),
+        storyboardEndError: optionalText(input.storyboardEndError),
         storyboardEndImageUrl: stableUrl(input.storyboardEndImageUrl),
         storyboardEndImageWidth: optionalPositiveInteger(input.storyboardEndImageWidth),
         storyboardEndImageHeight: optionalPositiveInteger(input.storyboardEndImageHeight),
         generationStatus: taskStatus(input.generationStatus),
         generationAttempt: optionalPositiveInteger(input.generationAttempt),
-        generationTaskId: optionalText(input.generationTaskId, 160),
-        generationError: optionalText(input.generationError, 1000),
+        generationTaskId: optionalText(input.generationTaskId),
+        generationError: optionalText(input.generationError),
         videoUrl: stableUrl(input.videoUrl),
-        subtitle: optionalText(input.subtitle, 4000),
+        subtitle: optionalText(input.subtitle),
         audioMode: input.audioMode === "voiceover" || input.audioMode === "mute" ? input.audioMode : "source",
         audioStatus: taskStatus(input.audioStatus),
         audioAttempt: optionalPositiveInteger(input.audioAttempt),
-        audioTaskId: optionalText(input.audioTaskId, 160),
-        audioError: optionalText(input.audioError, 1000),
+        audioTaskId: optionalText(input.audioTaskId),
+        audioError: optionalText(input.audioError),
         audioUrl: stableUrl(input.audioUrl),
     };
 }
 
-function normalizeNamedAssets(value: unknown, prefix: string, limit: number, character = false): DramaNamedAsset[] {
+function normalizeNamedAssets(value: unknown, prefix: string, character = false): DramaNamedAsset[] {
     return array(value)
-        .slice(0, limit)
         .map((item) => {
             const input = object(item);
-            const id = cleanText(input.id, 160) || `${prefix}-${nanoid()}`;
+            const id = cleanText(input.id) || `${prefix}-${nanoid()}`;
             const references = normalizeAssetReferences(input.references, id, input.referenceImageUrl, input.referenceStorageKey);
             const primaryReferenceId = references.some((reference) => reference.id === input.primaryReferenceId) ? String(input.primaryReferenceId) : references[0]?.id;
             const primaryReference = references.find((reference) => reference.id === primaryReferenceId);
             return {
                 id,
-                name: cleanText(input.name, 120),
-                description: cleanText(input.description, 2000),
+                name: cleanText(input.name),
+                description: cleanText(input.description),
                 profile: normalizeAssetProfile(input.profile),
                 references,
                 primaryReferenceId,
@@ -328,105 +365,99 @@ function normalizeNamedAssets(value: unknown, prefix: string, limit: number, cha
 }
 
 function normalizeClues(value: unknown) {
-    return array(value)
-        .slice(0, 200)
-        .flatMap((item) => {
-            const input = object(item);
-            const name = cleanText(input.name, 120);
-            if (!name) return [];
-            const id = cleanText(input.id, 160) || `clue-${nanoid()}`;
-            const references = normalizeAssetReferences(input.references, id, input.referenceImageUrl, input.referenceStorageKey);
-            const primaryReferenceId = references.some((reference) => reference.id === input.primaryReferenceId) ? String(input.primaryReferenceId) : references[0]?.id;
-            const primaryReference = references.find((reference) => reference.id === primaryReferenceId);
-            return [
-                {
-                    id,
-                    name,
-                    description: cleanText(input.description, 2000),
-                    profile: normalizeAssetProfile(input.profile),
-                    references,
-                    primaryReferenceId,
-                    payoff: cleanText(input.payoff, 2000),
-                    referenceImageUrl: primaryReference?.url,
-                    referenceStorageKey: primaryReference?.storageKey,
-                },
-            ];
-        });
+    return array(value).flatMap((item) => {
+        const input = object(item);
+        const name = cleanText(input.name);
+        if (!name) return [];
+        const id = cleanText(input.id) || `clue-${nanoid()}`;
+        const references = normalizeAssetReferences(input.references, id, input.referenceImageUrl, input.referenceStorageKey);
+        const primaryReferenceId = references.some((reference) => reference.id === input.primaryReferenceId) ? String(input.primaryReferenceId) : references[0]?.id;
+        const primaryReference = references.find((reference) => reference.id === primaryReferenceId);
+        return [
+            {
+                id,
+                name,
+                description: cleanText(input.description),
+                profile: normalizeAssetProfile(input.profile),
+                references,
+                primaryReferenceId,
+                payoff: cleanText(input.payoff),
+                referenceImageUrl: primaryReference?.url,
+                referenceStorageKey: primaryReference?.storageKey,
+            },
+        ];
+    });
 }
 
 function normalizeAssetProfile(value: unknown): DramaAssetProfile {
     const input = object(value);
     return {
-        visualIdentity: cleanText(input.visualIdentity, 2000),
-        styling: cleanText(input.styling, 2000),
-        colorPalette: cleanText(input.colorPalette, 500),
-        consistencyRules: cleanText(input.consistencyRules, 2000),
+        visualIdentity: cleanText(input.visualIdentity),
+        styling: cleanText(input.styling),
+        colorPalette: cleanText(input.colorPalette),
+        consistencyRules: cleanText(input.consistencyRules),
     };
 }
 
 function normalizeAssetReferences(value: unknown, assetId: string, legacyUrl: unknown, legacyStorageKey: unknown): DramaAssetReference[] {
-    const references = array(value)
-        .slice(0, 12)
-        .flatMap((item, index) => {
-            const input = object(item);
-            const url = stableUrl(input.url);
-            if (!url) return [];
-            const source: DramaAssetReference["source"] = input.source === "generated" || input.source === "library" ? input.source : "upload";
-            return [
-                {
-                    id: cleanText(input.id, 160) || `${assetId}-reference-${index + 1}`,
-                    url,
-                    storageKey: optionalText(input.storageKey, 500),
-                    source,
-                    label: cleanText(input.label, 160) || `参考图 ${index + 1}`,
-                    width: optionalPositiveInteger(input.width),
-                    height: optionalPositiveInteger(input.height),
-                    createdAt: timestamp(input.createdAt) || new Date(0).toISOString(),
-                },
-            ];
-        });
+    const references = array(value).flatMap((item, index) => {
+        const input = object(item);
+        const url = stableUrl(input.url);
+        if (!url) return [];
+        const source: DramaAssetReference["source"] = input.source === "generated" || input.source === "library" ? input.source : "upload";
+        return [
+            {
+                id: cleanText(input.id) || `${assetId}-reference-${index + 1}`,
+                url,
+                storageKey: optionalText(input.storageKey),
+                source,
+                label: cleanText(input.label) || `参考图 ${index + 1}`,
+                width: optionalPositiveInteger(input.width),
+                height: optionalPositiveInteger(input.height),
+                createdAt: timestamp(input.createdAt) || new Date(0).toISOString(),
+            },
+        ];
+    });
     const url = stableUrl(legacyUrl);
-    if (!references.length && url)
-        references.push({ id: `${assetId}-reference-legacy`, url, storageKey: optionalText(legacyStorageKey, 500), source: "library", label: "原参考图", width: undefined, height: undefined, createdAt: new Date(0).toISOString() });
+    if (!references.length && url) references.push({ id: `${assetId}-reference-legacy`, url, storageKey: optionalText(legacyStorageKey), source: "library", label: "原参考图", width: undefined, height: undefined, createdAt: new Date(0).toISOString() });
     return references;
 }
 
 function normalizeVoiceProfile(value: unknown) {
     const input = object(value);
     return {
-        voice: cleanText(input.voice, 160),
+        voice: cleanText(input.voice),
         speed: Math.max(0.25, Math.min(4, Number(input.speed) || 1)),
-        instructions: cleanText(input.instructions, 1000),
+        instructions: cleanText(input.instructions),
     };
 }
 
 function normalizeContinuity(value: unknown): DramaShotContinuity {
     const input = object(value);
     return {
-        shotSize: cleanText(input.shotSize, 120),
-        cameraAngle: cleanText(input.cameraAngle, 200),
-        composition: cleanText(input.composition, 500),
-        characterBlocking: cleanText(input.characterBlocking, 1200),
-        gazeDirection: cleanText(input.gazeDirection, 500),
-        actionStart: cleanText(input.actionStart, 1200),
-        actionEnd: cleanText(input.actionEnd, 1200),
-        screenDirection: cleanText(input.screenDirection, 500),
-        axisRule: cleanText(input.axisRule, 500),
-        continuityNotes: cleanText(input.continuityNotes, 1200),
+        shotSize: cleanText(input.shotSize),
+        cameraAngle: cleanText(input.cameraAngle),
+        composition: cleanText(input.composition),
+        characterBlocking: cleanText(input.characterBlocking),
+        gazeDirection: cleanText(input.gazeDirection),
+        actionStart: cleanText(input.actionStart),
+        actionEnd: cleanText(input.actionEnd),
+        screenDirection: cleanText(input.screenDirection),
+        axisRule: cleanText(input.axisRule),
+        continuityNotes: cleanText(input.continuityNotes),
     };
 }
 
 function normalizeUtterances(value: unknown): DramaUtterance[] {
     return array(value)
-        .slice(0, 100)
         .map((item, index) => {
             const input = object(item);
             return {
-                id: cleanText(input.id, 160) || `utterance-${nanoid()}`,
+                id: cleanText(input.id) || `utterance-${nanoid()}`,
                 order: Math.max(1, Math.floor(Number(input.order) || index + 1)),
                 type: input.type === "voiceover" ? "voiceover" : "dialogue",
-                speaker: cleanText(input.speaker, 120),
-                text: cleanText(input.text, 4000),
+                speaker: cleanText(input.speaker),
+                text: cleanText(input.text),
             } as DramaUtterance;
         })
         .filter((item) => item.text);
@@ -434,9 +465,8 @@ function normalizeUtterances(value: unknown): DramaUtterance[] {
 
 function ids(value: unknown) {
     return array(value)
-        .map((id) => cleanText(id, 160))
-        .filter(Boolean)
-        .slice(0, 50);
+        .map((id) => cleanText(id))
+        .filter(Boolean);
 }
 
 function reviewStatus(value: unknown): DramaEpisode["reviewStatus"] {
@@ -448,24 +478,22 @@ function videoMode(value: unknown): DramaVideoMode {
 }
 
 function normalizeSourceAssets(value: unknown) {
-    return array(value)
-        .slice(0, 100)
-        .map((item) => {
-            const asset = object(item);
-            const type = ["text", "image", "video", "audio"].includes(String(asset.type)) ? (asset.type as "text" | "image" | "video" | "audio") : "text";
-            return {
-                id: cleanText(asset.id, 160) || `source-${nanoid()}`,
-                type,
-                title: cleanText(asset.title, 160) || "创作素材",
-                textContent: type === "text" ? optionalText(asset.textContent, 100_000) : undefined,
-                storageKey: optionalText(asset.storageKey, 500),
-                remoteUrl: stableUrl(asset.remoteUrl),
-                serverUrl: stableUrl(asset.serverUrl),
-                mimeType: optionalText(asset.mimeType, 120),
-                width: optionalPositiveInteger(asset.width),
-                height: optionalPositiveInteger(asset.height),
-            };
-        });
+    return array(value).map((item) => {
+        const asset = object(item);
+        const type = ["text", "image", "video", "audio"].includes(String(asset.type)) ? (asset.type as "text" | "image" | "video" | "audio") : "text";
+        return {
+            id: cleanText(asset.id) || `source-${nanoid()}`,
+            type,
+            title: cleanText(asset.title) || "创作素材",
+            textContent: type === "text" ? optionalText(asset.textContent) : undefined,
+            storageKey: optionalText(asset.storageKey),
+            remoteUrl: stableUrl(asset.remoteUrl),
+            serverUrl: stableUrl(asset.serverUrl),
+            mimeType: optionalText(asset.mimeType),
+            width: optionalPositiveInteger(asset.width),
+            height: optionalPositiveInteger(asset.height),
+        };
+    });
 }
 
 function taskStatus(value: unknown) {
@@ -478,16 +506,16 @@ function optionalPositiveInteger(value: unknown) {
 }
 
 function stableUrl(value: unknown) {
-    const text = cleanText(value, 4000);
+    const text = cleanText(value);
     return text && !text.startsWith("data:") && !text.startsWith("blob:") ? text : undefined;
 }
 
-function optionalText(value: unknown, max: number) {
-    return cleanText(value, max) || undefined;
+function optionalText(value: unknown) {
+    return cleanText(value) || undefined;
 }
 
-function cleanText(value: unknown, max: number) {
-    return typeof value === "string" ? value.trim().slice(0, max) : "";
+function cleanText(value: unknown) {
+    return typeof value === "string" ? value.trim() : "";
 }
 
 function parseTimestamp(value: unknown) {

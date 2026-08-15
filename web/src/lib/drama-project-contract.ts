@@ -137,6 +137,7 @@ export type DramaEpisode = {
     id: string;
     title: string;
     script: string;
+    scriptRichContent?: import("@/lib/drama-script-rich-content").DramaScriptRichContent;
     outline: string;
     hook: string;
     nextPreview: string;

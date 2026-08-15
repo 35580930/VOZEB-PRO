@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { emptyDb } from "@/lib/auth/store-normalizers";
+import type { StoredUser } from "@/lib/auth/store-types";
 
 import type { AdminBackupData } from "./admin-backup-store";
 
@@ -148,7 +149,7 @@ function emptyBackup(): AdminBackupData {
     };
 }
 
-function storedUser(id: string, pointsBalance: number) {
+function storedUser(id: string, pointsBalance: number): StoredUser {
     return {
         id,
         accountId: id === "user-a" ? "1" : "2",
@@ -157,6 +158,7 @@ function storedUser(id: string, pointsBalance: number) {
         displayName: id,
         bio: "",
         role: id === "user-a" ? ("admin" as const) : ("user" as const),
+        adminPermissions: id === "user-a" ? ["system.manage"] : [],
         status: "active" as const,
         planId: "free",
         pointsBalance,

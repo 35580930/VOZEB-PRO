@@ -37,8 +37,6 @@ import {
     type AnnouncementPage,
     type AnnouncementPageInput,
     type SiteSettings,
-    type SiteShowcaseMode,
-    type SiteShowcaseItem,
     type SiteFriendLink,
     type SiteSocialKey,
     type SiteSocialSettings,
@@ -79,7 +77,6 @@ import {
     encryptAuthDbSecretsForStorage,
     decryptAuthSettingsSecrets,
     encryptAuthSettingsSecrets,
-    pruneExpiredSessions,
     resolveDefaultPlan,
     resolveUserPlan,
     assertEntitlementUsageAllowed,
@@ -101,8 +98,6 @@ import {
     normalizeFeatureList,
     normalizeGenerationConcurrency,
     normalizeSiteSettings,
-    normalizeSiteShowcaseItems,
-    normalizeShowcaseTags,
     normalizeSiteFriendLinks,
     normalizeSiteSocials,
     normalizeSiteSocial,
@@ -156,7 +151,7 @@ export function sessionMaxAgeSeconds() {
     return SESSION_MAX_AGE_SECONDS;
 }
 
-export { getAuthSettings, setAuthSettings } from "./store-settings-actions";
+export { getAuthSettings, getFreshAuthSettings, setAuthSettings } from "./store-settings-actions";
 
 export type PublicUserListResult = {
     users: PublicUser[];
@@ -229,21 +224,22 @@ export async function getPublicUsersByIds(userIds: string[]): Promise<PublicUser
     return db.users.filter((user) => idSet.has(user.id)).map((user) => toPublicUser(user, db));
 }
 
-export async function findPublicUserIdsByKeyword(value: string, limit = 100): Promise<string[]> {
+export async function findPublicUserIdsByKeyword(value: string, limit?: number): Promise<string[]> {
     const keyword = normalizeText(value, "", 120).toLowerCase();
     if (!keyword) return [];
-    const pageSize = Math.max(1, Math.min(100, Math.floor(limit)));
+    const requestedLimit = Number.isSafeInteger(limit) && Number(limit) > 0 ? Number(limit) : undefined;
     if (isPostgresDatabaseEnabled()) {
         await ensurePostgresSchema();
+        const pageSize = Math.min(100, requestedLimit || 100);
         const result = await createPostgresRepositories().users.list({ page: 1, pageSize, keyword });
         return result.items.map((user) => user.id);
     }
     const db = await readAuthDb();
-    return db.users
+    const matches = db.users
         .map((user) => toPublicUser(user, db))
         .filter((user) => matchesPublicUser(user, { keyword }))
-        .slice(0, pageSize)
         .map((user) => user.id);
+    return requestedLimit ? matches.slice(0, requestedLimit) : matches;
 }
 
 export type PointRecordListResult = {
@@ -390,14 +386,10 @@ export async function createCdkCodes(input: { count?: number; points?: number; m
             const now = new Date().toISOString();
             const created: CreatedCdkCode[] = [];
             for (let index = 0; index < count; index += 1) {
-                let code = generateCdkPlainCode();
-                let attempts = 0;
-                while ((await cdk.getByCodeHash(hashToken(normalizeCdkCode(code)))) && attempts < 8) {
-                    code = generateCdkPlainCode();
-                    attempts += 1;
-                }
+                const id = randomUUID();
+                const code = generateCdkPlainCode(id);
                 const publicCode: CreatedCdkCode = {
-                    id: randomUUID(),
+                    id,
                     codePreview: previewCdkCode(code),
                     code,
                     points,
@@ -424,14 +416,10 @@ export async function createCdkCodes(input: { count?: number; points?: number; m
         const now = new Date().toISOString();
         const created: CreatedCdkCode[] = [];
         for (let index = 0; index < count; index += 1) {
-            let code = generateCdkPlainCode();
-            let attempts = 0;
-            while (db.cdkCodes.some((item) => item.codeHash === hashToken(normalizeCdkCode(code))) && attempts < 8) {
-                code = generateCdkPlainCode();
-                attempts += 1;
-            }
+            const id = randomUUID();
+            const code = generateCdkPlainCode(id);
             const publicCode: PublicCdkCode = {
-                id: randomUUID(),
+                id,
                 codePreview: previewCdkCode(code),
                 code,
                 points,

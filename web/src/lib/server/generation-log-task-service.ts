@@ -4,7 +4,6 @@ import { createPostgresRepositories, ensurePostgresSchema, isPostgresDatabaseEna
 import { collectLocalMediaStorageKeys } from "@/lib/server/local-media-references";
 import { deleteUserLocalMediaAssets } from "@/lib/server/local-media-storage";
 import {
-    MAX_LOGS,
     defaultSummary,
     mutateGenerationLogDb,
     normalizeAssets,
@@ -123,7 +122,7 @@ async function mutateOwnedGenerationLog(id: string, userId: string, mutate: (cur
         if (current && current.userId !== userId) throw new GenerationLogOwnershipError();
         const next = await mutate(current);
         if (!next) return null;
-        db.logs = [next, ...db.logs.filter((log) => log.id !== id)].slice(0, MAX_LOGS);
+        db.logs = [next, ...db.logs.filter((log) => log.id !== id)];
         return next;
     });
 }

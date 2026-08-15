@@ -5,9 +5,11 @@ const mocks = vi.hoisted(() => ({
     getSettings: vi.fn(),
     saveSettings: vi.fn(),
     check: vi.fn(),
+    audit: vi.fn(),
 }));
 
 vi.mock("@/lib/auth/session", () => ({ getCurrentUser: mocks.user }));
+vi.mock("@/lib/server/audit-log-store", () => ({ auditActorFromRequest: vi.fn(() => ({ id: "admin" })), safeRecordAuditLog: mocks.audit }));
 vi.mock("@/lib/server/object-storage-config", () => ({
     getObjectStorageAdminSettings: mocks.getSettings,
     saveObjectStorageAdminSettings: mocks.saveSettings,
@@ -30,7 +32,7 @@ const settings = {
 describe("administrator object storage API", () => {
     beforeEach(() => {
         vi.clearAllMocks();
-        mocks.user.mockResolvedValue({ id: "admin", role: "admin" });
+        mocks.user.mockResolvedValue({ id: "admin", role: "admin", status: "active", adminPermissions: ["system.manage"] });
         mocks.getSettings.mockResolvedValue(settings);
         mocks.saveSettings.mockResolvedValue(settings);
     });
@@ -64,5 +66,13 @@ describe("administrator object storage API", () => {
 
         expect(response.status).toBe(200);
         expect(mocks.saveSettings).toHaveBeenCalledWith(expect.objectContaining({ enabled: true, accessKeyId: "new-access", secretAccessKey: "new-secret", forcePathStyle: true }));
+        expect(mocks.audit).toHaveBeenCalledWith(
+            expect.objectContaining({
+                action: "admin.object-storage.update",
+                target: { type: "object_storage", id: "primary" },
+                metadata: { enabled: true, forcePathStyle: true },
+            }),
+        );
+        expect(JSON.stringify(mocks.audit.mock.calls)).not.toContain("new-secret");
     });
 });

@@ -60,8 +60,8 @@ export function submitWorkAppeal(workId: string, input: { versionId: string; des
     return request<{ item: WorkGovernanceCase }>(`/api/works/${encodeURIComponent(workId)}/appeal`, jsonRequest(input)).then((data) => data.item);
 }
 
-export function listWorkAppeals(workId: string) {
-    return request<{ items: WorkGovernanceCase[] }>(`/api/works/${encodeURIComponent(workId)}/appeal`).then((data) => data.items);
+export function listWorkAppeals(workId: string, input: { page?: number; pageSize?: number } = {}) {
+    return request<WorkGovernanceCasePage>(`/api/works/${encodeURIComponent(workId)}/appeal?${searchParams(input)}`);
 }
 
 export function listAdminWorkCases(input: { page?: number; pageSize?: number; caseType?: WorkGovernanceCaseType; status?: WorkGovernanceCaseStatus; keyword?: string } = {}) {

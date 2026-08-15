@@ -6,10 +6,12 @@ import { usePathname } from "next/navigation";
 import { useState, type ReactNode } from "react";
 
 import { AppSidebar } from "@/components/layout/app-sidebar";
+import { isFullscreenWorkspacePath } from "@/components/layout/app-workspace-path";
 import { MobileNavDrawer } from "@/components/layout/mobile-nav-drawer";
 import { SiteLogo } from "@/components/layout/site-logo";
 import { UserStatusActions } from "@/components/layout/user-status-actions";
 import { navigationToolForPathname } from "@/constant/navigation-tools";
+import { DEFAULT_SITE_TITLE, resolveSiteTitle } from "@/lib/site-brand";
 import { usePublicSessionStore } from "@/stores/use-public-session-store";
 
 const PAGE_TITLES: Record<string, string> = {
@@ -21,20 +23,21 @@ const PAGE_TITLES: Record<string, string> = {
 export function AppWorkspaceShell({ children }: { children: ReactNode }) {
     const pathname = usePathname();
     const [mobileNavOpen, setMobileNavOpen] = useState(false);
-    const [sidebarExpanded, setSidebarExpanded] = useState(false);
-    const site = usePublicSessionStore((state) => state.payload?.settings?.site) || { title: "MOCREAI", logoUrl: "/logo.svg" };
+    const [sidebarExpanded, setSidebarExpanded] = useState(true);
+    const site = usePublicSessionStore((state) => state.payload?.settings?.site) || { title: DEFAULT_SITE_TITLE, logoUrl: "/logo.svg" };
+    const siteTitle = resolveSiteTitle(site.title);
     const tool = navigationToolForPathname(pathname);
-    const fullscreen = /^\/canvas\/[^/]+/.test(pathname);
+    const fullscreen = isFullscreenWorkspacePath(pathname);
     const rootSlug = pathname.split("/").filter(Boolean)[0] || "";
     const pageTitle = tool?.label || PAGE_TITLES[rootSlug] || "工作空间";
 
     if (fullscreen) return <div className="h-dvh min-h-0 overflow-hidden">{children}</div>;
 
     return (
-        <div className="workspace-shell flex h-dvh min-h-0 overflow-hidden bg-[#fafbfc] text-foreground dark:bg-[#111316]">
+        <div className="workspace-shell flex h-dvh min-h-0 overflow-hidden bg-white text-foreground dark:bg-[#111316]">
             <AppSidebar activeToolSlug={tool?.slug} expanded={sidebarExpanded} />
             <div className="flex min-w-0 flex-1 flex-col overflow-hidden">
-                <header className="flex h-[60px] shrink-0 items-center justify-between gap-3 border-b border-[#e8ebef] bg-white/95 px-3 backdrop-blur-xl sm:px-4 lg:px-5 dark:border-[#292d33] dark:bg-[#111316]/95">
+                <header className="flex h-16 shrink-0 items-center justify-between gap-3 border-b border-[#eaecf0] bg-white/96 px-3 backdrop-blur-xl sm:px-4 lg:px-7 dark:border-[#292d33] dark:bg-[#111316]/95">
                     <div className="flex min-w-0 items-center gap-2.5">
                         <button
                             type="button"
@@ -45,7 +48,7 @@ export function AppWorkspaceShell({ children }: { children: ReactNode }) {
                         >
                             <Menu className="size-5" />
                         </button>
-                        <Link href="/create" className="inline-flex shrink-0 items-center lg:hidden" aria-label={site.title || "MOCREAI"}>
+                        <Link href="/create" className="inline-flex shrink-0 items-center lg:hidden" aria-label={siteTitle}>
                             <SiteLogo logoUrl={site.logoUrl} className="size-6" />
                         </Link>
                         <button
@@ -66,7 +69,7 @@ export function AppWorkspaceShell({ children }: { children: ReactNode }) {
                         <UserStatusActions />
                     </div>
                 </header>
-                <div className="min-h-0 min-w-0 flex-1 overflow-hidden bg-[#fafbfc] dark:bg-[#111316]">{children}</div>
+                <div className="min-h-0 min-w-0 flex-1 overflow-hidden bg-white dark:bg-[#111316]">{children}</div>
             </div>
             <MobileNavDrawer open={mobileNavOpen} activeToolSlug={tool?.slug} onClose={() => setMobileNavOpen(false)} />
         </div>

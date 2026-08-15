@@ -99,6 +99,7 @@ export function createPostgresRepositories(executor: QueryExecutor = { query: po
             createOrder: billingOrder.createOrder.bind(billingOrder),
             getOrderById: billingOrder.getOrderById.bind(billingOrder),
             getOrderByOrderNo: billingOrder.getOrderByOrderNo.bind(billingOrder),
+            getOrderByProviderIdentifiers: billingOrder.getOrderByProviderIdentifiers.bind(billingOrder),
             listOrders: billingOrder.listOrders.bind(billingOrder),
             getSummary: billingOrder.getSummary.bind(billingOrder),
             expirePendingOrders: billingOrder.expirePendingOrders.bind(billingOrder),
@@ -106,6 +107,8 @@ export function createPostgresRepositories(executor: QueryExecutor = { query: po
             upsertPayment: billingPayment.upsertPayment.bind(billingPayment),
             updatePaymentState: billingPayment.updatePaymentState.bind(billingPayment),
             listPayments: billingPayment.listPayments.bind(billingPayment),
+            listPaymentsByOrderId: billingPayment.listPaymentsByOrderId.bind(billingPayment),
+            findOrderPayment: billingPayment.findOrderPayment.bind(billingPayment),
             lockPaymentIdentity: billingPayment.lockPaymentIdentity.bind(billingPayment),
             getPaymentByProviderIdentifiers: billingPayment.getPaymentByProviderIdentifiers.bind(billingPayment),
             getPaymentByProviderIdentifier: billingPayment.getPaymentByProviderIdentifier.bind(billingPayment),
@@ -116,6 +119,7 @@ export function createPostgresRepositories(executor: QueryExecutor = { query: po
             listReconciliationRows: billingPayment.listReconciliationRows.bind(billingPayment),
             createPlanAssignment: billingPayment.createPlanAssignment.bind(billingPayment),
             getActivePlanAssignment: billingPayment.getActivePlanAssignment.bind(billingPayment),
+            getPlanAssignmentBySource: billingPayment.getPlanAssignmentBySource.bind(billingPayment),
             listPlanAssignments: billingPayment.listPlanAssignments.bind(billingPayment),
             updatePlanAssignment: billingPayment.updatePlanAssignment.bind(billingPayment),
             upsertProviderEvent: billingPayment.upsertProviderEvent.bind(billingPayment),
@@ -170,49 +174,33 @@ class SettingsRepository {
     }
 
     async updateSettings(input: Partial<Omit<AppSettingsRecord, "id" | "createdAt" | "updatedAt">>) {
-        const row = await this.db.query(
-            `
-            UPDATE app_settings SET
-                site = COALESCE($1, site),
-                registration_enabled = COALESCE($2, registration_enabled),
-                email_registration_enabled = COALESCE($3, email_registration_enabled),
-                free_daily_points_enabled = COALESCE($4, free_daily_points_enabled),
-                mail = COALESCE($5, mail),
-                allow_user_api_config = COALESCE($6, allow_user_api_config),
-                model_point_costs = COALESCE($7, model_point_costs),
-                generation_point_multipliers = COALESCE($8, generation_point_multipliers),
-                entitlements_enabled = COALESCE($9, entitlements_enabled),
-                default_plan_id = COALESCE($10, default_plan_id),
-                generation_concurrency = COALESCE($11, generation_concurrency),
-                generation_defaults = COALESCE($12, generation_defaults),
-                payment_config = COALESCE($13, payment_config),
-                logical_models = COALESCE($14, logical_models),
-                default_models = COALESCE($15, default_models),
-                agent_skills = COALESCE($16, agent_skills),
-                free_daily_points = COALESCE($17, free_daily_points)
-            WHERE id = 'default'
-            RETURNING *
-            `,
-            [
-                jsonParam(input.site),
-                input.registrationEnabled,
-                input.emailRegistrationEnabled,
-                input.freeDailyPointsEnabled,
-                jsonParam(input.mail),
-                input.allowUserApiConfig,
-                jsonParam(input.modelPointCosts),
-                jsonParam(input.generationPointMultipliers),
-                input.entitlementsEnabled,
-                input.defaultPlanId,
-                jsonParam(input.generationConcurrency),
-                jsonParam(input.generationDefaults),
-                jsonParam(input.paymentConfig),
-                jsonParam(input.logicalModels),
-                jsonParam(input.defaultModels),
-                jsonParam(input.agentSkills),
-                input.freeDailyPoints,
-            ],
-        );
+        const assignments: string[] = [];
+        const values: unknown[] = [];
+        const add = (column: string, value: unknown) => {
+            values.push(value);
+            assignments.push(`${column} = $${values.length}`);
+        };
+        if (input.site !== undefined) add("site", jsonParam(input.site));
+        if (input.registrationEnabled !== undefined) add("registration_enabled", input.registrationEnabled);
+        if (input.emailRegistrationEnabled !== undefined) add("email_registration_enabled", input.emailRegistrationEnabled);
+        if (input.freeDailyPointsEnabled !== undefined) add("free_daily_points_enabled", input.freeDailyPointsEnabled);
+        if (input.mail !== undefined) add("mail", jsonParam(input.mail));
+        if (input.allowUserApiConfig !== undefined) add("allow_user_api_config", input.allowUserApiConfig);
+        if (input.modelPointCosts !== undefined) add("model_point_costs", jsonParam(input.modelPointCosts));
+        if (input.generationPointMultipliers !== undefined) add("generation_point_multipliers", jsonParam(input.generationPointMultipliers));
+        if (input.generationCostControl !== undefined) add("generation_cost_control", jsonParam(input.generationCostControl));
+        if (input.dataLifecycle !== undefined) add("data_lifecycle", jsonParam(input.dataLifecycle));
+        if (input.entitlementsEnabled !== undefined) add("entitlements_enabled", input.entitlementsEnabled);
+        if (input.defaultPlanId !== undefined) add("default_plan_id", input.defaultPlanId);
+        if (input.generationConcurrency !== undefined) add("generation_concurrency", jsonParam(input.generationConcurrency));
+        if (input.generationDefaults !== undefined) add("generation_defaults", jsonParam(input.generationDefaults));
+        if (input.paymentConfig !== undefined) add("payment_config", jsonParam(input.paymentConfig));
+        if (input.logicalModels !== undefined) add("logical_models", jsonParam(input.logicalModels));
+        if (input.defaultModels !== undefined) add("default_models", jsonParam(input.defaultModels));
+        if (input.agentSkills !== undefined) add("agent_skills", jsonParam(input.agentSkills));
+        if (input.freeDailyPoints !== undefined) add("free_daily_points", input.freeDailyPoints);
+        if (!assignments.length) throw new Error("Settings update requires at least one field");
+        const row = await this.db.query(`UPDATE app_settings SET ${assignments.join(", ")} WHERE id = 'default' RETURNING *`, values);
         return mapSettings(row.rows[0]);
     }
 
@@ -302,6 +290,8 @@ function mapSettings(row: Record<string, unknown>): AppSettingsRecord {
         allowUserApiConfig: row.allow_user_api_config === true,
         modelPointCosts: jsonValue(row.model_point_costs),
         generationPointMultipliers: jsonValue(row.generation_point_multipliers),
+        generationCostControl: jsonValue(row.generation_cost_control),
+        dataLifecycle: jsonValue(row.data_lifecycle),
         entitlementsEnabled: row.entitlements_enabled === true,
         defaultPlanId: stringValue(row.default_plan_id),
         generationConcurrency: jsonValue(row.generation_concurrency),

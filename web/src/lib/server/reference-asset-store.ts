@@ -1,15 +1,12 @@
 import { copyFile, mkdir, stat, unlink, writeFile } from "node:fs/promises";
 import { basename, dirname, resolve, sep } from "node:path";
 
-import { cleanupExpiredLocalMediaAssets, createDatedMediaPath, REFERENCE_MEDIA_ROOT } from "@/lib/server/local-media-storage";
-import { deleteLocalMediaRegistrations, getLocalMediaRegistration, registerLocalMediaAsset } from "@/lib/server/local-media-registry";
+import { createDatedMediaPath, REFERENCE_MEDIA_ROOT } from "@/lib/server/local-media-storage";
+import { getLocalMediaRegistration, registerLocalMediaAsset } from "@/lib/server/local-media-registry";
 import { persistExternalMediaIfEnabled } from "@/lib/server/object-storage-service";
 
 const REFERENCE_ASSET_TTL_MS = 24 * 60 * 60 * 1000;
-const CLEANUP_INTERVAL_MS = 60 * 1000;
 const MAX_REFERENCE_BYTES: Record<string, number> = { image: 20 * 1024 * 1024, video: 200 * 1024 * 1024, audio: 30 * 1024 * 1024 };
-let cleanupStartedAt = 0;
-let cleanupRequest: Promise<unknown> | null = null;
 
 type StoredReferenceAsset = {
     token: string;
@@ -43,7 +40,6 @@ export async function writePersistentMediaDataUrl(dataUrl: string, expectedType:
 }
 
 async function writeMediaDataUrl(dataUrl: string, expectedType: "image" | "video" | "audio", persistent: boolean, context: ReferenceMediaWriteContext): Promise<StoredReferenceAsset> {
-    scheduleExpiredMediaCleanup();
     const parsed = parseMediaDataUrl(dataUrl);
     if (!parsed || !parsed.mimeType.startsWith(`${expectedType}/`)) throw new Error("参考素材格式不正确");
     if (parsed.bytes.length > Math.min(context.maxBytes || MAX_REFERENCE_BYTES[expectedType], MAX_REFERENCE_BYTES[expectedType])) throw new Error(`参考${expectedType === "image" ? "图" : expectedType === "video" ? "视频" : "音频"}文件过大`);
@@ -65,7 +61,6 @@ async function writeMediaDataUrl(dataUrl: string, expectedType: "image" | "video
 }
 
 export async function writeReferenceMediaFile(sourcePath: string, expectedType: "video" | "audio", mimeType: string, persistent: boolean, context: ReferenceMediaWriteContext): Promise<StoredReferenceAsset> {
-    scheduleExpiredMediaCleanup();
     if (!mimeType.startsWith(`${expectedType}/`)) throw new Error("媒体文件格式不正确");
     const sourceStat = await stat(sourcePath);
     if (!sourceStat.isFile() || sourceStat.size <= 0 || sourceStat.size > Math.min(context.maxBytes || MAX_REFERENCE_BYTES[expectedType], MAX_REFERENCE_BYTES[expectedType]))
@@ -96,11 +91,6 @@ export async function readReferenceAsset(token: string) {
 
     try {
         const fileStat = await stat(filePath);
-        if (safeToken.startsWith("temporary/") && Date.now() - fileStat.mtimeMs > REFERENCE_ASSET_TTL_MS) {
-            await unlink(filePath).catch(() => undefined);
-            await deleteLocalMediaRegistrations([safeToken]).catch(() => undefined);
-            return null;
-        }
         return { filePath, size: fileStat.size, mimeType: mimeTypeFromToken(basename(safeToken)), mtimeMs: fileStat.mtimeMs, registration: await getLocalMediaRegistration(safeToken) };
     } catch {
         return null;
@@ -171,17 +161,6 @@ function mimeTypeFromToken(token: string) {
     if (lower.endsWith(".flac")) return "audio/flac";
     if (lower.endsWith(".mp3")) return "audio/mpeg";
     return "image/png";
-}
-
-function scheduleExpiredMediaCleanup() {
-    const now = Date.now();
-    if (cleanupRequest || now - cleanupStartedAt < CLEANUP_INTERVAL_MS) return;
-    cleanupStartedAt = now;
-    cleanupRequest = cleanupExpiredLocalMediaAssets()
-        .catch(() => undefined)
-        .finally(() => {
-            cleanupRequest = null;
-        });
 }
 
 export function isReferenceAssetPath(value: string) {

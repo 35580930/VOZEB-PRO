@@ -2,8 +2,9 @@ import { hostname } from "node:os";
 import { randomUUID } from "node:crypto";
 
 import { resolveGenerationWorkerOrigin } from "./generation-runtime.mjs";
+import { nextGenerationWorkerPollPolicy } from "./generation-worker-policy.mjs";
 
-const token = process.env.VOZEB_PRO_MAINTENANCE_TOKEN?.trim() || "";
+const token = process.env.VOZEB_PRO_WORKER_TOKEN?.trim() || "";
 const origin = resolveGenerationWorkerOrigin();
 const workerId = (process.env.VOZEB_PRO_GENERATION_WORKER_ID?.trim() || `generation-worker:${hostname()}:${process.pid}:${randomUUID()}`).slice(0, 150);
 const idleDelayMs = boundedNumber(process.env.VOZEB_PRO_GENERATION_WORKER_INTERVAL_MS, 2_000, 500, 30_000);
@@ -12,7 +13,7 @@ const heartbeatIntervalMs = boundedNumber(process.env.VOZEB_PRO_GENERATION_WORKE
 let stopping = false;
 let heartbeatPending = false;
 
-if (token.length < 32) throw new Error("VOZEB_PRO_MAINTENANCE_TOKEN must contain at least 32 characters");
+if (token.length < 32) throw new Error("VOZEB_PRO_WORKER_TOKEN must contain at least 32 characters");
 
 process.once("SIGTERM", stop);
 process.once("SIGINT", stop);
@@ -27,6 +28,7 @@ console.log("Generation worker stopped");
 async function runLane(index) {
     const laneId = `${workerId}:lane-${index}`;
     let consecutiveErrors = 0;
+    let idleBatches = 0;
     while (!stopping) {
         try {
             const response = await fetch(`${origin}/api/maintenance/generation-tasks/run`, {
@@ -41,7 +43,9 @@ async function runLane(index) {
             if (!response.ok) throw new Error(payload?.msg || `Worker endpoint returned HTTP ${response.status}`);
             consecutiveErrors = 0;
             const claimed = Number(payload?.data?.claimed || 0);
-            await delay(claimed > 0 ? 250 : idleDelayMs);
+            const policy = nextGenerationWorkerPollPolicy({ claimed, idleBatches, baseIdleDelayMs: idleDelayMs });
+            idleBatches = policy.idleBatches;
+            await delay(policy.delayMs);
         } catch (error) {
             if (stopping) break;
             consecutiveErrors += 1;

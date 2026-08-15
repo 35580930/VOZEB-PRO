@@ -1,38 +1,29 @@
 "use client";
 
-import { useEffect, useRef, useState, type ReactNode } from "react";
-import { App, Button, Empty, Progress, Tag } from "antd";
-import { Captions, Download, Film, ImageIcon, Pause, Play, RefreshCw, ScanSearch, Send, Volume2 } from "lucide-react";
+import { useEffect, useRef, useState } from "react";
+import { App, Button, Empty } from "antd";
+import { ArrowRight, History } from "lucide-react";
 import { useParams, useRouter } from "next/navigation";
 
 import { createImageGenerationTask, waitForImageGenerationTask } from "@/services/api/image";
 import { createServerVideoGenerationTask } from "@/services/api/video";
 import { syncUserPointsFromHeaders } from "@/services/api/points";
-import { exportDramaJianyingDraft, getDramaProjectCosts, reviewDramaEpisode } from "@/services/api/drama-projects";
 import { compileDramaShotPrompts } from "@/lib/drama-prompt-compiler";
-import { mediaDownloadFileName } from "@/lib/media-file";
-import { originalMediaDownloadUrl } from "@/lib/media-image-url";
 import { useEffectiveConfig } from "@/stores/use-config-store";
 import { useUserStore } from "@/stores/use-user-store";
 import { useDramaStore } from "../stores/use-drama-store";
-import type { DramaContentAnalysis, DramaCostSummary, DramaProject, DramaProjectVersion, DramaRenderTask, DramaShot, DramaVisualAnalysis } from "../types";
-import { buildSrt } from "../subtitle";
-import { cancelDramaAudioTask, useDramaAudioQueue } from "./use-drama-audio-queue";
+import type { DramaContentAnalysis, DramaProject, DramaProjectVersion, DramaVisualAnalysis } from "../types";
+import { useDramaAudioQueue } from "./use-drama-audio-queue";
 import { DramaAgentPanel } from "./drama-agent-panel";
 import { DramaAssetsPanel } from "./drama-assets-panel";
+import { DramaStageHeader, stableTaskUrl } from "./drama-editor-elements";
+import { DramaGenerationPanel } from "./drama-generation-panel";
 import { DramaReviewPanel } from "./drama-review-panel";
 import { DramaStoryboardShotCard } from "./drama-storyboard-shot-card";
-import { DramaJianyingModal, DramaSubtitleModal, DramaVersionModal } from "./drama-project-modals";
-import { DramaMediaPreviewModal, DramaMediaThumbnail, type DramaPreviewMedia } from "./drama-media-preview";
-import { dramaGenerationSize, estimateEpisodePoints, estimateTaskPoints, referenceImage, shotReferenceImages, storyboardReferenceImages } from "./drama-shot-generation-utils";
+import { DramaVersionModal } from "./drama-project-modals";
+import { dramaGenerationSize, estimateTaskPoints, referenceImage, shotReferenceImages, storyboardReferenceImages } from "./drama-shot-generation-utils";
 import { useGenerationCapacityRetry } from "./use-generation-capacity-retry";
-import { DramaProjectHeader, DramaScriptPanel, type DramaProjectStage } from "./drama-project-sections";
-
-function shotNeedsVoiceover(shot: DramaShot) {
-    return shot.audioMode === "voiceover" && Boolean((shot.subtitle || shot.dialogue || shot.narration).trim());
-}
-const generationActionButtonClass = "!h-9 !px-3 [&>span:last-child]:whitespace-nowrap";
-import { SectionTitle, GenerationTag, StoryboardTag, AudioTag, stableTaskUrl } from "./drama-editor-elements";
+import { DramaEpisodeSidebar, DramaScriptPanel, DramaWorkspaceHeader, type DramaProjectStage } from "./drama-project-sections";
 
 export default function DramaProjectPage() {
     const router = useRouter();
@@ -71,68 +62,46 @@ function DramaProjectEditor({ project }: { project: DramaProject }) {
     const updateProject = useDramaStore((state) => state.updateProject);
     const updateEpisode = useDramaStore((state) => state.updateEpisode);
     const updateShot = useDramaStore((state) => state.updateShot);
-    const queueShots = useDramaStore((state) => state.queueShots);
     const applyContentAnalysis = useDramaStore((state) => state.applyContentAnalysis);
     const applyVisualAnalysis = useDramaStore((state) => state.applyVisualAnalysis);
     const createVersion = useDramaStore((state) => state.createVersion);
     const listVersions = useDramaStore((state) => state.listVersions);
     const restoreVersion = useDramaStore((state) => state.restoreVersion);
-    const queueAudio = useDramaStore((state) => state.queueAudio);
     const config = useEffectiveConfig();
     const startingShotRef = useRef("");
     const storyboardTaskRef = useRef("");
     const [stage, setStage] = useState<DramaProjectStage>("script");
+    const [assetsOpen, setAssetsOpen] = useState(false);
+    const [episodeNavigatorOpen, setEpisodeNavigatorOpen] = useState(false);
+    const [agentOpen, setAgentOpen] = useState(false);
+    const [selectedShotId, setSelectedShotId] = useState<string>();
     const [analyzing, setAnalyzing] = useState(false);
     const [designing, setDesigning] = useState(false);
     const [versionsOpen, setVersionsOpen] = useState(false);
     const [versions, setVersions] = useState<DramaProjectVersion[]>([]);
     const [versionsLoading, setVersionsLoading] = useState(false);
-    const [costSummary, setCostSummary] = useState<DramaCostSummary | null>(null);
-    const [jianyingOpen, setJianyingOpen] = useState(false);
-    const [jianyingPath, setJianyingPath] = useState("");
-    const [jianyingVersion, setJianyingVersion] = useState<"5" | "6">("6");
-    const [jianyingExporting, setJianyingExporting] = useState(false);
-    const [subtitleOpen, setSubtitleOpen] = useState(false);
-    const [renderReady, setRenderReady] = useState<boolean | null>(null);
-    const [reviewingVisuals, setReviewingVisuals] = useState(false);
     const [expandedStoryboardShotId, setExpandedStoryboardShotId] = useState("");
-    const [previewMedia, setPreviewMedia] = useState<DramaPreviewMedia>();
     const { isWaiting: isCapacityWaiting, schedule: scheduleCapacityRetry } = useGenerationCapacityRetry();
     const audioReady = Boolean(config.audioModel.trim());
+    const changeStage = (nextStage: DramaProjectStage) => {
+        setStage(nextStage);
+        setAssetsOpen(false);
+    };
 
     const episode = project.episodes.find((item) => item.id === project.activeEpisodeId) || project.episodes[0];
-    const renderTask = episode.renderTask || null;
-    useDramaAudioQueue(project, episode, config, updateShot);
     useEffect(() => {
-        if (stage !== "generate" || renderReady !== null) return;
-        void fetch("/api/drama/render-capability", { cache: "no-store" })
-            .then((response) => response.json())
-            .then((payload: { data?: { available?: boolean } }) => setRenderReady(Boolean(payload.data?.available)))
-            .catch(() => setRenderReady(false));
-    }, [renderReady, stage]);
-    useEffect(() => {
-        if (stage !== "generate") return;
-        let active = true;
-        const load = () =>
-            void getDramaProjectCosts(project.id)
-                .then((value) => active && setCostSummary(value))
-                .catch(() => active && setCostSummary(null));
-        load();
-        const timer = window.setInterval(load, 5000);
-        return () => {
-            active = false;
-            window.clearInterval(timer);
+        const media = window.matchMedia("(min-width: 1366px)");
+        const update = () => {
+            setEpisodeNavigatorOpen(media.matches);
         };
-    }, [project.id, stage]);
+        update();
+        media.addEventListener("change", update);
+        return () => media.removeEventListener("change", update);
+    }, []);
     useEffect(() => {
-        if (!renderTask?.id || !["pending", "running"].includes(renderTask.status)) return;
-        const timer = window.setInterval(async () => {
-            const response = await fetch(`/api/drama/render/${encodeURIComponent(renderTask.id)}`, { cache: "no-store" });
-            const payload = (await response.json().catch(() => ({}))) as { data?: DramaRenderTask; msg?: string };
-            if (response.ok && payload.data) updateEpisode(project.id, episode.id, { renderTask: payload.data });
-        }, 2500);
-        return () => window.clearInterval(timer);
-    }, [episode.id, project.id, renderTask, updateEpisode]);
+        setSelectedShotId(undefined);
+    }, [episode.id]);
+    useDramaAudioQueue(project, episode, config, updateShot);
     const analyzeScript = async () => {
         if (!episode.script.trim()) return message.warning("请先填写剧本内容");
         setAnalyzing(true);
@@ -195,11 +164,6 @@ function DramaProjectEditor({ project }: { project: DramaProject }) {
             message.error(error instanceof Error ? error.message : "版本恢复失败");
         }
     };
-    const sendToVideo = (shot: DramaShot) => {
-        const prompt = compileDramaShotPrompts(project, episode, shot).videoPrompt;
-        router.push(`/video?source=drama&projectId=${encodeURIComponent(project.id)}&prompt=${encodeURIComponent(prompt)}&size=${encodeURIComponent(project.ratio)}`);
-    };
-
     useEffect(() => {
         const runningEnd = episode.shots.find((shot) => shot.storyboardEndStatus === "running" && shot.storyboardEndTaskId);
         if (runningEnd) {
@@ -350,6 +314,16 @@ function DramaProjectEditor({ project }: { project: DramaProject }) {
             startingShotRef.current = "";
             return;
         }
+        if (mode === "storyboard" && !next.storyboardImageUrl) {
+            updateShot(project.id, episode.id, next.id, { generationStatus: "error", generationError: "分镜模式需要先生成或上传起始帧" });
+            startingShotRef.current = "";
+            return;
+        }
+        if (mode === "storyboard" && next.storyboardFrameMode === "first_last" && !next.storyboardEndImageUrl) {
+            updateShot(project.id, episode.id, next.id, { generationStatus: "error", generationError: "首尾帧模式需要先生成或上传结束帧" });
+            startingShotRef.current = "";
+            return;
+        }
         void createServerVideoGenerationTask(
             { ...config, model: config.videoModel || config.model, size: dramaGenerationSize(project, prompts.videoPrompt, references), videoSeconds: String(next.duration), videoGenerateAudio: String((next.audioMode || "source") === "source") },
             prompts.videoPrompt,
@@ -379,393 +353,127 @@ function DramaProjectEditor({ project }: { project: DramaProject }) {
             });
     }, [config, episode.id, episode.shots, isCapacityWaiting, project, scheduleCapacityRetry, updateShot]);
 
-    const cancelShot = async (shotId: string, taskId?: string, storyboardTaskId?: string, storyboardEndTaskId?: string) => {
-        if (storyboardTaskId) await fetch(`/api/image-tasks/${encodeURIComponent(storyboardTaskId)}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ status: "cancelled" }) }).catch(() => undefined);
-        if (storyboardEndTaskId) await fetch(`/api/image-tasks/${encodeURIComponent(storyboardEndTaskId)}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ status: "cancelled" }) }).catch(() => undefined);
-        if (taskId) await fetch(`/api/video-tasks/${encodeURIComponent(taskId)}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ status: "cancelled" }) }).catch(() => undefined);
-        updateShot(project.id, episode.id, shotId, storyboardTaskId || storyboardEndTaskId ? { storyboardStatus: "cancelled", storyboardEndStatus: "cancelled", generationStatus: "cancelled" } : { generationStatus: "cancelled" });
-    };
-    const downloadSubtitles = () => {
-        const content = buildSrt(episode.shots);
-        if (!content) return message.warning("请先填写至少一条对白或字幕");
-        const url = URL.createObjectURL(new Blob([`\uFEFF${content}`], { type: "application/x-subrip;charset=utf-8" }));
-        const anchor = document.createElement("a");
-        anchor.href = url;
-        anchor.download = `${project.title.trim().replace(/[\\/:*?"<>|]/g, "-") || "短剧字幕"}.srt`;
-        anchor.click();
-        window.setTimeout(() => URL.revokeObjectURL(url), 1000);
-        message.success("SRT 字幕已导出");
-    };
-    const exportJianying = async () => {
-        if (!jianyingPath.trim()) return message.warning("请填写剪映草稿目录");
-        setJianyingExporting(true);
-        try {
-            const result = await exportDramaJianyingDraft(project.id, { episodeId: episode.id, draftPath: jianyingPath.trim(), version: jianyingVersion });
-            const url = URL.createObjectURL(result.blob);
-            const anchor = document.createElement("a");
-            anchor.href = url;
-            anchor.download = result.fileName;
-            anchor.click();
-            window.setTimeout(() => URL.revokeObjectURL(url), 1000);
-            setJianyingOpen(false);
-            message.success("剪映草稿已导出");
-        } catch (error) {
-            message.error(error instanceof Error ? error.message : "剪映草稿导出失败");
-        } finally {
-            setJianyingExporting(false);
-        }
-    };
-    const createRender = async () => {
-        const response = await fetch("/api/drama/render", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-                projectId: project.id,
-                conversationId: project.creativeConversationId,
-                title: project.title,
-                ratio: project.ratio,
-                shots: episode.shots.map((shot) => ({ videoUrl: shot.videoUrl, audioMode: shot.audioMode || "source", audioUrl: shot.audioUrl, subtitle: shot.subtitle || shot.dialogue, duration: shot.duration })),
-            }),
-        });
-        const payload = (await response.json().catch(() => ({}))) as { data?: DramaRenderTask; msg?: string };
-        if (!response.ok || !payload.data) return message.error(payload.msg || "整集合成任务创建失败");
-        updateEpisode(project.id, episode.id, { renderTask: payload.data });
-        message.success("整集合成任务已创建");
-    };
-    const cancelRender = async () => {
-        if (!renderTask?.id) return;
-        await fetch(`/api/drama/render/${encodeURIComponent(renderTask.id)}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ status: "cancelled" }) });
-        updateEpisode(project.id, episode.id, { renderTask: { ...renderTask, status: "cancelled" } });
-    };
-    const reviewVisuals = async () => {
-        if (!episode.shots.some((shot) => shot.storyboardImageUrl)) return message.warning("请先生成至少一张分镜图");
-        setReviewingVisuals(true);
-        try {
-            const review = await reviewDramaEpisode(project, episode);
-            updateEpisode(project.id, episode.id, { visualReview: review });
-            if (review.status === "passed") message.success("视觉复盘通过");
-            else if (review.status === "needs_revision") message.warning("视觉复盘发现需要调整的镜头");
-            else message.info(review.summary);
-        } catch (error) {
-            message.error(error instanceof Error ? error.message : "视觉复盘失败");
-        } finally {
-            setReviewingVisuals(false);
-        }
-    };
-
     return (
-        <main className="h-full overflow-x-hidden overflow-y-auto bg-background text-foreground">
-            <div className="relative mx-auto w-full max-w-[1500px] px-2.5 py-2.5 sm:px-6 sm:py-8">
-                <DramaProjectHeader project={project} episode={episode} stage={stage} onStageChange={setStage} onOpenVersions={() => void openVersions()} />
+        <main className="flex h-full min-h-0 flex-col overflow-hidden bg-background text-foreground" data-drama-workspace aria-label="短剧制作工作区">
+            <DramaWorkspaceHeader
+                project={project}
+                episode={episode}
+                stage={stage}
+                assetsOpen={assetsOpen}
+                episodeNavigatorOpen={episodeNavigatorOpen}
+                agentOpen={agentOpen}
+                onStageChange={changeStage}
+                onOpenAssets={() => {
+                    setAssetsOpen(true);
+                    setAgentOpen(false);
+                    setEpisodeNavigatorOpen(false);
+                }}
+                onCloseAssets={() => setAssetsOpen(false)}
+                onEpisodeNavigatorOpenChange={setEpisodeNavigatorOpen}
+                onToggleAgent={() => setAgentOpen((open) => !open)}
+                onOpenVersions={() => void openVersions()}
+            />
+            <div className="flex min-h-0 min-w-0 flex-1 overflow-hidden" data-drama-workspace-body>
+                <DramaEpisodeSidebar project={project} episode={episode} open={episodeNavigatorOpen && !assetsOpen} onOpenChange={setEpisodeNavigatorOpen} onStageChange={changeStage} />
+                <div className="relative flex min-h-0 min-w-0 flex-1 flex-col" data-drama-production-surface>
+                    <div className="min-h-0 min-w-0 flex-1 overflow-y-auto" data-drama-production-scroll>
+                        <section
+                            className={`mx-auto flex min-h-full min-w-0 flex-col px-3 py-3 ${stage === "script" ? "max-w-none min-[1366px]:px-3 min-[1366px]:pb-3 min-[1366px]:pt-3" : "max-w-[1440px] sm:px-5 sm:py-4"}`}
+                            data-drama-stage={assetsOpen ? "assets" : stage}
+                        >
+                            {assetsOpen ? <DramaAssetsPanel project={project} episode={episode} /> : null}
 
-                <div className="mt-3 grid min-h-0 min-w-0 gap-3 xl:grid-cols-[minmax(0,1fr)_380px] sm:mt-5 sm:gap-5">
-                    <section className="min-w-0 rounded-lg border border-border bg-card p-3 sm:p-6">
-                        {stage === "script" ? <DramaScriptPanel project={project} episode={episode} analyzing={analyzing} onAnalyze={() => void analyzeScript()} onStageChange={setStage} /> : null}
+                            {!assetsOpen && stage === "script" ? (
+                                <DramaScriptPanel project={project} episode={episode} analyzing={analyzing} onAnalyze={() => void analyzeScript()} onStageChange={changeStage} selectedShotId={selectedShotId} onSelectedShotChange={setSelectedShotId} />
+                            ) : null}
 
-                        {stage === "review" ? <DramaReviewPanel project={project} episode={episode} designing={designing} onDesignVisuals={() => void designVisuals()} /> : null}
+                            {!assetsOpen && stage === "review" ? <DramaReviewPanel project={project} episode={episode} designing={designing} onDesignVisuals={() => void designVisuals()} onStageChange={changeStage} /> : null}
 
-                        {stage === "assets" ? <DramaAssetsPanel project={project} /> : null}
-
-                        {stage === "storyboard" ? (
-                            <div>
-                                <SectionTitle title="分镜编辑" description="视觉字段来自已审核内容；这里可以精调画面、镜头运动和模型提示词。" />
-                                {episode.shots.length ? (
-                                    <div className="grid min-w-0 items-start gap-3 xl:grid-cols-2 sm:gap-5">
-                                        {episode.shots.map((shot) => (
-                                            <DramaStoryboardShotCard
-                                                key={shot.id}
-                                                project={project}
-                                                episodeId={episode.id}
-                                                shot={shot}
-                                                expanded={expandedStoryboardShotId === shot.id}
-                                                onToggle={() => setExpandedStoryboardShotId((current) => (current === shot.id ? "" : shot.id))}
-                                            />
-                                        ))}
-                                    </div>
-                                ) : (
-                                    <Empty description="还没有分镜">
-                                        <Button type="primary" onClick={() => setStage("script")}>
-                                            先填写剧本
-                                        </Button>
-                                    </Empty>
-                                )}
-                            </div>
-                        ) : null}
-
-                        {stage === "generate" ? (
-                            <div>
-                                {episode.reviewStatus !== "visual_ready" ? (
-                                    <p className="mb-4 border-l-2 border-amber-400 pl-3 text-sm leading-5 text-amber-700 sm:mb-6 sm:leading-6 dark:text-amber-200">请先在“内容审核”中确认镜头，并生成完整视觉方案。</p>
-                                ) : null}
-                                <div className="mb-4 grid grid-cols-2 gap-px overflow-hidden border border-border bg-border sm:mb-6 sm:grid-cols-4">
-                                    {[
-                                        ["本集预计", `${estimateEpisodePoints(config, project, episode.shots)} 积分`],
-                                        ["任务实际", `${costSummary?.actualPoints || 0} 积分`],
-                                        ["已登记任务", String(costSummary?.taskCount || 0)],
-                                        ["失败/取消", String(costSummary?.failedCount || 0)],
-                                    ].map(([label, value]) => (
-                                        <div key={label} className="bg-background px-3 py-2.5 sm:px-4 sm:py-3">
-                                            <div className="text-xs text-muted-foreground">{label}</div>
-                                            <div className="mt-1 font-semibold">{value}</div>
-                                        </div>
-                                    ))}
-                                </div>
+                            {!assetsOpen && stage === "storyboard" ? (
                                 <div>
-                                    <SectionTitle className="!mb-4 sm:!mb-5" title="镜头生成队列" description="项目内串行创建后台视频任务，避免超过用户并发上限；也可继续把单镜头送入视频工作台精调。" />
-                                    <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
-                                        <div className="grid grid-cols-2 gap-2 sm:flex sm:flex-wrap">
-                                            <Button
-                                                className={generationActionButtonClass}
-                                                icon={<Film className="size-4" />}
-                                                loading={renderTask?.status === "pending" || renderTask?.status === "running"}
-                                                disabled={
-                                                    !renderReady ||
-                                                    !episode.shots.length ||
-                                                    !episode.shots.every((shot) => shot.videoUrl && (!shotNeedsVoiceover(shot) || shot.audioUrl)) ||
-                                                    Boolean(renderTask && ["pending", "running"].includes(renderTask.status))
-                                                }
-                                                title={!renderReady ? "服务器尚未安装 FFmpeg" : "需要所有镜头视频完成；选择 AI 配音的镜头还需配音完成"}
-                                                onClick={() => void createRender()}
-                                            >
-                                                {renderReady === null ? "检查合成环境" : renderReady ? "合成整集" : "FFmpeg 未就绪"}
-                                            </Button>
-                                            <Button
-                                                className={generationActionButtonClass}
-                                                icon={<Volume2 className="size-4" />}
-                                                disabled={!audioReady || !episode.shots.some((shot) => shot.videoUrl && (shot.subtitle || shot.dialogue).trim())}
-                                                title={audioReady ? undefined : "请管理员先在后台设置默认音频模型"}
-                                                onClick={() =>
-                                                    queueAudio(
-                                                        project.id,
-                                                        episode.id,
-                                                        episode.shots.filter((shot) => shot.audioStatus !== "success").map((shot) => shot.id),
-                                                    )
-                                                }
-                                            >
-                                                批量生成配音
-                                            </Button>
-                                            <Button
-                                                className={generationActionButtonClass}
-                                                icon={<ScanSearch className="size-4" />}
-                                                loading={reviewingVisuals}
-                                                disabled={!episode.shots.some((shot) => shot.storyboardImageUrl)}
-                                                onClick={() => void reviewVisuals()}
-                                            >
-                                                视觉复盘
-                                            </Button>
+                                    <DramaStageHeader
+                                        step="03"
+                                        title="分镜编辑"
+                                        description="精调画面、镜头运动、生成方式和配音策略；完成后进入统一镜头生产队列。"
+                                        status={
+                                            !episode.shots.length ? "等待镜头" : episode.shots.every((shot) => shot.videoPrompt.trim() && ((shot.videoMode || project.defaultVideoMode) !== "storyboard" || shot.imagePrompt.trim())) ? "配置就绪" : "需要补充"
+                                        }
+                                        tone={
+                                            !episode.shots.length ? "attention" : episode.shots.every((shot) => shot.videoPrompt.trim() && ((shot.videoMode || project.defaultVideoMode) !== "storyboard" || shot.imagePrompt.trim())) ? "ready" : "attention"
+                                        }
+                                        metrics={
+                                            episode.shots.length
+                                                ? [
+                                                      { label: "镜头", value: episode.shots.length },
+                                                      { label: "总时长", value: `${episode.shots.reduce((total, shot) => total + shot.duration, 0)} 秒` },
+                                                      { label: "参考图模式", value: episode.shots.filter((shot) => (shot.videoMode || project.defaultVideoMode) === "reference").length },
+                                                  ]
+                                                : []
+                                        }
+                                        action={
                                             <Button
                                                 type="primary"
-                                                className={`col-span-2 sm:col-span-1 ${generationActionButtonClass}`}
-                                                icon={<Play className="size-4" />}
+                                                className="!h-9 !w-full sm:!w-auto"
+                                                icon={<ArrowRight className="size-4" />}
                                                 disabled={!episode.shots.length || episode.reviewStatus !== "visual_ready"}
-                                                onClick={() =>
-                                                    queueShots(
-                                                        project.id,
-                                                        episode.id,
-                                                        episode.shots.filter((shot) => shot.generationStatus !== "success").map((shot) => shot.id),
-                                                    )
-                                                }
+                                                onClick={() => setStage("generate")}
                                             >
-                                                批量生成未完成镜头
+                                                进入镜头生成
                                             </Button>
+                                        }
+                                    />
+                                    {episode.shots.length ? (
+                                        <div className="mt-3 grid min-w-0 items-start gap-3 xl:grid-cols-2">
+                                            {episode.shots.map((shot) => (
+                                                <DramaStoryboardShotCard
+                                                    key={shot.id}
+                                                    project={project}
+                                                    episodeId={episode.id}
+                                                    shot={shot}
+                                                    expanded={expandedStoryboardShotId === shot.id}
+                                                    onToggle={() => setExpandedStoryboardShotId((current) => (current === shot.id ? "" : shot.id))}
+                                                />
+                                            ))}
                                         </div>
-                                        <div className="grid grid-cols-2 gap-2 sm:flex sm:flex-wrap lg:justify-end">
-                                            <Button className={generationActionButtonClass} icon={<Captions className="size-4" />} disabled={!episode.shots.some((shot) => (shot.subtitle || shot.dialogue).trim())} onClick={() => setSubtitleOpen(true)}>
-                                                字幕时间轴
-                                            </Button>
-                                            <Button className={generationActionButtonClass} icon={<Download className="size-4" />} disabled={!episode.shots.some((shot) => (shot.subtitle || shot.dialogue).trim())} onClick={downloadSubtitles}>
-                                                导出 SRT
-                                            </Button>
-                                            <Button className={`col-span-2 sm:col-span-1 ${generationActionButtonClass}`} icon={<Download className="size-4" />} disabled={!episode.shots.some((shot) => shot.videoUrl)} onClick={() => setJianyingOpen(true)}>
-                                                剪映草稿
-                                            </Button>
-                                        </div>
-                                    </div>
-                                    {episode.visualReview ? (
-                                        <div className="mt-4 border-y border-border py-3 sm:mt-5 sm:py-4">
-                                            <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-                                                <div className="min-w-0">
-                                                    <div className="flex flex-wrap items-center gap-2">
-                                                        <span className="font-semibold">分镜视觉复盘</span>
-                                                        <Tag color={episode.visualReview.status === "passed" ? "success" : episode.visualReview.status === "needs_revision" ? "warning" : "default"}>
-                                                            {episode.visualReview.status === "passed" ? "通过" : episode.visualReview.status === "needs_revision" ? "需调整" : "未完成"}
-                                                        </Tag>
-                                                        {typeof episode.visualReview.score === "number" ? <span className="text-sm tabular-nums text-muted-foreground">{episode.visualReview.score} 分</span> : null}
-                                                    </div>
-                                                    <p className="mt-1.5 text-sm leading-6 text-muted-foreground">{episode.visualReview.summary}</p>
-                                                </div>
-                                                {episode.visualReview.retryTaskIds.length ? (
-                                                    <Button className="!h-9 shrink-0" icon={<RefreshCw className="size-4" />} onClick={() => queueShots(project.id, episode.id, episode.visualReview!.retryTaskIds)}>
-                                                        重试问题镜头
-                                                    </Button>
-                                                ) : null}
+                                    ) : (
+                                        <div className="mt-2.5 flex min-h-14 items-center rounded-lg border border-dashed border-border bg-card/25 px-3 py-2.5">
+                                            <div className="min-w-0">
+                                                <h3 className="text-sm font-medium">还没有可编辑的分镜</h3>
+                                                <p className="mt-0.5 truncate text-xs text-muted-foreground">先从剧本提取内容结构，并在内容审核阶段确认镜头事实与视觉方案。</p>
                                             </div>
-                                            {episode.visualReview.issues.length ? (
-                                                <div className="mt-3 grid gap-2 sm:grid-cols-2">
-                                                    {episode.visualReview.issues.map((issue, index) => {
-                                                        const shot = episode.shots.find((item) => item.id === issue.taskId);
-                                                        return (
-                                                            <div key={`${issue.taskId || "general"}-${index}`} className="border-l-2 border-amber-400 pl-3 text-sm">
-                                                                <div className="font-medium">{shot?.title || issue.category}</div>
-                                                                <p className="mt-1 leading-5 text-muted-foreground">{issue.message}</p>
-                                                                {issue.correction ? <p className="mt-1 leading-5">建议：{issue.correction}</p> : null}
-                                                            </div>
-                                                        );
-                                                    })}
-                                                </div>
-                                            ) : null}
                                         </div>
-                                    ) : null}
+                                    )}
                                 </div>
-                                {!audioReady ? (
-                                    <p className="mt-6 border-l-2 border-amber-400 pl-3 text-sm leading-6 text-amber-700 dark:border-amber-300 dark:text-amber-200">配音暂不可用：后台尚未配置可用的默认音频模型。视频镜头生成和整集合成不受影响。</p>
-                                ) : null}
-                                {renderTask ? (
-                                    <div className="mt-4 rounded-xl border border-border/80 bg-background/65 p-4 sm:mt-6 sm:rounded-2xl sm:p-6">
-                                        <div className="flex flex-wrap items-center justify-between gap-3">
-                                            <div>
-                                                <div className="flex items-center gap-2 font-semibold">
-                                                    <Film className="size-4" />
-                                                    整集合成
-                                                </div>
-                                                <p className="mt-1 text-sm text-muted-foreground">
-                                                    {renderTask.status === "success" ? "成片已生成" : renderTask.status === "error" ? renderTask.error || "合成失败" : renderTask.status === "cancelled" ? "合成已取消" : "正在转码、拼接并烧录字幕…"}
-                                                </p>
-                                            </div>
-                                            {["pending", "running"].includes(renderTask.status) ? (
-                                                <Button danger className="!h-11 sm:!h-9" onClick={() => void cancelRender()}>
-                                                    取消合成
-                                                </Button>
-                                            ) : null}
-                                        </div>
-                                        {["pending", "running"].includes(renderTask.status) ? <Progress className="mt-3" percent={70} status="active" showInfo={false} /> : null}
-                                        {renderTask.result?.url ? (
-                                            <div className="mt-4">
-                                                <video className="max-h-[520px] w-full rounded-2xl bg-black" src={renderTask.result.url} controls preload="metadata" />
-                                                <a
-                                                    className="mt-3 inline-flex text-sm font-medium text-blue-600 hover:underline dark:text-cyan-300"
-                                                    href={originalMediaDownloadUrl(renderTask.result.url)}
-                                                    download={mediaDownloadFileName(renderTask.id, "video/mp4", renderTask.result.url)}
-                                                >
-                                                    下载整集成片
-                                                </a>
-                                            </div>
-                                        ) : null}
-                                    </div>
-                                ) : null}
-                                {episode.shots.length ? (
-                                    <div className="mt-4 overflow-hidden rounded-xl border border-border/80 bg-background sm:mt-5">
-                                        {episode.shots.map((shot) => (
-                                            <article
-                                                key={shot.id}
-                                                className="grid min-w-0 gap-3 overflow-hidden border-b border-border/70 p-3.5 transition-colors last:border-b-0 hover:bg-muted/25 [content-visibility:visible] sm:grid-cols-[minmax(0,1fr)_auto] sm:items-center sm:gap-5 sm:px-4 sm:py-4 sm:[content-visibility:auto]"
-                                            >
-                                                <div className="min-w-0 flex-1">
-                                                    <div className="flex min-w-0 flex-col gap-2 sm:flex-row sm:items-center">
-                                                        <h3 className="min-w-0 shrink truncate font-semibold">{shot.title || `镜头 ${String(shot.order).padStart(2, "0")}`}</h3>
-                                                        <div className="flex flex-wrap items-center gap-1.5">
-                                                            <StoryboardTag status={shot.storyboardStatus} />
-                                                            {shot.storyboardFrameMode === "first_last" ? (
-                                                                <span
-                                                                    className={`inline-flex h-6 items-center rounded-md border px-2 text-xs font-medium leading-none ${
-                                                                        shot.storyboardEndStatus === "running" || shot.storyboardEndStatus === "queued"
-                                                                            ? "border-amber-200 bg-amber-50 text-amber-700 dark:border-amber-900/70 dark:bg-amber-950/35 dark:text-amber-300"
-                                                                            : shot.storyboardEndStatus === "error"
-                                                                              ? "border-rose-200 bg-rose-50 text-rose-700 dark:border-rose-900/70 dark:bg-rose-950/35 dark:text-rose-300"
-                                                                              : "border-border bg-muted/60 text-muted-foreground"
-                                                                    }`}
-                                                                >
-                                                                    尾帧
-                                                                </span>
-                                                            ) : null}
-                                                            <GenerationTag status={shot.generationStatus} />
-                                                            {shot.audioMode === "voiceover" ? <AudioTag status={shot.audioStatus} /> : <Tag>{shot.audioMode === "mute" ? "静音" : "视频原声"}</Tag>}
-                                                        </div>
-                                                    </div>
-                                                    <p className="mt-2 line-clamp-2 text-sm leading-5 text-muted-foreground sm:leading-6">{shot.videoPrompt}</p>
-                                                    {shot.generationStatus === "running" ? <Progress className="mt-2 max-w-sm" percent={60} status="active" showInfo={false} /> : null}
-                                                    {shot.storyboardStatus === "running" || shot.storyboardEndStatus === "running" ? (
-                                                        <Progress className="mt-2 max-w-sm" percent={shot.storyboardEndStatus === "running" ? 55 : 35} status="active" showInfo={false} />
-                                                    ) : null}
-                                                    {shot.storyboardError ? <p className="mt-2 text-xs text-red-500">{shot.storyboardError}</p> : null}
-                                                    {shot.storyboardEndError ? <p className="mt-2 text-xs text-red-500">{shot.storyboardEndError}</p> : null}
-                                                    {shot.generationError ? <p className="mt-2 text-xs text-red-500">{shot.generationError}</p> : null}
-                                                    {shot.storyboardImageUrl ? (
-                                                        <div className="mt-4 flex max-w-xl gap-2 overflow-x-auto">
-                                                            <DramaMediaThumbnail media={{ type: "image", url: shot.storyboardImageUrl, title: `${shot.title}起始帧` }} onOpen={setPreviewMedia} />
-                                                            {shot.storyboardEndImageUrl ? <DramaMediaThumbnail media={{ type: "image", url: shot.storyboardEndImageUrl, title: `${shot.title}结束帧` }} onOpen={setPreviewMedia} /> : null}
-                                                        </div>
-                                                    ) : null}
-                                                    {shot.videoUrl ? (
-                                                        <div className="mt-4">
-                                                            <DramaMediaThumbnail media={{ type: "video", url: shot.videoUrl, title: `${shot.title}生成视频` }} onOpen={setPreviewMedia} />
-                                                        </div>
-                                                    ) : null}
-                                                    {shot.subtitle || shot.dialogue ? <p className="mt-2 max-w-2xl text-xs leading-5 text-muted-foreground">字幕：{shot.subtitle || shot.dialogue}</p> : null}
-                                                    {shot.audioError ? <p className="mt-2 text-xs text-red-500">{shot.audioError}</p> : null}
-                                                    {shot.audioUrl ? <audio className="mt-4 h-10 w-full max-w-sm" src={shot.audioUrl} controls preload="metadata" /> : null}
-                                                </div>
-                                                <div className="grid w-full shrink-0 grid-cols-2 gap-2 sm:flex sm:w-auto sm:max-w-[420px] sm:flex-wrap sm:justify-end">
-                                                    {shot.audioStatus === "running" || shot.audioStatus === "queued" ? (
-                                                        <Button
-                                                            className={generationActionButtonClass}
-                                                            icon={<Pause className="size-4" />}
-                                                            onClick={() => void cancelDramaAudioTask(shot.audioTaskId).finally(() => updateShot(project.id, episode.id, shot.id, { audioStatus: "cancelled" }))}
-                                                        >
-                                                            取消配音
-                                                        </Button>
-                                                    ) : shot.subtitle || shot.dialogue ? (
-                                                        <Button
-                                                            className={generationActionButtonClass}
-                                                            disabled={!audioReady}
-                                                            title={audioReady ? undefined : "请管理员先在后台设置默认音频模型"}
-                                                            icon={<Volume2 className="size-4" />}
-                                                            onClick={() => queueAudio(project.id, episode.id, [shot.id])}
-                                                        >
-                                                            {shot.audioStatus === "error" ? "重试配音" : shot.audioMode === "voiceover" ? "生成配音" : "改用 AI 配音"}
-                                                        </Button>
-                                                    ) : null}
-                                                    {shot.storyboardStatus === "running" ||
-                                                    shot.storyboardStatus === "queued" ||
-                                                    shot.storyboardEndStatus === "running" ||
-                                                    shot.storyboardEndStatus === "queued" ||
-                                                    shot.generationStatus === "running" ||
-                                                    shot.generationStatus === "queued" ? (
-                                                        <Button className={generationActionButtonClass} icon={<Pause className="size-4" />} onClick={() => void cancelShot(shot.id, shot.generationTaskId, shot.storyboardTaskId, shot.storyboardEndTaskId)}>
-                                                            取消生成
-                                                        </Button>
-                                                    ) : (
-                                                        <Button
-                                                            className={generationActionButtonClass}
-                                                            disabled={episode.reviewStatus !== "visual_ready"}
-                                                            icon={<RefreshCw className="size-4" />}
-                                                            onClick={() => queueShots(project.id, episode.id, [shot.id])}
-                                                        >
-                                                            {shot.storyboardStatus === "error" || shot.storyboardEndStatus === "error" || shot.generationStatus === "error" ? "重试生成" : "生成镜头"}
-                                                        </Button>
-                                                    )}
-                                                    <Button
-                                                        type="text"
-                                                        disabled={!shot.videoPrompt}
-                                                        className={`${shot.subtitle || shot.dialogue ? "col-span-2" : ""} !bg-muted/60 hover:!bg-muted sm:col-span-1 ${generationActionButtonClass}`}
-                                                        icon={<Send className="size-4" />}
-                                                        onClick={() => sendToVideo(shot)}
-                                                    >
-                                                        视频工作台精调
-                                                    </Button>
-                                                </div>
-                                            </article>
-                                        ))}
-                                    </div>
-                                ) : (
-                                    <Empty className="!my-6 sm:!my-12" description="请先生成分镜草稿" />
-                                )}
-                            </div>
-                        ) : null}
-                    </section>
-                    <DramaAgentPanel project={project} episode={episode} onConversationChange={(creativeConversationId) => updateProject(project.id, { creativeConversationId })} />
+                            ) : null}
+
+                            {!assetsOpen && stage === "generate" ? <DramaGenerationPanel project={project} episode={episode} onStageChange={changeStage} onOpenAssets={() => setAssetsOpen(true)} /> : null}
+                        </section>
+                    </div>
                 </div>
+                <DramaAgentPanel
+                    project={project}
+                    episode={episode}
+                    stage={stage}
+                    selectedShotId={selectedShotId}
+                    open={agentOpen}
+                    onOpenChange={setAgentOpen}
+                    onConversationChange={(creativeConversationId) => updateProject(project.id, { creativeConversationId })}
+                />
             </div>
+            {stage === "script" ? (
+                <DramaScriptGlobalBar
+                    project={project}
+                    episode={episode}
+                    onSave={() => createVersion(project, "手动保存版本")}
+                    onContinue={() => {
+                        if (!episode.shots.length) return void analyzeScript();
+                        if (episode.reviewStatus === "draft") updateEpisode(project.id, episode.id, { reviewStatus: "content_review" });
+                        setStage("review");
+                    }}
+                    analyzing={analyzing}
+                    episodeNavigatorOpen={episodeNavigatorOpen}
+                />
+            ) : null}
             <DramaVersionModal
                 open={versionsOpen}
                 loading={versionsLoading}
@@ -774,18 +482,71 @@ function DramaProjectEditor({ project }: { project: DramaProject }) {
                 onSave={() => void createVersion(project, "手动保存版本").then(() => openVersions())}
                 onRestore={(version) => void restore(version)}
             />
-            <DramaJianyingModal
-                open={jianyingOpen}
-                path={jianyingPath}
-                version={jianyingVersion}
-                exporting={jianyingExporting}
-                onClose={() => setJianyingOpen(false)}
-                onExport={() => void exportJianying()}
-                onPathChange={setJianyingPath}
-                onVersionChange={setJianyingVersion}
-            />
-            <DramaSubtitleModal open={subtitleOpen} shots={episode.shots} onClose={() => setSubtitleOpen(false)} />
-            <DramaMediaPreviewModal media={previewMedia} onClose={() => setPreviewMedia(undefined)} />
         </main>
+    );
+}
+
+function DramaScriptGlobalBar({
+    project,
+    episode,
+    onSave,
+    onContinue,
+    analyzing,
+    episodeNavigatorOpen,
+}: {
+    project: DramaProject;
+    episode: DramaProject["episodes"][number];
+    onSave: () => Promise<void>;
+    onContinue: () => void;
+    analyzing: boolean;
+    episodeNavigatorOpen: boolean;
+}) {
+    const { message } = App.useApp();
+    const saveState = useDramaStore((state) => state.saveStateByProject[project.id]);
+    const [savingVersion, setSavingVersion] = useState(false);
+    const savedLabel =
+        saveState?.status === "saving"
+            ? "保存中…"
+            : saveState?.status === "error"
+              ? "保存失败"
+              : saveState?.savedAt
+                ? `最近保存 ${new Date(saveState.savedAt).toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit", second: "2-digit" })}`
+                : `最近保存 ${new Date(project.updatedAt).toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit", second: "2-digit" })}`;
+    return (
+        <footer className={`flex h-[60px] shrink-0 items-center justify-between gap-2 border-t border-border bg-card px-3 sm:gap-3 sm:px-5 ${episodeNavigatorOpen ? "min-[1366px]:!pl-[210px]" : ""}`} data-drama-script-global-bar>
+            <div className="flex min-w-0 items-center gap-2 text-xs text-muted-foreground">
+                <span className={`size-2 shrink-0 rounded-full ${saveState?.status === "error" ? "bg-rose-500" : saveState?.status === "saving" ? "bg-amber-500" : "bg-emerald-500"}`} />
+                <span className="hidden sm:inline" title={savedLabel}>
+                    {saveState?.status === "saving" ? "正在自动保存" : saveState?.status === "error" ? "自动保存失败" : "自动保存已开启"}
+                </span>
+            </div>
+            <div className="flex shrink-0 items-center gap-2 sm:gap-3">
+                <Button
+                    className="!h-10 !px-3 sm:!px-5"
+                    loading={savingVersion}
+                    onClick={() => {
+                        setSavingVersion(true);
+                        void onSave()
+                            .then(() => message.success("草稿版本已保存"))
+                            .catch((error) => message.error(error instanceof Error ? error.message : "草稿保存失败"))
+                            .finally(() => setSavingVersion(false));
+                    }}
+                >
+                    <span className="sm:hidden">保存</span>
+                    <span className="hidden sm:inline">保存草稿</span>
+                </Button>
+                <Button
+                    type="primary"
+                    className="!h-10 !px-3 enabled:!border-violet-600 enabled:!bg-violet-600 enabled:!text-white enabled:hover:!border-violet-500 enabled:hover:!bg-violet-500 dark:enabled:!border-violet-400 dark:enabled:!bg-violet-400 dark:enabled:!text-violet-950 sm:!px-6"
+                    icon={<ArrowRight className="size-4" />}
+                    disabled={!episode.script.trim()}
+                    loading={analyzing}
+                    onClick={onContinue}
+                >
+                    <span className="sm:hidden">进入内容审核</span>
+                    <span className="hidden sm:inline">完成剧本，进入内容审核</span>
+                </Button>
+            </div>
+        </footer>
     );
 }

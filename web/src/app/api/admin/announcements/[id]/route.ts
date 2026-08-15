@@ -1,3 +1,4 @@
+import { hasAdminPermission } from "@/lib/admin-permissions";
 import { NextResponse } from "next/server";
 
 import { deleteAnnouncement, isAuthInputError, updateAnnouncement, type PublicAnnouncement } from "@/lib/auth/store";
@@ -14,7 +15,7 @@ type RouteContext = {
 async function assertAdmin() {
     const currentUser = await getCurrentUser();
     if (!currentUser) return NextResponse.json({ error: "请先登录" }, { status: 401 });
-    if (currentUser.role !== "admin") return NextResponse.json({ error: "需要管理员权限" }, { status: 403 });
+    if (!hasAdminPermission(currentUser, "content.manage")) return NextResponse.json({ error: "需要管理员权限" }, { status: 403 });
     return null;
 }
 

@@ -1,7 +1,17 @@
 import { describe, expect, it } from "vitest";
 
 import type { AuthSettings, SystemModelChannel } from "@/lib/auth/store";
-import { isProviderTimeoutError, isUsableAdminChannelApiKey, mergeSystemChannelSecrets, resolveAdminChannelCredentials, sanitizeProviderMessage, serializeAdminSettings, systemChannelWebhookSecretValidationError } from "./admin-channel-config";
+import { DEFAULT_SETTINGS } from "@/lib/auth/store-foundation";
+import {
+    isProviderTimeoutError,
+    isUsableAdminChannelApiKey,
+    mergeSystemChannelSecrets,
+    resolveAdminChannelCredentials,
+    sanitizeProviderMessage,
+    serializeAdminSettings,
+    serializeAdminSettingsForUser,
+    systemChannelWebhookSecretValidationError,
+} from "./admin-channel-config";
 
 const savedChannel = {
     id: "saved",
@@ -24,6 +34,56 @@ describe("admin channel config", () => {
         expect(result.hasWebhookSecret).toBe(true);
         expect(JSON.stringify(result)).not.toContain("secret-value");
         expect(JSON.stringify(result)).not.toContain(savedChannel.webhookSecret);
+    });
+
+    it("limits full settings to the administrator's duties", () => {
+        const fullSettings: AuthSettings = {
+            ...structuredClone(DEFAULT_SETTINGS),
+            mail: { ...DEFAULT_SETTINGS.mail, host: "smtp.internal", password: "mail-secret" },
+            dataLifecycle: { ...DEFAULT_SETTINGS.dataLifecycle, maintenanceBatchSize: 81 },
+            generationCostControl: { maxPointsPerTask: 9, dailyUserPointSpend: 90, dailyTotalPointSpend: 900 },
+            systemChannels: [
+                {
+                    ...savedChannel,
+                    advancedConfig: {
+                        protocol: "openai",
+                        authMode: "bearer",
+                        textModel: "",
+                        imageModel: "",
+                        videoModel: "",
+                        createPath: "",
+                        editPath: "",
+                        imageToVideoPath: "",
+                        queryPath: "",
+                        requestTemplate: "",
+                        resultField: "",
+                        statusField: "",
+                        durationRange: "",
+                        referenceRule: "",
+                        supportsReferenceImage: false,
+                        supportsReferenceVideo: false,
+                        supportsReferenceAudio: false,
+                    },
+                },
+            ],
+            agentSkills: [{ id: "private-skill", name: "内部 Skill", description: "内部", instructions: "内部规则", keywords: [], workspaces: ["image"], enabled: true }],
+        };
+
+        const systemView = serializeAdminSettingsForUser(fullSettings, { role: "admin", status: "active", adminPermissions: ["system.manage"] });
+        expect(systemView.mail.password).toBe("mail-secret");
+        expect(systemView.dataLifecycle.maintenanceBatchSize).toBe(81);
+        expect(systemView.systemChannels[0]).toMatchObject({ id: "saved", baseUrl: "", apiKey: "" });
+        expect(systemView.systemChannels[0].advancedConfig).toBeUndefined();
+        expect(systemView.agentSkills).toEqual([]);
+        expect(systemView.generationCostControl).toEqual(DEFAULT_SETTINGS.generationCostControl);
+
+        const upstreamView = serializeAdminSettingsForUser(fullSettings, { role: "admin", status: "active", adminPermissions: ["upstream.manage"] });
+        expect(upstreamView.mail).toEqual(DEFAULT_SETTINGS.mail);
+        expect(upstreamView.dataLifecycle).toEqual(DEFAULT_SETTINGS.dataLifecycle);
+        expect(upstreamView.systemChannels[0]).toMatchObject({ id: "saved", baseUrl: savedChannel.baseUrl, apiKey: "", hasApiKey: true });
+        expect(upstreamView.systemChannels[0].advancedConfig).toMatchObject({ protocol: "openai" });
+        expect(upstreamView.agentSkills).toHaveLength(1);
+        expect(upstreamView.generationCostControl.maxPointsPerTask).toBe(9);
     });
 
     it("keeps, replaces, and explicitly clears saved API keys", () => {

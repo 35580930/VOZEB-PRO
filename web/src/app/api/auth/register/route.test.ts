@@ -48,12 +48,12 @@ describe("POST /api/auth/register referral attribution", () => {
     });
 
     it("treats an explicitly cleared referral code as an attribution opt-out", async () => {
-        mocks.readJsonBody.mockResolvedValue({ username: "new-user", password: "password123", referralCode: "" });
+        mocks.readJsonBody.mockResolvedValue({ username: "new-user", password: "password123", policyAccepted: true, referralCode: "" });
 
         const response = await POST(registerRequest());
 
         expect(response.status).toBe(200);
-        expect(mocks.createUser).toHaveBeenCalledWith(expect.objectContaining({ referralCode: undefined, referralSource: undefined }));
+        expect(mocks.createUser).toHaveBeenCalledWith(expect.objectContaining({ policyAccepted: true, referralCode: undefined, referralSource: undefined }));
     });
 
     it("ignores all referral attribution for the first administrator", async () => {
@@ -68,10 +68,18 @@ describe("POST /api/auth/register referral attribution", () => {
     });
 
     it("uses the referral cookie when the form does not provide the field", async () => {
-        mocks.readJsonBody.mockResolvedValue({ username: "new-user", password: "password123" });
+        mocks.readJsonBody.mockResolvedValue({ username: "new-user", password: "password123", policyAccepted: true });
 
         await POST(registerRequest("COOKIE88"));
 
         expect(mocks.createUser).toHaveBeenCalledWith(expect.objectContaining({ referralCode: "COOKIE88", referralSource: "invite-link" }));
+    });
+
+    it("passes missing policy agreement as false for server-side validation", async () => {
+        mocks.readJsonBody.mockResolvedValue({ username: "new-user", password: "password123" });
+
+        await POST(registerRequest());
+
+        expect(mocks.createUser).toHaveBeenCalledWith(expect.objectContaining({ policyAccepted: false }));
     });
 });

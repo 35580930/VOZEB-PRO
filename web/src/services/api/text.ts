@@ -47,7 +47,7 @@ export async function waitForTextGenerationTask(config: AiConfig, task: TextGene
         const payload = (await response.json().catch(() => ({}))) as TextTaskPayload;
         syncUserPointsFromHeaders(response.headers, resolveModelRequestConfig(config, task.model).apiSource);
         if (!response.ok || !payload.task) throw new Error(payload.error || "查询文本任务失败");
-        if (payload.task.needsReview) throw new GenerationTaskNeedsReviewError();
+        if (payload.task.needsReview) throw new GenerationTaskNeedsReviewError(payload.task.reviewReason);
         if (payload.task.status === "success") {
             await refreshUserPointsIfSystem(resolveModelRequestConfig(config, task.model).apiSource);
             return payload.task.result?.content || "";

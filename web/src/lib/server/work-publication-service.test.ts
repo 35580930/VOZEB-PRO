@@ -26,6 +26,7 @@ import {
     deleteWorkPublicationForUser,
     getPublicWorkPublication,
     getWorkPublicationSource,
+    listWorkPublicationSources,
     listWorkPublicationsForAdmin,
     listWorkPublicationsForUser,
     relistWorkPublication,
@@ -56,6 +57,7 @@ describe("work publication service", () => {
         state = { assets: [] };
         workPublications = {
             listWorks: vi.fn(async (input) => ({ items: [], total: 0, page: input.page || 1, pageSize: input.pageSize || 20 })),
+            listSourceSummaries: vi.fn(async (_userId, input) => ({ items: [], total: 0, page: input.page || 1, pageSize: input.pageSize || 20 })),
             getSourceJson: vi.fn(async () => ({ title: "来源作品", value: { data: { storageKey: ownedImage.storageKey }, metadata: { prompt: "用户可见提示词" } } })),
             createWork: vi.fn(async (work) => {
                 state.work = work;
@@ -104,6 +106,11 @@ describe("work publication service", () => {
         mocks.getRegistrations.mockResolvedValue([ownedImage]);
     });
 
+    it("forwards source type, search, and pagination to the repository", async () => {
+        await expect(listWorkPublicationSources("user-one", { sourceType: "canvas", keyword: " 分镜 ", page: 3, pageSize: 40 })).resolves.toEqual({ items: [], total: 0, page: 3, pageSize: 40 });
+        expect(workPublications.listSourceSummaries).toHaveBeenCalledWith("user-one", { sourceType: "canvas", keyword: "分镜", page: 3, pageSize: 40 });
+    });
+
     it("creates one immutable source snapshot and selects only registered permanent media", async () => {
         const result = await createWorkPublicationDraft("user-one", {
             sourceType: "media",
@@ -122,6 +129,33 @@ describe("work publication service", () => {
             expect.arrayContaining([expect.objectContaining({ storageKey: ownedImage.storageKey, role: "cover", mediaType: "image" }), expect.objectContaining({ storageKey: ownedImage.storageKey, role: "content", mediaType: "image" })]),
         );
         expect(result.currentVersion).toMatchObject({ title: "公开作品" });
+    });
+
+    it("preserves every explicitly selected source asset beyond the former media limit", async () => {
+        const registrations = Array.from({ length: 21 }, (_, index) => ({
+            ...ownedImage,
+            storageKey: `permanent/2026/07/27/images/work-${index}.png`,
+            originalName: `work-${index}.png`,
+        }));
+        workPublications.getSourceJson.mockResolvedValueOnce({
+            title: "多图画布",
+            value: { nodes: registrations.map((item) => ({ metadata: { storageKey: item.storageKey, prompt: "用户可见提示词" } })) },
+        });
+        mocks.getRegistrations.mockResolvedValueOnce(registrations);
+
+        await createWorkPublicationDraft("user-one", {
+            sourceType: "canvas",
+            sourceId: "canvas-many",
+            title: "多图作品",
+            publicPrompt: "用户可见提示词",
+            visibility: "public",
+            assetStorageKeys: registrations.map((item) => item.storageKey),
+        });
+
+        const savedAssets = workPublications.replaceVersionAssets.mock.calls[0]?.[1] as Array<{ storageKey: string; role: string }>;
+        const contentAssets = savedAssets.filter((item) => item.role === "content");
+        expect(contentAssets).toHaveLength(21);
+        expect(contentAssets.at(-1)?.storageKey).toBe(registrations.at(-1)?.storageKey);
     });
 
     it("rejects media that is returned by storage but is not referenced by the selected source", async () => {

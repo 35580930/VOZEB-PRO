@@ -1,3 +1,6 @@
+import type { RegistrationPolicyConsent } from "@/lib/registration-consent";
+import type { AdminPermission } from "@/lib/admin-permissions";
+
 export type JsonPrimitive = string | number | boolean | null;
 export type JsonValue = JsonPrimitive | JsonValue[] | { [key: string]: JsonValue };
 
@@ -46,10 +49,14 @@ export type UserRecord = {
     bio: string;
     avatarStorageKey?: string;
     role: UserRole;
+    adminPermissions: AdminPermission[];
     status: UserStatus;
     planId: string;
     pointsBalance: number;
     passwordHash: string;
+    mfaSecretCiphertext?: string;
+    mfaEnabledAt?: string;
+    registrationConsent?: RegistrationPolicyConsent;
     lastLoginAt?: string;
     createdAt: string;
     updatedAt: string;
@@ -117,6 +124,8 @@ export type AppSettingsRecord = {
     allowUserApiConfig: boolean;
     modelPointCosts: JsonValue;
     generationPointMultipliers: JsonValue;
+    generationCostControl: JsonValue;
+    dataLifecycle: JsonValue;
     entitlementsEnabled: boolean;
     defaultPlanId: string;
     generationConcurrency: JsonValue;
@@ -648,6 +657,15 @@ export type BillingSummaryRecord = {
         refunded: number;
         succeededAmountCents: number;
         refundedAmountCents: number;
+    };
+    commerce: {
+        convertedOrders: number;
+        promotionOrders: number;
+        promotionConvertedOrders: number;
+        promotionDiscountCents: number;
+        couponOrders: number;
+        couponConvertedOrders: number;
+        couponDiscountCents: number;
     };
     providers: BillingSummaryProviderRecord[];
     reconciliation: {

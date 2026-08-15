@@ -1,7 +1,9 @@
+import { hasAdminPermission } from "@/lib/admin-permissions";
 import { NextResponse } from "next/server";
 
 import { readJsonBody } from "@/lib/auth/request";
 import { getCurrentUser } from "@/lib/auth/session";
+import { isAuthInputError } from "@/lib/auth/store";
 import { auditActorFromRequest, safeRecordAuditLog } from "@/lib/server/audit-log-store";
 import { completeBillingOrderPayment, isBillingInputError } from "@/lib/server/billing-service";
 
@@ -15,18 +17,30 @@ type RouteContext = {
 export async function POST(request: Request, context: RouteContext) {
     const currentUser = await getCurrentUser();
     if (!currentUser) return NextResponse.json({ error: "请先登录" }, { status: 401 });
-    if (currentUser.role !== "admin") return NextResponse.json({ error: "需要管理员权限" }, { status: 403 });
+    if (!hasAdminPermission(currentUser, "billing.manage")) return NextResponse.json({ error: "需要管理员权限" }, { status: 403 });
 
     try {
         const { id } = await context.params;
-        const body = await readJsonBody<{ provider?: unknown; channel?: unknown; providerTradeId?: unknown; providerPaymentId?: unknown; rawPayload?: unknown; paidAt?: unknown }>(request);
+        const body = await readJsonBody<{
+            provider?: unknown;
+            channel?: unknown;
+            providerTradeId?: unknown;
+            providerPaymentId?: unknown;
+            paidAt?: unknown;
+        }>(request);
         const result = await completeBillingOrderPayment({
             orderId: id,
             provider: body.provider,
             channel: body.channel,
             providerTradeId: body.providerTradeId,
             providerPaymentId: body.providerPaymentId,
-            rawPayload: body.rawPayload ?? body,
+            rawPayload: {
+                provider: body.provider,
+                channel: body.channel,
+                providerTradeId: body.providerTradeId,
+                providerPaymentId: body.providerPaymentId,
+                paidAt: body.paidAt,
+            },
             paidAt: body.paidAt,
         });
         await safeRecordAuditLog({
@@ -50,7 +64,7 @@ export async function POST(request: Request, context: RouteContext) {
             target: { type: "billing_order" },
             metadata: { error: error instanceof Error ? error.message : "unknown" },
         });
-        if (isBillingInputError(error)) return NextResponse.json({ error: error.message }, { status: error.status });
+        if (isAuthInputError(error) || isBillingInputError(error)) return NextResponse.json({ error: error.message }, { status: error.status });
         console.error("Admin complete billing order failed", error);
         return NextResponse.json({ error: "确认支付失败" }, { status: 500 });
     }

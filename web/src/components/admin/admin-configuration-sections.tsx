@@ -1,119 +1,19 @@
 "use client";
 
-import type { ReactNode } from "react";
-import { useEffect, useMemo, useRef, useState } from "react";
-import { App, Button, Checkbox, DatePicker, Form, Input, InputNumber, Modal, Pagination, Popconfirm, Segmented, Select, Space, Switch, Table, Tag } from "antd";
-import type { TableColumnsType } from "antd";
-import Link from "next/link";
-import { BillingOperations } from "@/app/admin/billing/components/billing-operations";
-import { GenerationOperationsClient } from "@/app/admin/generation-operations/components/generation-operations-client";
-import {
-    formatAdminLogDuration,
-    formatAdminLogTime,
-    formatGenerationLogModel,
-    GenerationLogAssetPreview,
-    GenerationLogDetail,
-    GenerationLogMobileCard,
-    generationKindLabel,
-    generationSourceLabel,
-    generationStatusClass,
-    generationStatusLabel,
-} from "@/components/admin/admin-generation-log";
-import { GenerationConcurrencyPanel, GenerationDefaultsPanel, localAgentReadiness } from "@/components/admin/admin-generation-settings";
-import type { AgentReadiness } from "@/components/admin/admin-generation-settings";
-import { AdminLocalMediaStorage } from "@/components/admin/admin-local-media-storage";
-import { AdminOverview, buildOperationsSummary } from "@/components/admin/admin-overview";
-import { AdminLogicalModelManager } from "@/components/admin/admin-logical-model-manager";
-import { Metric, Panel, PanelHeader } from "@/components/admin/admin-panel";
-import { AdminSectionNav, adminSections } from "@/components/admin/admin-section-nav";
-import type { AdminSectionKey } from "@/components/admin/admin-sections";
-import { UpdateCenterPanel } from "@/components/admin/admin-update-center";
+import { DataLifecyclePanel } from "@/components/admin/admin-data-lifecycle-settings";
+import { GenerationConcurrencyPanel, GenerationCostControlPanel, GenerationDefaultsPanel } from "@/components/admin/admin-generation-settings";
+import { Panel, PanelHeader } from "@/components/admin/admin-panel";
+import { buildAdminSettingsPatch, resolveAdminSettingsAccess } from "@/components/admin/admin-settings-access";
 import { LabeledControl, SectionTitle, SettingInlineToggle, SettingToggle } from "@/components/admin/admin-settings-controls";
-import { SiteLogoPreview, SiteSettingStatus, SiteShowcasePreview, siteSocialItems } from "@/components/admin/admin-site-preview";
-import { createDefaultChannelAdvancedConfig, SystemChannelEditor } from "@/components/admin/admin-system-channel-editor";
-import { formatAdminMoney, toNumberOrOne, toNumberOrZero, uniqueList } from "@/components/admin/admin-values";
-import {
-    ArrowRight,
-    Copy,
-    CreditCard,
-    CircleDollarSign,
-    Database,
-    Download,
-    ExternalLink,
-    Eye,
-    Globe2,
-    Image as ImageIcon,
-    KeyRound,
-    Mail,
-    Menu,
-    PlugZap,
-    Plus,
-    ReceiptText,
-    RefreshCw,
-    Save,
-    Search,
-    Send,
-    ShieldCheck,
-    SlidersHorizontal,
-    Sparkles,
-    Trash2,
-    Upload,
-    UserCog,
-    UserRound,
-    WalletCards,
-} from "lucide-react";
-import dayjs from "dayjs";
-import { nanoid } from "nanoid";
+import { SiteLogoPreview, SiteSettingStatus, siteSocialItems } from "@/components/admin/admin-site-preview";
+import { Button, Input, InputNumber, Switch, Tag } from "antd";
+import { Database, Globe2, Image as ImageIcon, Mail, Plus, Save, Search, Send, SlidersHorizontal, Sparkles, Trash2, Upload, UserCog } from "lucide-react";
 
-import { imagePreviewUrl } from "@/lib/media-image-url";
-import { normalizeDefaultModelsConfig } from "@/lib/model-routing-config";
-import type { AgentSkill, AuthSettings, CreatedCdkCode, PublicAnnouncement, PublicCdkCode, PublicUser, SiteFriendLink, SiteShowcaseItem, SiteSocialKey, SystemChannelAdvancedConfig, SystemModelChannel, UserRole, UserStatus } from "@/lib/auth/store";
-import type { GenerationAssetStats, StoredGenerationLog } from "@/lib/server/generation-log-store";
-import type { AdminSetupSummary } from "@/lib/server/admin-setup-status";
-import type { PaymentConfigSummary } from "@/lib/payment-config-types";
-import type { AdminBillingSummary } from "@/lib/admin-billing-types";
-import type { Prompt } from "@/services/api/prompts";
-
+import { SettingsAnchorItem, SettingsStatusTile } from "./admin-dashboard-elements";
 import type { AdminDashboardController } from "./use-admin-dashboard-controller";
-import {
-    settingsStatusToneClass,
-    SettingsStatusTile,
-    SettingsAnchorItem,
-    FinanceFlowItem,
-    FinanceMiniRow,
-    createSystemChannel,
-    suggestedChannelModels,
-    requestAdminModels,
-    modelNameFromOption,
-    isCdkExpired,
-    cdkStatusLabel,
-    cdkStatusTone,
-    formatCreatedCdkExport,
-    downloadTextFile,
-    CdkRedemptionDetail,
-    splitTags,
-    clampInteger,
-} from "./admin-dashboard-elements";
-import { PROMPT_PAGE_SIZE, PROMPT_SEARCH_DEBOUNCE_MS, CDK_PAGE_SIZE, GENERATION_LOG_PAGE_SIZE } from "./use-admin-dashboard-controller";
 
 export function AdminSiteSection({ controller }: { controller: AdminDashboardController }) {
-    const {
-        logoInputRef,
-        iconInputRef,
-        settings,
-        settingsLoading,
-        activeSection,
-        saveSettings,
-        updateSiteSetting,
-        uploadSiteIcon,
-        updateSiteSocialSetting,
-        addFriendLink,
-        updateFriendLink,
-        deleteFriendLink,
-        addHomeShowcaseItem,
-        updateHomeShowcaseItem,
-        deleteHomeShowcaseItem,
-    } = controller;
+    const { logoInputRef, iconInputRef, settings, settingsLoading, activeSection, saveSettings, updateSiteSetting, getLatestSiteSettings, updateSiteSocialSetting, addFriendLink, updateFriendLink, deleteFriendLink } = controller;
     if (activeSection !== "site") return null;
     return (
         <Panel>
@@ -121,7 +21,7 @@ export function AdminSiteSection({ controller }: { controller: AdminDashboardCon
                 title="网站设置"
                 description="统一管理前台品牌、Logo、浏览器标题和搜索引擎展示信息。"
                 actions={
-                    <Button type="primary" loading={settingsLoading} icon={<Save className="size-4" />} onClick={() => saveSettings({ site: settings.site }, "网站信息已保存")}>
+                    <Button type="primary" loading={settingsLoading} icon={<Save className="size-4" />} onClick={() => saveSettings({ site: getLatestSiteSettings() }, "网站信息已保存")}>
                         保存网站设置
                     </Button>
                 }
@@ -132,7 +32,7 @@ export function AdminSiteSection({ controller }: { controller: AdminDashboardCon
                         <SectionTitle icon={<Globe2 className="size-4" />} title="基础信息" />
                         <div className="grid gap-4 md:grid-cols-2">
                             <LabeledControl label="网站标题">
-                                <Input value={settings.site.title} maxLength={40} placeholder="MOCREAI" onChange={(event) => updateSiteSetting("title", event.target.value)} />
+                                <Input value={settings.site.title} maxLength={40} placeholder="例如：无限创作" onChange={(event) => updateSiteSetting("title", event.target.value)} />
                             </LabeledControl>
                             <LabeledControl label="Logo URL">
                                 <div className="flex gap-2">
@@ -165,90 +65,15 @@ export function AdminSiteSection({ controller }: { controller: AdminDashboardCon
                                     <Input.TextArea value={settings.site.seoDescription} maxLength={180} rows={4} placeholder="用于搜索结果和社交分享摘要" onChange={(event) => updateSiteSetting("seoDescription", event.target.value)} />
                                 </LabeledControl>
                                 <LabeledControl label="SEO 关键词">
-                                    <Input value={settings.site.seoKeywords} maxLength={240} placeholder="MOCREAI,AI Agent,AI 绘图,AI 视频,画布,短剧" onChange={(event) => updateSiteSetting("seoKeywords", event.target.value)} />
+                                    <Input
+                                        value={settings.site.seoKeywords}
+                                        maxLength={240}
+                                        placeholder={`${settings.site.title || "网站名称"},AI Agent,AI 绘图,AI 视频,画布,短剧`}
+                                        onChange={(event) => updateSiteSetting("seoKeywords", event.target.value)}
+                                    />
                                 </LabeledControl>
                             </div>
                         </div>
-                    </div>
-
-                    <div className="rounded-lg border border-stone-200 bg-stone-50/70 p-4 dark:border-stone-800 dark:bg-stone-900/40">
-                        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-                            <div>
-                                <SectionTitle icon={<Sparkles className="size-4" />} title="首页提示词展示" />
-                                <div className="mt-1 text-xs leading-5 text-stone-500 dark:text-stone-400">控制首页“随机灵感图 / 精选灵感图”区域。随机模式会从公共提示词库抽取，自定义模式展示下方内容。</div>
-                            </div>
-                            <div className="w-full sm:w-[272px] sm:shrink-0">
-                                <Segmented
-                                    block
-                                    size="small"
-                                    className="w-full [&_.ant-segmented-group]:!flex [&_.ant-segmented-item]:!min-w-0 [&_.ant-segmented-item]:!flex-1 [&_.ant-segmented-item-label]:!px-2 [&_.ant-segmented-item-label]:!text-center"
-                                    value={settings.site.homeShowcaseMode || "random"}
-                                    onChange={(value) => updateSiteSetting("homeShowcaseMode", value as AuthSettings["site"]["homeShowcaseMode"])}
-                                    options={[
-                                        { label: "随机提示词", value: "random" },
-                                        { label: "后台自定义", value: "custom" },
-                                    ]}
-                                />
-                            </div>
-                        </div>
-
-                        {settings.site.homeShowcaseMode === "custom" ? (
-                            <div className="mt-5 space-y-3">
-                                <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-                                    <div className="text-xs text-stone-500 dark:text-stone-400">建议至少填写 4 条，封面 URL 可留空，首页会自动使用渐变占位。</div>
-                                    <Button icon={<Plus className="size-4" />} disabled={(settings.site.homeShowcaseItems || []).length >= 8} onClick={addHomeShowcaseItem}>
-                                        添加展示
-                                    </Button>
-                                </div>
-                                <div className="grid gap-3">
-                                    {(settings.site.homeShowcaseItems || []).map((item, index) => (
-                                        <div key={item.id} className="grid gap-3 rounded-lg border border-stone-200 bg-white p-3 dark:border-stone-800 dark:bg-stone-950/60 md:grid-cols-[168px_minmax(0,1fr)]">
-                                            <div className="overflow-hidden rounded-lg border border-stone-200 bg-stone-100 dark:border-stone-800 dark:bg-stone-900">
-                                                {item.coverUrl ? (
-                                                    <img src={imagePreviewUrl(item.coverUrl, 640)} alt="" className="aspect-[4/3] w-full object-cover" referrerPolicy="no-referrer" />
-                                                ) : (
-                                                    <div className="flex aspect-[4/3] items-center justify-center bg-[linear-gradient(135deg,#f8fafc,#dff5ff_45%,#111827)] text-xs text-stone-500 dark:bg-[linear-gradient(135deg,#0f172a,#164e63_45%,#020617)] dark:text-stone-300">
-                                                        无封面
-                                                    </div>
-                                                )}
-                                            </div>
-                                            <div className="min-w-0 space-y-3">
-                                                <div className="flex items-center justify-between gap-3">
-                                                    <div className="text-sm font-semibold text-stone-950 dark:text-stone-100">展示 {index + 1}</div>
-                                                    <Button size="small" danger icon={<Trash2 className="size-3.5" />} aria-label="删除首页展示" title="删除首页展示" onClick={() => deleteHomeShowcaseItem(item.id)} />
-                                                </div>
-                                                <div className="grid gap-3 md:grid-cols-2">
-                                                    <Input value={item.title} maxLength={80} placeholder="展示标题" onChange={(event) => updateHomeShowcaseItem(item.id, { title: event.target.value })} />
-                                                    <Input value={item.category} maxLength={40} placeholder="分类，例如 首页展示" onChange={(event) => updateHomeShowcaseItem(item.id, { category: event.target.value })} />
-                                                </div>
-                                                <Input value={item.coverUrl} maxLength={2000} placeholder="封面 URL，可留空" onChange={(event) => updateHomeShowcaseItem(item.id, { coverUrl: event.target.value })} />
-                                                <Input
-                                                    value={(item.tags || []).join("，")}
-                                                    maxLength={120}
-                                                    placeholder="标签，用逗号分隔"
-                                                    onChange={(event) =>
-                                                        updateHomeShowcaseItem(item.id, {
-                                                            tags: event.target.value
-                                                                .split(/[,，]/)
-                                                                .map((tag) => tag.trim())
-                                                                .filter(Boolean),
-                                                        })
-                                                    }
-                                                />
-                                                <Input.TextArea value={item.prompt} rows={3} maxLength={3000} placeholder="提示词内容" onChange={(event) => updateHomeShowcaseItem(item.id, { prompt: event.target.value })} />
-                                            </div>
-                                        </div>
-                                    ))}
-                                    {!settings.site.homeShowcaseItems?.length ? (
-                                        <div className="rounded-md border border-dashed border-stone-200 px-3 py-8 text-center text-sm text-stone-500 dark:border-stone-800">暂无自定义展示，点击“添加展示”开始配置。</div>
-                                    ) : null}
-                                </div>
-                            </div>
-                        ) : (
-                            <div className="mt-5 rounded-lg border border-dashed border-stone-200 bg-white px-4 py-5 text-sm leading-6 text-stone-600 dark:border-stone-800 dark:bg-stone-950/60 dark:text-stone-300">
-                                当前使用公共提示词库随机展示。首页接近该区域时才会加载随机内容，避免拖慢首屏。
-                            </div>
-                        )}
                     </div>
 
                     <div className="rounded-lg border border-stone-200 bg-stone-50/70 p-4 dark:border-stone-800 dark:bg-stone-900/40">
@@ -258,15 +83,30 @@ export function AdminSiteSection({ controller }: { controller: AdminDashboardCon
                         </div>
                         <div className="mt-5 space-y-4">
                             <LabeledControl label="版权所有">
-                                <Input value={settings.site.footerCopyright} maxLength={120} placeholder="© 2026 MOCREAI. All rights reserved." onChange={(event) => updateSiteSetting("footerCopyright", event.target.value)} />
+                                <Input
+                                    value={settings.site.footerCopyright}
+                                    maxLength={120}
+                                    placeholder={`© 2026 ${settings.site.title || "网站名称"}. All rights reserved.`}
+                                    onChange={(event) => updateSiteSetting("footerCopyright", event.target.value)}
+                                />
                             </LabeledControl>
                             <div className="grid gap-4 md:grid-cols-2">
-                                <LabeledControl label="使用条款链接">
-                                    <Input value={settings.site.termsUrl} maxLength={2000} placeholder="/terms 或 https://..." onChange={(event) => updateSiteSetting("termsUrl", event.target.value)} />
-                                </LabeledControl>
-                                <LabeledControl label="隐私政策链接">
-                                    <Input value={settings.site.privacyUrl} maxLength={2000} placeholder="/privacy 或 https://..." onChange={(event) => updateSiteSetting("privacyUrl", event.target.value)} />
-                                </LabeledControl>
+                                <div className="grid min-w-0 grid-cols-[minmax(0,1fr)_96px] gap-3">
+                                    <LabeledControl label="使用条款链接">
+                                        <Input value={settings.site.termsUrl} maxLength={2000} placeholder="/terms 或 https://..." onChange={(event) => updateSiteSetting("termsUrl", event.target.value)} />
+                                    </LabeledControl>
+                                    <LabeledControl label="版本">
+                                        <Input value={settings.site.termsVersion} maxLength={80} placeholder="1.0" onChange={(event) => updateSiteSetting("termsVersion", event.target.value)} />
+                                    </LabeledControl>
+                                </div>
+                                <div className="grid min-w-0 grid-cols-[minmax(0,1fr)_96px] gap-3">
+                                    <LabeledControl label="隐私政策链接">
+                                        <Input value={settings.site.privacyUrl} maxLength={2000} placeholder="/privacy 或 https://..." onChange={(event) => updateSiteSetting("privacyUrl", event.target.value)} />
+                                    </LabeledControl>
+                                    <LabeledControl label="版本">
+                                        <Input value={settings.site.privacyVersion} maxLength={80} placeholder="1.0" onChange={(event) => updateSiteSetting("privacyVersion", event.target.value)} />
+                                    </LabeledControl>
+                                </div>
                             </div>
                             <div className="grid gap-3">
                                 {siteSocialItems.map((item) => {
@@ -292,7 +132,7 @@ export function AdminSiteSection({ controller }: { controller: AdminDashboardCon
                                 <div className="mb-3 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
                                     <div>
                                         <div className="text-sm font-semibold text-stone-950 dark:text-stone-100">友情链接</div>
-                                        <div className="mt-1 text-xs text-stone-500 dark:text-stone-400">启用后会显示在首页顶部导航和底部链接区。</div>
+                                        <div className="mt-1 text-xs text-stone-500 dark:text-stone-400">启用后会显示在首页底部友情链接区。</div>
                                     </div>
                                     <Button icon={<Plus className="size-4" />} onClick={addFriendLink}>
                                         添加链接
@@ -328,7 +168,7 @@ export function AdminSiteSection({ controller }: { controller: AdminDashboardCon
                             <div className="flex items-center gap-3">
                                 <SiteLogoPreview logoUrl={settings.site.logoUrl} />
                                 <div className="min-w-0">
-                                    <div className="truncate text-lg font-semibold">{settings.site.title || "MOCREAI"}</div>
+                                    <div className="truncate text-lg font-semibold">{settings.site.title || "网站名称"}</div>
                                     <div className="mt-1 text-xs text-stone-500 dark:text-stone-400">首页导航品牌</div>
                                 </div>
                             </div>
@@ -339,7 +179,6 @@ export function AdminSiteSection({ controller }: { controller: AdminDashboardCon
                         </div>
                     </div>
                     <SiteSettingStatus site={settings.site} />
-                    <SiteShowcasePreview site={settings.site} onAdd={addHomeShowcaseItem} />
                 </div>
             </div>
         </Panel>
@@ -347,17 +186,38 @@ export function AdminSiteSection({ controller }: { controller: AdminDashboardCon
 }
 
 export function AdminSettingsSection({ controller }: { controller: AdminDashboardController }) {
-    const { settings, setSettings, settingsLoading, mailTestLoading, mailTestTo, setMailTestTo, activeSection, saveSettings, updateGenerationConcurrency, updateGenerationDefaults, updateMailSetting, testMailSettings } = controller;
-    if (activeSection !== "settings") return null;
+    const {
+        settings,
+        setSettings,
+        settingsLoading,
+        mailTestLoading,
+        mailTestTo,
+        setMailTestTo,
+        currentUser,
+        activeSection,
+        saveSettings,
+        updateGenerationConcurrency,
+        updateGenerationDefaults,
+        updateGenerationCostControl,
+        updateDataLifecycle,
+        getLatestSettings,
+        updateMailSetting,
+        testMailSettings,
+    } = controller;
+    const access = resolveAdminSettingsAccess(currentUser);
+    if (activeSection !== "settings" || (!access.system && !access.upstream)) return null;
+    const description = access.system && access.upstream ? "管理账号注册、邮箱服务、生成与数据维护。" : access.system ? "管理账号注册、邮箱服务与数据维护。" : "管理生成并发、成本保护与默认参数。";
+    const navigationClass =
+        access.system && access.upstream ? "grid grid-cols-1 gap-1.5 sm:grid-cols-3 sm:gap-2 2xl:grid-cols-1" : access.system ? "grid grid-cols-1 gap-1.5 sm:grid-cols-2 sm:gap-2 2xl:grid-cols-1" : "grid grid-cols-1 gap-1.5 2xl:grid-cols-1";
     return (
         <Panel>
             <PanelHeader
                 title="系统设置"
-                description="管理账号注册、邮箱服务、生成并发和默认参数。"
+                description={description}
                 actions={
                     <div className="flex items-center justify-end gap-1.5 sm:w-auto sm:flex-row sm:gap-2">
                         <div className="hidden flex-wrap gap-2 text-xs text-stone-500 sm:flex dark:text-stone-400">
-                            <Tag className="m-0">{settings.registrationEnabled ? "注册开放" : "注册关闭"}</Tag>
+                            {access.system ? <Tag className="m-0">{settings.registrationEnabled ? "注册开放" : "注册关闭"}</Tag> : <Tag className="m-0">生成控制</Tag>}
                         </div>
                         <Button
                             type="primary"
@@ -365,18 +225,7 @@ export function AdminSettingsSection({ controller }: { controller: AdminDashboar
                             title="保存系统设置"
                             loading={settingsLoading}
                             icon={<Save className="size-4" />}
-                            onClick={() =>
-                                saveSettings(
-                                    {
-                                        registrationEnabled: settings.registrationEnabled,
-                                        emailRegistrationEnabled: settings.emailRegistrationEnabled,
-                                        mail: settings.mail,
-                                        generationConcurrency: settings.generationConcurrency,
-                                        generationDefaults: settings.generationDefaults,
-                                    },
-                                    "账号、邮箱与生成默认值已保存",
-                                )
-                            }
+                            onClick={() => saveSettings(buildAdminSettingsPatch(getLatestSettings(), access), "系统设置已保存")}
                         >
                             <span className="sm:hidden">保存</span>
                             <span className="hidden sm:inline">保存系统设置</span>
@@ -385,106 +234,129 @@ export function AdminSettingsSection({ controller }: { controller: AdminDashboar
                 }
             />
             <div className="space-y-3 p-3 sm:space-y-5 sm:p-5">
-                <div className="grid grid-cols-2 gap-2 sm:gap-3">
-                    <SettingsStatusTile icon={<UserCog className="size-4" />} label="账号入口" value={settings.registrationEnabled ? "注册开放" : "注册关闭"} detail={settings.emailRegistrationEnabled ? "邮箱注册已启用" : "邮箱注册未启用"} tone="cyan" />
-                    <SettingsStatusTile
-                        icon={<Sparkles className="size-4" />}
-                        label="生成控制"
-                        value={`${settings.generationConcurrency.agent || 1} 个 Agent`}
-                        detail={`图片 ${settings.generationDefaults.imageCount || 1} 张 / ${settings.generationDefaults.videoSeconds === -1 ? "视频智能时长" : `视频 ${settings.generationDefaults.videoSeconds || 5}s`}`}
-                        tone="blue"
-                    />
+                <div className={`grid gap-2 sm:gap-3 ${access.system && access.upstream ? "grid-cols-2" : "grid-cols-1"}`}>
+                    {access.system ? (
+                        <SettingsStatusTile
+                            icon={<UserCog className="size-4" />}
+                            label="账号入口"
+                            value={settings.registrationEnabled ? "注册开放" : "注册关闭"}
+                            detail={settings.emailRegistrationEnabled ? "邮箱注册已启用" : "邮箱注册未启用"}
+                            tone="cyan"
+                        />
+                    ) : null}
+                    {access.upstream ? (
+                        <SettingsStatusTile
+                            icon={<Sparkles className="size-4" />}
+                            label="生成控制"
+                            value={`${settings.generationConcurrency.agent || 1} 个 Agent`}
+                            detail={`图片 ${settings.generationDefaults.imageCount || 1} 张 / ${settings.generationDefaults.videoSeconds === -1 ? "视频智能时长" : `视频 ${settings.generationDefaults.videoSeconds || 5}s`}`}
+                            tone="blue"
+                        />
+                    ) : null}
                 </div>
 
                 <div className="grid gap-4 2xl:grid-cols-[248px_minmax(0,1fr)]">
                     <aside className="2xl:sticky 2xl:top-4 2xl:self-start">
                         <div className="rounded-lg border border-zinc-200 bg-white p-3 dark:border-zinc-800 dark:bg-zinc-950">
                             <div className="px-2 pb-2 text-xs font-semibold text-stone-500 dark:text-stone-400">设置顺序</div>
-                            <nav className="grid grid-cols-2 gap-1.5 sm:gap-2 2xl:grid-cols-1" aria-label="系统设置分组">
-                                <SettingsAnchorItem href="#admin-settings-account" icon={<UserCog className="size-4" />} title="账号与邮箱" detail="注册、SMTP、测试邮件" />
-                                <SettingsAnchorItem href="#admin-settings-generation" icon={<SlidersHorizontal className="size-4" />} title="生成控制" detail="默认值、并发上限" />
+                            <nav className={navigationClass} aria-label="系统设置分组">
+                                {access.system ? <SettingsAnchorItem href="#admin-settings-account" icon={<UserCog className="size-4" />} title="账号与邮箱" detail="注册、SMTP、测试邮件" /> : null}
+                                {access.upstream ? <SettingsAnchorItem href="#admin-settings-generation" icon={<SlidersHorizontal className="size-4" />} title="生成控制" detail="默认值、并发上限" /> : null}
+                                {access.system ? <SettingsAnchorItem href="#admin-settings-lifecycle" icon={<Database className="size-4" />} title="数据维护" detail="到期记录、批次大小" /> : null}
                             </nav>
                         </div>
                     </aside>
 
                     <div className="min-w-0 space-y-4">
-                        <section id="admin-settings-account" className="scroll-mt-6 rounded-lg border border-zinc-200 bg-white p-4 dark:border-zinc-800 dark:bg-zinc-950">
-                            <div className="grid gap-5 xl:grid-cols-[minmax(240px,0.72fr)_minmax(0,1.28fr)]">
-                                <div className="min-w-0 space-y-4">
-                                    <SectionTitle icon={<UserCog className="size-4" />} title="账号策略" />
-                                    <div className="grid gap-3">
-                                        <SettingToggle
-                                            title="开放注册"
-                                            description="关闭后，新账号不能自助注册。"
-                                            checked={settings.registrationEnabled}
-                                            checkedChildren="开放"
-                                            unCheckedChildren="关闭"
-                                            onChange={(registrationEnabled) => setSettings((current) => ({ ...current, registrationEnabled }))}
-                                        />
-                                        <SettingToggle
-                                            title="邮箱注册"
-                                            description="开启后，注册页必须填写邮箱；邮箱唯一，不允许重复注册。"
-                                            checked={settings.emailRegistrationEnabled}
-                                            checkedChildren="开启"
-                                            unCheckedChildren="关闭"
-                                            onChange={(emailRegistrationEnabled) => setSettings((current) => ({ ...current, emailRegistrationEnabled }))}
-                                        />
+                        {access.system ? (
+                            <section id="admin-settings-account" className="scroll-mt-6 rounded-lg border border-zinc-200 bg-white p-4 dark:border-zinc-800 dark:bg-zinc-950">
+                                <div className="grid gap-5 xl:grid-cols-[minmax(240px,0.72fr)_minmax(0,1.28fr)]">
+                                    <div className="min-w-0 space-y-4">
+                                        <SectionTitle icon={<UserCog className="size-4" />} title="账号策略" />
+                                        <div className="grid gap-3">
+                                            <SettingToggle
+                                                title="开放注册"
+                                                description="关闭后，新账号不能自助注册。"
+                                                checked={settings.registrationEnabled}
+                                                checkedChildren="开放"
+                                                unCheckedChildren="关闭"
+                                                onChange={(registrationEnabled) => setSettings((current) => ({ ...current, registrationEnabled }))}
+                                            />
+                                            <SettingToggle
+                                                title="邮箱注册"
+                                                description="开启后，注册页必须填写邮箱；邮箱唯一，不允许重复注册。"
+                                                checked={settings.emailRegistrationEnabled}
+                                                checkedChildren="开启"
+                                                unCheckedChildren="关闭"
+                                                onChange={(emailRegistrationEnabled) => setSettings((current) => ({ ...current, emailRegistrationEnabled }))}
+                                            />
+                                        </div>
+                                    </div>
+
+                                    <div className="min-w-0 border-t border-stone-200 pt-4 xl:border-l xl:border-t-0 xl:pl-5 xl:pt-0 dark:border-stone-800">
+                                        <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                                            <SectionTitle icon={<Mail className="size-4" />} title="邮箱服务" />
+                                            <Button className="w-full sm:w-auto" loading={mailTestLoading} icon={<Send className="size-4" />} onClick={() => void testMailSettings()}>
+                                                测试邮箱
+                                            </Button>
+                                        </div>
+                                        <div className="mt-4 grid gap-3">
+                                            <div className="grid gap-3 sm:grid-cols-2">
+                                                <LabeledControl label="邮箱类型">
+                                                    <Input value={settings.mail.provider} placeholder="QQ 邮箱" onChange={(event) => updateMailSetting("provider", event.target.value)} />
+                                                </LabeledControl>
+                                                <LabeledControl label="SMTP 服务器">
+                                                    <Input value={settings.mail.host} placeholder="smtp.qq.com" onChange={(event) => updateMailSetting("host", event.target.value)} />
+                                                </LabeledControl>
+                                            </div>
+                                            <div className="grid gap-3 sm:grid-cols-[minmax(0,1fr)_auto]">
+                                                <LabeledControl label="端口">
+                                                    <InputNumber className="w-full" min={1} max={65535} precision={0} value={settings.mail.port} onChange={(value) => updateMailSetting("port", Number(value) || 465)} />
+                                                </LabeledControl>
+                                                <SettingInlineToggle title="SSL" checked={settings.mail.secure} checkedChildren="开启" unCheckedChildren="关闭" onChange={(secure) => updateMailSetting("secure", secure)} />
+                                            </div>
+                                            <div className="grid gap-3 lg:grid-cols-2">
+                                                <LabeledControl label="邮箱账号">
+                                                    <Input value={settings.mail.username} placeholder="csyqlz@gmail.com" onChange={(event) => updateMailSetting("username", event.target.value)} />
+                                                </LabeledControl>
+                                                <LabeledControl label="授权码 / 密码">
+                                                    <Input.Password value={settings.mail.password} placeholder="QQ 邮箱请填写 SMTP 授权码" onChange={(event) => updateMailSetting("password", event.target.value)} />
+                                                </LabeledControl>
+                                            </div>
+                                            <div className="grid gap-3 sm:grid-cols-2">
+                                                <LabeledControl label="发件邮箱">
+                                                    <Input value={settings.mail.fromEmail} placeholder="默认使用邮箱账号" onChange={(event) => updateMailSetting("fromEmail", event.target.value)} />
+                                                </LabeledControl>
+                                                <LabeledControl label="发件名称">
+                                                    <Input value={settings.mail.fromName} placeholder={settings.site.title || "网站名称"} onChange={(event) => updateMailSetting("fromName", event.target.value)} />
+                                                </LabeledControl>
+                                            </div>
+                                            <LabeledControl label="测试收件邮箱">
+                                                <Input value={mailTestTo} placeholder="留空则发送到发件邮箱" onChange={(event) => setMailTestTo(event.target.value)} />
+                                            </LabeledControl>
+                                            <div className="rounded-lg border border-cyan-200/70 bg-cyan-50/80 px-3 py-2 text-xs leading-5 text-cyan-900 dark:border-cyan-900/50 dark:bg-cyan-950/30 dark:text-cyan-100">
+                                                QQ、网易、企业邮箱都可填写对应 SMTP；QQ 默认 `smtp.qq.com:465 SSL`，密码通常使用邮箱授权码。
+                                            </div>
+                                        </div>
                                     </div>
                                 </div>
+                            </section>
+                        ) : null}
 
-                                <div className="min-w-0 border-t border-stone-200 pt-4 xl:border-l xl:border-t-0 xl:pl-5 xl:pt-0 dark:border-stone-800">
-                                    <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-                                        <SectionTitle icon={<Mail className="size-4" />} title="邮箱服务" />
-                                        <Button className="w-full sm:w-auto" loading={mailTestLoading} icon={<Send className="size-4" />} onClick={() => void testMailSettings()}>
-                                            测试邮箱
-                                        </Button>
-                                    </div>
-                                    <div className="mt-4 grid gap-3">
-                                        <div className="grid gap-3 sm:grid-cols-2">
-                                            <LabeledControl label="邮箱类型">
-                                                <Input value={settings.mail.provider} placeholder="QQ 邮箱" onChange={(event) => updateMailSetting("provider", event.target.value)} />
-                                            </LabeledControl>
-                                            <LabeledControl label="SMTP 服务器">
-                                                <Input value={settings.mail.host} placeholder="smtp.qq.com" onChange={(event) => updateMailSetting("host", event.target.value)} />
-                                            </LabeledControl>
-                                        </div>
-                                        <div className="grid gap-3 sm:grid-cols-[minmax(0,1fr)_auto]">
-                                            <LabeledControl label="端口">
-                                                <InputNumber className="w-full" min={1} max={65535} precision={0} value={settings.mail.port} onChange={(value) => updateMailSetting("port", Number(value) || 465)} />
-                                            </LabeledControl>
-                                            <SettingInlineToggle title="SSL" checked={settings.mail.secure} checkedChildren="开启" unCheckedChildren="关闭" onChange={(secure) => updateMailSetting("secure", secure)} />
-                                        </div>
-                                        <div className="grid gap-3 lg:grid-cols-2">
-                                            <LabeledControl label="邮箱账号">
-                                                <Input value={settings.mail.username} placeholder="csyqlz@gmail.com" onChange={(event) => updateMailSetting("username", event.target.value)} />
-                                            </LabeledControl>
-                                            <LabeledControl label="授权码 / 密码">
-                                                <Input.Password value={settings.mail.password} placeholder="QQ 邮箱请填写 SMTP 授权码" onChange={(event) => updateMailSetting("password", event.target.value)} />
-                                            </LabeledControl>
-                                        </div>
-                                        <div className="grid gap-3 sm:grid-cols-2">
-                                            <LabeledControl label="发件邮箱">
-                                                <Input value={settings.mail.fromEmail} placeholder="默认使用邮箱账号" onChange={(event) => updateMailSetting("fromEmail", event.target.value)} />
-                                            </LabeledControl>
-                                            <LabeledControl label="发件名称">
-                                                <Input value={settings.mail.fromName} placeholder="MOCREAI" onChange={(event) => updateMailSetting("fromName", event.target.value)} />
-                                            </LabeledControl>
-                                        </div>
-                                        <LabeledControl label="测试收件邮箱">
-                                            <Input value={mailTestTo} placeholder="留空则发送到发件邮箱" onChange={(event) => setMailTestTo(event.target.value)} />
-                                        </LabeledControl>
-                                        <div className="rounded-lg border border-cyan-200/70 bg-cyan-50/80 px-3 py-2 text-xs leading-5 text-cyan-900 dark:border-cyan-900/50 dark:bg-cyan-950/30 dark:text-cyan-100">
-                                            QQ、网易、企业邮箱都可填写对应 SMTP；QQ 默认 `smtp.qq.com:465 SSL`，密码通常使用邮箱授权码。
-                                        </div>
-                                    </div>
+                        {access.upstream ? (
+                            <section id="admin-settings-generation" className="scroll-mt-6 space-y-4">
+                                <div className="grid gap-4 xl:grid-cols-2">
+                                    <GenerationConcurrencyPanel settings={settings} onChange={updateGenerationConcurrency} />
+                                    <GenerationCostControlPanel settings={settings} onChange={updateGenerationCostControl} />
                                 </div>
-                            </div>
-                        </section>
-
-                        <section id="admin-settings-generation" className="scroll-mt-6 grid gap-4 xl:grid-cols-[minmax(0,0.82fr)_minmax(0,1.18fr)]">
-                            <GenerationConcurrencyPanel settings={settings} onChange={updateGenerationConcurrency} />
-                            <GenerationDefaultsPanel settings={settings} onChange={updateGenerationDefaults} />
-                        </section>
+                                <GenerationDefaultsPanel settings={settings} onChange={updateGenerationDefaults} />
+                            </section>
+                        ) : null}
+                        {access.system ? (
+                            <section id="admin-settings-lifecycle" className="scroll-mt-6">
+                                <DataLifecyclePanel settings={settings} onChange={updateDataLifecycle} />
+                            </section>
+                        ) : null}
                     </div>
                 </div>
             </div>

@@ -1,23 +1,20 @@
 "use client";
 
-import dynamic from "next/dynamic";
-import { useCallback, useEffect, useLayoutEffect } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef } from "react";
 
 import { isGenerationTaskNeedsReviewError } from "@/services/api/generation-task-state";
 import { CanvasNodeType, isCanvasImageNodeType } from "../types";
 import { classifyCanvasVideoTaskFailure } from "./canvas-video-task-recovery";
 
-const CanvasAssistantPanel = dynamic(() => import("../components/canvas-assistant-panel").then((mod) => mod.CanvasAssistantPanel), { ssr: false });
-const loadAssetPickerModal = () => import("../components/asset-picker-modal").then((mod) => mod.AssetPickerModal);
-const AssetPickerModal = dynamic(loadAssetPickerModal, { ssr: false, loading: () => null });
-
 import { NODE_STATUS_ERROR, NODE_STATUS_LOADING } from "./canvas-page-elements";
-import { buildGenerationConfig, hydrateAssistantImages, hydrateCanvasImages, isGenerationCanceled } from "./canvas-page-utils";
+import { buildGenerationConfig, hydrateAssistantImages, hydrateCanvasImages, isGenerationCanceled, normalizeCanvasConfigNodeLayout } from "./canvas-page-utils";
+import { pauseCanvasGenerationReview } from "./canvas-generation-review";
 
 import type { CanvasPageState } from "./use-canvas-page-state";
 import type { CanvasTaskRuntime } from "./use-canvas-task-runtime";
 
 export function useCanvasPersistenceEffects({ state, tasks }: { state: CanvasPageState; tasks: CanvasTaskRuntime }) {
+    const skipInitialProjectSyncRef = useRef(false);
     const {
         message,
         modal,
@@ -33,12 +30,9 @@ export function useCanvasPersistenceEffects({ state, tasks }: { state: CanvasPag
         historyCommitTimerRef,
         viewportSaveTimerRef,
         applyingHistoryRef,
-        historyPausedRef,
         didInitialCenterRef,
-        rafRef,
         toolbarHideTimerRef,
         nodeDraggingRef,
-        dragRef,
         effectiveConfig,
         isAiConfigReady,
         openConfigDialog,
@@ -50,6 +44,7 @@ export function useCanvasPersistenceEffects({ state, tasks }: { state: CanvasPag
         loadProject,
         createProject,
         updateProject,
+        flushProjectSave,
         renameProject,
         deleteProjects,
         currentProject,
@@ -72,16 +67,8 @@ export function useCanvasPersistenceEffects({ state, tasks }: { state: CanvasPag
         setSelectedConnectionId,
         hoveredNodeId,
         setHoveredNodeId,
-        connectingParams,
-        setConnectingParams,
-        connectionTargetNodeId,
-        setConnectionTargetNodeId,
         pendingConnectionCreate,
         setPendingConnectionCreate,
-        mouseWorld,
-        setMouseWorld,
-        selectionBox,
-        setSelectionBox,
         contextMenu,
         setContextMenu,
         runningNodeId,
@@ -145,9 +132,6 @@ export function useCanvasPersistenceEffects({ state, tasks }: { state: CanvasPag
         selectedNodeIdsRef,
         viewportRef,
         generateNodeRef,
-        connectingParamsRef,
-        connectionTargetNodeIdRef,
-        selectionBoxRef,
         agentCloseTimerRef,
         autoOpenedAgentRef,
         pendingConnectionCreateRef,
@@ -158,11 +142,8 @@ export function useCanvasPersistenceEffects({ state, tasks }: { state: CanvasPag
         resumingAudioTaskIdsRef,
     } = state;
     const { createHistoryEntry, startGenerationRequest, finishGenerationRequest, stopGenerationByRunningId, confirmStopGeneration, completeVideoTask, completeImageTask, startAndCompleteImageTask, completeTextTask, completeAudioTask } = tasks;
-    const deferReviewedTask = (nodeId: string, taskField: "imageTask" | "videoTask" | "textTask" | "audioTask", errorDetails: string) => {
-        setNodes((prev) => prev.map((item) => (item.id === nodeId ? { ...item, metadata: { ...item.metadata, status: NODE_STATUS_ERROR, errorDetails } } : item)));
-        window.setTimeout(() => {
-            setNodes((prev) => prev.map((item) => (item.id === nodeId && item.metadata?.[taskField] && item.metadata.errorDetails === errorDetails ? { ...item, metadata: { ...item.metadata, status: NODE_STATUS_LOADING } } : item)));
-        }, 30_000);
+    const deferReviewedTask = (nodeId: string, errorDetails: string) => {
+        setNodes((prev) => pauseCanvasGenerationReview(prev, [nodeId], errorDetails));
     };
     const deferVideoTask = useCallback(
         (nodeId: string) => {
@@ -184,9 +165,10 @@ export function useCanvasPersistenceEffects({ state, tasks }: { state: CanvasPag
         setProjectLoaded(false);
         void loadProject(projectId)
             .then(async (project) => {
-                const restoredNodes = await hydrateCanvasImages(project.nodes);
+                const restoredNodes = (await hydrateCanvasImages(project.nodes)).map(normalizeCanvasConfigNodeLayout);
                 const restoredSessions = await hydrateAssistantImages(project.chatSessions || []);
                 if (cancelled) return;
+                skipInitialProjectSyncRef.current = true;
                 setNodes(restoredNodes);
                 setConnections(project.connections);
                 setChatSessions(restoredSessions);
@@ -194,6 +176,7 @@ export function useCanvasPersistenceEffects({ state, tasks }: { state: CanvasPag
                 setBackgroundMode(project.backgroundMode);
                 setShowImageInfo(project.showImageInfo || false);
                 setViewport(project.viewport);
+                didInitialCenterRef.current = Boolean(restoredNodes.length || project.connections.length || project.viewport.x || project.viewport.y || project.viewport.k !== 1 || project.createdAt !== project.updatedAt);
                 historyRef.current = { past: [], future: [] };
                 if (historyCommitTimerRef.current) {
                     clearTimeout(historyCommitTimerRef.current);
@@ -237,7 +220,7 @@ export function useCanvasPersistenceEffects({ state, tasks }: { state: CanvasPag
                     const errorDetails = error instanceof Error ? error.message : "图片生成失败";
                     message.error(errorDetails);
                     if (isGenerationTaskNeedsReviewError(error)) {
-                        deferReviewedTask(node.id, "imageTask", errorDetails);
+                        deferReviewedTask(node.id, errorDetails);
                         return;
                     }
                     setNodes((prev) => prev.map((item) => (item.id === node.id ? { ...item, metadata: { ...item.metadata, status: NODE_STATUS_ERROR, errorDetails, imageTask: undefined } } : item)));
@@ -267,7 +250,7 @@ export function useCanvasPersistenceEffects({ state, tasks }: { state: CanvasPag
                     const failureKind = classifyCanvasVideoTaskFailure(error);
                     if (failureKind === "needs_review") {
                         message.error(errorDetails);
-                        deferReviewedTask(node.id, "videoTask", errorDetails);
+                        deferReviewedTask(node.id, errorDetails);
                         return;
                     }
                     if (failureKind === "query_pending") {
@@ -302,7 +285,7 @@ export function useCanvasPersistenceEffects({ state, tasks }: { state: CanvasPag
                     const errorDetails = error instanceof Error ? error.message : "文本生成失败";
                     message.error(errorDetails);
                     if (isGenerationTaskNeedsReviewError(error)) {
-                        deferReviewedTask(node.id, "textTask", errorDetails);
+                        deferReviewedTask(node.id, errorDetails);
                         return;
                     }
                     setNodes((prev) => prev.map((item) => (item.id === node.id ? { ...item, metadata: { ...item.metadata, status: NODE_STATUS_ERROR, errorDetails, textTask: undefined } } : item)));
@@ -331,7 +314,7 @@ export function useCanvasPersistenceEffects({ state, tasks }: { state: CanvasPag
                     const errorDetails = error instanceof Error ? error.message : "音频生成失败";
                     message.error(errorDetails);
                     if (isGenerationTaskNeedsReviewError(error)) {
-                        deferReviewedTask(node.id, "audioTask", errorDetails);
+                        deferReviewedTask(node.id, errorDetails);
                         return;
                     }
                     setNodes((prev) => prev.map((item) => (item.id === node.id ? { ...item, metadata: { ...item.metadata, status: NODE_STATUS_ERROR, errorDetails, audioTask: undefined } } : item)));
@@ -345,7 +328,7 @@ export function useCanvasPersistenceEffects({ state, tasks }: { state: CanvasPag
     }, [completeAudioTask, effectiveConfig, finishGenerationRequest, message, nodes, projectLoaded, startGenerationRequest]);
 
     useEffect(() => {
-        if (!projectLoaded || applyingHistoryRef.current || historyPausedRef.current) return;
+        if (!projectLoaded || applyingHistoryRef.current) return;
         const next = createHistoryEntry();
         const previous = lastHistoryRef.current;
         if (
@@ -386,7 +369,11 @@ export function useCanvasPersistenceEffects({ state, tasks }: { state: CanvasPag
     );
 
     useEffect(() => {
-        if (!projectLoaded || historyPausedRef.current) return;
+        if (!projectLoaded) return;
+        if (skipInitialProjectSyncRef.current) {
+            skipInitialProjectSyncRef.current = false;
+            return;
+        }
         updateProject(projectId, { nodes, connections, chatSessions, activeChatId, backgroundMode, showImageInfo });
     }, [activeChatId, backgroundMode, chatSessions, connections, nodes, projectId, projectLoaded, showImageInfo, updateProject]);
 
@@ -406,19 +393,38 @@ export function useCanvasPersistenceEffects({ state, tasks }: { state: CanvasPag
         };
     }, [projectId, projectLoaded, updateProject, viewport]);
 
+    useEffect(() => {
+        if (!projectLoaded) return;
+        const flushPendingSave = () => {
+            updateProject(projectId, {
+                nodes: nodesRef.current,
+                connections: connectionsRef.current,
+                chatSessions,
+                activeChatId,
+                backgroundMode,
+                showImageInfo,
+                viewport: viewportRef.current,
+            });
+            void flushProjectSave(projectId, true);
+        };
+        const handleVisibilityChange = () => {
+            if (document.visibilityState === "hidden") flushPendingSave();
+        };
+        window.addEventListener("pagehide", flushPendingSave);
+        document.addEventListener("visibilitychange", handleVisibilityChange);
+        return () => {
+            window.removeEventListener("pagehide", flushPendingSave);
+            document.removeEventListener("visibilitychange", handleVisibilityChange);
+        };
+    }, [activeChatId, backgroundMode, chatSessions, flushProjectSave, projectId, projectLoaded, showImageInfo, updateProject]);
+
     useLayoutEffect(() => {
         nodesRef.current = nodes;
         connectionsRef.current = connections;
         selectedNodeIdsRef.current = selectedNodeIds;
         viewportRef.current = viewport;
-        connectingParamsRef.current = connectingParams;
-        connectionTargetNodeIdRef.current = connectionTargetNodeId;
         pendingConnectionCreateRef.current = pendingConnectionCreate;
-    }, [nodes, connections, selectedNodeIds, viewport, connectingParams, connectionTargetNodeId, pendingConnectionCreate]);
-
-    useLayoutEffect(() => {
-        selectionBoxRef.current = selectionBox;
-    }, [selectionBox]);
+    }, [nodes, connections, selectedNodeIds, viewport, pendingConnectionCreate]);
 
     useEffect(() => {
         const el = containerRef.current;

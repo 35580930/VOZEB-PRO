@@ -14,7 +14,9 @@ const mocks = vi.hoisted(() => ({
     getPaymentByProviderIdentifiers: vi.fn(),
     updateOrder: vi.fn(),
     listPayments: vi.fn(),
+    findOrderPayment: vi.fn(),
     listPlanAssignments: vi.fn(),
+    getPlanAssignmentBySource: vi.fn(),
     updatePlanAssignment: vi.fn(),
     getActivePlanAssignment: vi.fn(),
     getRefundJobByOrderId: vi.fn(),
@@ -42,7 +44,9 @@ vi.mock("@/lib/server/database", () => ({
             getPaymentByProviderIdentifiers: mocks.getPaymentByProviderIdentifiers,
             updateOrder: mocks.updateOrder,
             listPayments: mocks.listPayments,
+            findOrderPayment: mocks.findOrderPayment,
             listPlanAssignments: mocks.listPlanAssignments,
+            getPlanAssignmentBySource: mocks.getPlanAssignmentBySource,
             updatePlanAssignment: mocks.updatePlanAssignment,
             getActivePlanAssignment: mocks.getActivePlanAssignment,
             getRefundJobByOrderId: mocks.getRefundJobByOrderId,
@@ -81,6 +85,7 @@ const baseUser = {
     displayName: "测试用户",
     bio: "",
     role: "user",
+    adminPermissions: [],
     status: "active",
     planId: "existing-plan",
     pointsBalance: 100,
@@ -137,7 +142,11 @@ describe("billing payment completion", () => {
         mocks.checkpointRefundJob.mockResolvedValue(null);
         mocks.releaseRefundJob.mockResolvedValue(null);
         mocks.listPayments.mockImplementation(async () => ({ items: mocks.payments }));
+        mocks.findOrderPayment.mockImplementation(
+            async ({ preferredPaymentId, statuses }: { preferredPaymentId?: string; statuses: string[] }) => mocks.payments.find((item) => item.id === preferredPaymentId) || mocks.payments.find((item) => statuses.includes(item.status)) || null,
+        );
         mocks.listPlanAssignments.mockResolvedValue({ items: [] });
+        mocks.getPlanAssignmentBySource.mockResolvedValue(null);
         mocks.updateOrder.mockImplementation(async (_id: string, patch: Partial<BillingOrderRecord>) => {
             mocks.order = mocks.order ? { ...mocks.order, ...patch } : undefined;
             return mocks.order;

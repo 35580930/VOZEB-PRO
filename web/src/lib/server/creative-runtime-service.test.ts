@@ -1,23 +1,19 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
-    appendCreativeConversationExchange: vi.fn(),
-    createCreativeConversation: vi.fn(),
     getCreativeConversation: vi.fn(),
+    getCreativeConversationsByIds: vi.fn(),
     registerCreativeAssets: vi.fn(),
-    getCreativeWorkbenchSessionDetail: vi.fn(),
-    listCreativeWorkbenchSessionSummaries: vi.fn(),
-    getLocalMediaRegistrations: vi.fn(),
     writePersistentMediaDataUrl: vi.fn(),
     deleteCreativeConversationAggregates: vi.fn(),
     deleteUserLocalMediaAssets: vi.fn(),
 }));
 
 vi.mock("@/lib/server/creative-runtime-store", () => ({
-    appendCreativeConversationExchange: mocks.appendCreativeConversationExchange,
-    createCreativeConversation: mocks.createCreativeConversation,
+    createCreativeConversation: vi.fn(),
     getCreativeAsset: vi.fn(),
     getCreativeConversation: mocks.getCreativeConversation,
+    getCreativeConversationsByIds: mocks.getCreativeConversationsByIds,
     listCreativeAssets: vi.fn(),
     listCreativeConversations: vi.fn(),
     listCreativeMessages: vi.fn(),
@@ -25,15 +21,10 @@ vi.mock("@/lib/server/creative-runtime-store", () => ({
     updateCreativeConversation: vi.fn(),
 }));
 vi.mock("@/lib/server/reference-asset-store", () => ({ writePersistentMediaDataUrl: mocks.writePersistentMediaDataUrl }));
-vi.mock("@/lib/server/local-media-registry", () => ({ getLocalMediaRegistrations: mocks.getLocalMediaRegistrations }));
-vi.mock("@/lib/server/creative-workbench-session-store", () => ({
-    getCreativeWorkbenchSessionDetail: mocks.getCreativeWorkbenchSessionDetail,
-    listCreativeWorkbenchSessionSummaries: mocks.listCreativeWorkbenchSessionSummaries,
-}));
 vi.mock("@/lib/server/creative-entity-deletion-store", () => ({ deleteCreativeConversationAggregates: mocks.deleteCreativeConversationAggregates }));
 vi.mock("@/lib/server/local-media-storage", () => ({ deleteUserLocalMediaAssets: mocks.deleteUserLocalMediaAssets }));
 
-import { appendWorkbenchExchangeForUser, deleteConversationsForUser, getWorkbenchSessionForUser, listWorkbenchSessionsForUser, registerGenerationLogAssetsForUser, uploadAssetForUser } from "./creative-runtime-service";
+import { deleteConversationsForUser, registerGenerationTaskAssetsForUser, uploadAssetForUser } from "./creative-runtime-service";
 
 function file(name: string, type: string, size = 4): File {
     return { name, type, size, arrayBuffer: async () => new Uint8Array(Math.min(size, 4)).buffer } as File;
@@ -41,12 +32,8 @@ function file(name: string, type: string, size = 4): File {
 
 describe("创作会话素材上传", () => {
     beforeEach(() => {
-        mocks.appendCreativeConversationExchange.mockReset().mockResolvedValue({});
-        mocks.createCreativeConversation.mockReset();
-        mocks.getCreativeConversation.mockReset().mockResolvedValue({ id: "conversation-one", userId: "user-one", status: "active" });
-        mocks.getCreativeWorkbenchSessionDetail.mockReset().mockResolvedValue({ id: "conversation-one", messages: [], hasMore: false });
-        mocks.listCreativeWorkbenchSessionSummaries.mockReset().mockResolvedValue([]);
-        mocks.getLocalMediaRegistrations.mockReset().mockResolvedValue([]);
+        mocks.getCreativeConversation.mockReset().mockResolvedValue({ id: "conversation-one", userId: "user-one", surface: "chat", status: "active" });
+        mocks.getCreativeConversationsByIds.mockReset().mockResolvedValue([{ id: "conversation-one", userId: "user-one", surface: "chat", status: "active" }]);
         mocks.writePersistentMediaDataUrl.mockReset().mockResolvedValue({ token: "persistent-one.mp4", storage: "local", bytes: 4, mimeType: "video/mp4" });
         mocks.deleteCreativeConversationAggregates.mockReset().mockResolvedValue({ deletedConversations: 1, deletedProjects: 0, mediaStorageKeys: ["permanent/one.png"] });
         mocks.deleteUserLocalMediaAssets.mockReset().mockResolvedValue({ deletedFiles: 1, deletedBytes: 4, blocked: [] });
@@ -58,6 +45,13 @@ describe("创作会话素材上传", () => {
 
         expect(mocks.deleteCreativeConversationAggregates).toHaveBeenCalledWith("user-one", ["conversation-one"]);
         expect(mocks.deleteUserLocalMediaAssets).toHaveBeenCalledWith("user-one", ["permanent/one.png"]);
+    });
+
+    it("rejects deleting project conversations through the ordinary chat endpoint", async () => {
+        mocks.getCreativeConversationsByIds.mockResolvedValue([{ id: "conversation-one", userId: "user-one", surface: "canvas", projectId: "canvas-one", status: "active" }]);
+
+        await expect(deleteConversationsForUser("user-one", ["conversation-one"])).rejects.toMatchObject({ status: 409 });
+        expect(mocks.deleteCreativeConversationAggregates).not.toHaveBeenCalled();
     });
 
     it("stores image, video and audio as stable assets without persisting base64", async () => {
@@ -89,124 +83,17 @@ describe("创作会话素材上传", () => {
         await expect(uploadAssetForUser("user-one", "conversation-one", file("image.png", "image/png"))).rejects.toMatchObject({ status: 404 });
     });
 
-    it("registers successful workbench media against the shared conversation", async () => {
-        const assets = await registerGenerationLogAssetsForUser("user-one", {
+    it("registers unified Agent task media against the owned conversation", async () => {
+        const assets = await registerGenerationTaskAssetsForUser("user-one", {
             conversationId: "conversation-one",
-            logId: "image-workbench:log-one",
-            source: "image-workbench",
+            runId: "run-one",
+            surface: "chat",
+            taskId: "task-one",
             title: "商品主图",
             assets: [{ type: "image", url: "/api/generation-log-assets/user/file.png", mimeType: "image/png", width: 1024, height: 1024 }],
         });
 
         expect(assets[0]).toMatchObject({ type: "image", serverUrl: "/api/generation-log-assets/user/file.png", storageKind: "local" });
-        expect(mocks.registerCreativeAssets).toHaveBeenCalledWith([expect.objectContaining({ conversationId: "conversation-one", sourceRunId: "image-workbench:image-workbench:log-one" })]);
-    });
-
-    it("stores only public workbench messages without the internal plan", async () => {
-        mocks.getCreativeConversation.mockResolvedValueOnce({ id: "conversation-one", userId: "user-one", status: "active", surface: "chat", source: "image-workbench" });
-
-        await appendWorkbenchExchangeForUser("user-one", { conversationId: "conversation-one", workspace: "image", prompt: "生成商品图", reply: "已收到生成需求。" });
-
-        expect(mocks.appendCreativeConversationExchange).toHaveBeenCalledWith({
-            userId: "user-one",
-            conversationId: "conversation-one",
-            userContent: "生成商品图",
-            assistantContent: "已收到生成需求。",
-            userMetadata: { workspace: "image", contentVisibility: "public" },
-            assistantMetadata: { workspace: "image", contentVisibility: "public" },
-        });
-        expect(JSON.stringify(mocks.appendCreativeConversationExchange.mock.calls[0][0])).not.toContain("workbenchPlan");
-        expect(JSON.stringify(mocks.appendCreativeConversationExchange.mock.calls[0][0])).not.toContain("resolvedPrompt");
-    });
-
-    it("passes request identity for retry idempotency without using prompt text", async () => {
-        mocks.getCreativeConversation.mockResolvedValueOnce({ id: "conversation-one", userId: "user-one", status: "active", surface: "chat", source: "image-workbench" });
-
-        await appendWorkbenchExchangeForUser("user-one", {
-            conversationId: "conversation-one",
-            workspace: "image",
-            prompt: "相同提示词",
-            reply: "已收到生成需求。",
-            requestId: "request-retry-1",
-        });
-
-        expect(mocks.appendCreativeConversationExchange).toHaveBeenCalledWith(expect.objectContaining({ runId: "request-retry-1" }));
-    });
-
-    it("appends consecutive generations to the supplied conversation without creating another one", async () => {
-        mocks.getCreativeConversation.mockResolvedValue({ id: "conversation-one", userId: "user-one", status: "active", surface: "chat", source: "image-workbench" });
-
-        await appendWorkbenchExchangeForUser("user-one", { conversationId: "conversation-one", workspace: "image", prompt: "生成小狗", reply: "已收到生成需求。", requestId: "request-one" });
-        await appendWorkbenchExchangeForUser("user-one", { conversationId: "conversation-one", workspace: "image", prompt: "生成唐老鸭", reply: "已收到生成需求。", requestId: "request-two" });
-
-        expect(mocks.createCreativeConversation).not.toHaveBeenCalled();
-        expect(mocks.appendCreativeConversationExchange).toHaveBeenCalledTimes(2);
-        expect(mocks.appendCreativeConversationExchange.mock.calls.map(([input]) => input.conversationId)).toEqual(["conversation-one", "conversation-one"]);
-    });
-
-    it("persists only owned permanent workbench references as message attachments", async () => {
-        mocks.getCreativeConversation.mockResolvedValueOnce({ id: "conversation-one", userId: "user-one", status: "active", surface: "chat", source: "image-workbench" });
-        mocks.getLocalMediaRegistrations.mockResolvedValueOnce([
-            {
-                storageKey: "permanent/2026/07/28/images/reference.png",
-                scope: "generation",
-                storageClass: "permanent",
-                type: "image",
-                ownerUserId: "user-one",
-                originalName: "人物参考.png",
-                source: "image-workbench",
-                mimeType: "image/png",
-                bytes: 4,
-                createdAt: new Date().toISOString(),
-            },
-        ]);
-
-        await appendWorkbenchExchangeForUser("user-one", {
-            conversationId: "conversation-one",
-            workspace: "image",
-            prompt: "换成白头发",
-            reply: "已收到生成需求。",
-            attachments: [
-                {
-                    kind: "image",
-                    name: "客户端名称.png",
-                    url: "/api/reference-assets/permanent/2026/07/28/images/reference.png",
-                    storageKey: "permanent/2026/07/28/images/reference.png",
-                    mimeType: "image/png",
-                    width: 1600,
-                    height: 900,
-                },
-            ],
-        });
-
-        expect(mocks.appendCreativeConversationExchange).toHaveBeenCalledWith(
-            expect.objectContaining({
-                userMetadata: {
-                    workspace: "image",
-                    contentVisibility: "public",
-                    attachments: [
-                        expect.objectContaining({
-                            kind: "image",
-                            name: "人物参考.png",
-                            url: "/api/generation-log-assets/permanent/2026/07/28/images/reference.png",
-                            storageKey: "permanent/2026/07/28/images/reference.png",
-                            width: 1600,
-                            height: 900,
-                        }),
-                    ],
-                },
-            }),
-        );
-    });
-
-    it("validates workbench summary and detail boundaries", async () => {
-        await listWorkbenchSessionsForUser("user-one", "image", 101);
-        await getWorkbenchSessionForUser("user-one", "conversation-one", "video");
-
-        expect(mocks.listCreativeWorkbenchSessionSummaries).toHaveBeenCalledWith("user-one", "image", 101);
-        expect(mocks.getCreativeWorkbenchSessionDetail).toHaveBeenCalledWith("user-one", "conversation-one", "video", 0);
-        expect(() => listWorkbenchSessionsForUser("user-one", "audio", 10)).toThrow("工作台类型不正确");
-        mocks.getCreativeWorkbenchSessionDetail.mockResolvedValueOnce(null);
-        await expect(getWorkbenchSessionForUser("user-one", "missing", "image")).rejects.toMatchObject({ status: 404 });
+        expect(mocks.registerCreativeAssets).toHaveBeenCalledWith([expect.objectContaining({ conversationId: "conversation-one", sourceRunId: "run-one", sourceTaskId: "task-one", metadata: { surface: "chat", projectId: undefined } })]);
     });
 });

@@ -37,6 +37,7 @@ export type StoredGenerationTaskRecord = {
     lastPollAt?: number;
     lastUpstreamStatus?: string;
     resultPayload?: Record<string, unknown>;
+    reviewReason?: string;
     workerId?: string;
     leaseUntil?: number;
     lastHeartbeatAt?: number;
@@ -74,4 +75,15 @@ export type GenerationTaskCostAggregate = {
     actualPoints: number;
 };
 
-export type GenerationTaskExecutionState = Pick<StoredGenerationTaskRecord, "executionPhase" | "lastUpstreamStatus">;
+export type GenerationTaskPerformanceSummary = {
+    sampleSize: number;
+    planningP50Ms: number;
+    planningP95Ms: number;
+    firstResultP50Ms: number;
+    firstResultP95Ms: number;
+    queueAverageMs: number;
+    upstreamAverageMs: number;
+    reviewAverageMs: number;
+};
+
+export type GenerationTaskExecutionState = Pick<StoredGenerationTaskRecord, "executionPhase" | "lastUpstreamStatus" | "reviewReason">;

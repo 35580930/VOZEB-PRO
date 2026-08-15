@@ -36,7 +36,7 @@ describe("POST /api/admin/works/[id]/review", () => {
     });
 
     it("passes the authenticated administrator identity into the atomic review service", async () => {
-        mocks.currentUser.mockResolvedValue({ id: "admin-one", username: "admin", role: "admin" });
+        mocks.currentUser.mockResolvedValue({ id: "admin-one", username: "admin", role: "admin", status: "active", adminPermissions: ["content.manage"] });
 
         const response = await POST(new Request("http://localhost/api/admin/works/work-one/review", { method: "POST" }), context);
 

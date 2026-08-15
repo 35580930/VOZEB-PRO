@@ -19,7 +19,10 @@ describe("admin backup API", () => {
 
         expect(result.fileName).toBe("backup.json");
         expect(await result.blob.text()).toBe("{}");
-        expect(fetch).toHaveBeenCalledWith("/api/admin/backup", { cache: "no-store" });
+        expect(fetch).toHaveBeenCalledWith("/api/admin/backup/export", {
+            method: "POST",
+            cache: "no-store",
+        });
     });
 
     it("uploads the selected JSON file as multipart form data", async () => {
@@ -33,6 +36,7 @@ describe("admin backup API", () => {
         expect(fetchMock.mock.calls[0][0]).toBe("/api/admin/backup");
         expect(init.method).toBe("POST");
         expect((init.body as FormData).get("file")).toBe(file);
+        expect(Array.from((init.body as FormData).keys())).toEqual(["file"]);
         expect(result.imported).toEqual(["auth"]);
     });
 });

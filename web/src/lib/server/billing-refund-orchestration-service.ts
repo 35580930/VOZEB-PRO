@@ -10,7 +10,6 @@ import { reconcilePaymentRefund, refundPaymentTransaction, type PaymentRefundRes
 type BillingRefundInput = { reason?: unknown; operatorUserId?: unknown; rawPayload?: unknown };
 type RefundClaim = { order: BillingOrderRecord; payment?: PaymentTransactionRecord; job: BillingRefundJobRecord; reason: string; operatorUserId: string; rawPayload?: unknown };
 
-const REFUND_JOB_MAX_ATTEMPTS = 8;
 const REFUND_JOB_LEASE_MS = 2 * 60_000;
 
 export async function refundBillingOrder(orderId: string, input: BillingRefundInput = {}) {
@@ -55,8 +54,7 @@ async function claimBillingRefund(orderId: string, input: BillingRefundInput, wo
         if (jobLeaseActive(existing, now) || (order.status === "refunding" && !existing && !isRefundClaimStale(order))) throw new BillingInputError("退款正在处理中，请稍后再试", 409);
         if (order.status !== "paid" && order.status !== "refunding") throw new BillingInputError("只有已支付订单可以退款", 409);
         if (!order.userId) throw new BillingInputError("订单没有绑定用户", 409);
-        const payments = await repos.billing.listPayments({ orderId: order.id, page: 1, pageSize: 100 });
-        const payment = payments.items.find((item) => item.status === "succeeded" || item.status === "refunded");
+        const payment = (await repos.billing.findOrderPayment({ orderId: order.id, statuses: ["succeeded", "refunded"] })) || undefined;
         const reason = normalizeText(input.reason, "运营退款", 200);
         const operatorUserId = normalizeOptionalText(input.operatorUserId, 120) || "";
         const claimId = randomUUID();
@@ -75,8 +73,7 @@ async function claimBillingRefund(orderId: string, input: BillingRefundInput, wo
             provider: payment?.provider || order.provider,
             status,
             providerRefundId: currentRefund?.providerRefundId || existing?.providerRefundId,
-            attempts: existing?.status === "manual" || existing?.status === "failed" ? 1 : (existing?.attempts || 0) + 1,
-            maxAttempts: existing?.maxAttempts || REFUND_JOB_MAX_ATTEMPTS,
+            attempts: (existing?.attempts || 0) + 1,
             nextAttemptAt: nowIso,
             rawPayload: refundJobPayload(existing?.rawPayload, { reason, operatorUserId, providerRefund: currentRefund }),
             workerId,
@@ -99,8 +96,7 @@ async function processClaimedJob(job: BillingRefundJobRecord, workerId: string) 
         await releaseJob(job, workerId, "completed", undefined, new Date().toISOString());
         return "completed" as const;
     }
-    const payments = await repos.billing.listPayments({ orderId: order.id, page: 1, pageSize: 100 });
-    const payment = payments.items.find((item) => item.id === job.paymentId) || payments.items.find((item) => item.status === "succeeded" || item.status === "refunded");
+    const payment = (await repos.billing.findOrderPayment({ orderId: order.id, preferredPaymentId: job.paymentId, statuses: ["succeeded", "refunded"] })) || undefined;
     const context = refundJobContext(job.rawPayload);
     const claim: RefundClaim = {
         order,
@@ -130,7 +126,7 @@ async function processRefundClaim(claim: RefundClaim, workerId: string) {
         }
         const payload = refundJobPayload(claim.job.rawPayload, { reason: claim.reason, operatorUserId: claim.operatorUserId, providerRefund });
         if (providerRefund.status === "pending") {
-            await releaseJob(claim.job, workerId, nextRetryStatus(claim.job), undefined, undefined, providerRefund, payload);
+            await releaseJob(claim.job, workerId, retryStatus(claim.job), undefined, undefined, providerRefund, payload);
             return { order: claim.order, providerRefund, pending: true };
         }
         await createPostgresRepositories().billing.checkpointRefundJob(claim.job.id, workerId, {
@@ -155,7 +151,7 @@ async function processRefundClaim(claim: RefundClaim, workerId: string) {
         const providerRefundConfirmed = providerRefund && providerRefund.status !== "pending";
         if (providerRefundConfirmed || isRetryableRefundError(error)) {
             const retryJob = providerRefundConfirmed ? { ...claim.job, status: "compensating" as const } : claim.job;
-            const status = nextRetryStatus(retryJob);
+            const status = retryStatus(retryJob);
             await releaseJob(claim.job, workerId, status, message, undefined, providerRefund);
             await markOrderRefundDeferred(claim.order, message, status);
             return { order: claim.order, providerRefund: providerRefund || pendingRefund(claim), pending: status !== "manual", manual: status === "manual" };
@@ -167,11 +163,10 @@ async function processRefundClaim(claim: RefundClaim, workerId: string) {
 }
 
 async function releaseJob(job: BillingRefundJobRecord, workerId: string, status: BillingRefundJobRecord["status"], error?: string, completedAt?: string, providerRefund?: PaymentRefundResult, rawPayload?: JsonValue) {
-    const nextAttemptAt = status === "pending" || status === "processing" || status === "compensating" ? new Date(Date.now() + retryDelayMs(job.attempts)).toISOString() : undefined;
+    const nextAttemptAt = status === "pending" || status === "processing" || status === "compensating" ? new Date().toISOString() : undefined;
     return createPostgresRepositories().billing.releaseRefundJob(job.id, workerId, {
         status,
         attempts: job.attempts,
-        maxAttempts: job.maxAttempts,
         providerRefundId: providerRefund?.providerRefundId || job.providerRefundId,
         nextAttemptAt,
         lastError: error,
@@ -180,8 +175,8 @@ async function releaseJob(job: BillingRefundJobRecord, workerId: string, status:
     });
 }
 
-function nextRetryStatus(job: BillingRefundJobRecord): BillingRefundJobRecord["status"] {
-    return job.attempts >= job.maxAttempts ? "manual" : job.status === "compensating" ? "compensating" : "pending";
+function retryStatus(job: BillingRefundJobRecord): BillingRefundJobRecord["status"] {
+    return job.status === "compensating" ? "compensating" : "pending";
 }
 
 async function markOrderRefundDeferred(order: BillingOrderRecord, error: string, status: BillingRefundJobRecord["status"]) {
@@ -246,10 +241,6 @@ function pendingRefund(claim: RefundClaim): PaymentRefundResult {
 
 function jobLeaseActive(job: BillingRefundJobRecord | null, now: Date) {
     return Boolean(job?.workerId && job.leaseUntil && Date.parse(job.leaseUntil) > now.getTime() && (job.status === "processing" || job.status === "compensating"));
-}
-
-function retryDelayMs(attempts: number) {
-    return Math.min(60 * 60_000, 30_000 * 2 ** Math.min(6, Math.max(0, attempts - 1)));
 }
 
 function isRetryableRefundError(error: unknown) {

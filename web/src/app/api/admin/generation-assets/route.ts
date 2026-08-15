@@ -1,8 +1,10 @@
 import { NextResponse } from "next/server";
 
 import { getCurrentUser } from "@/lib/auth/session";
+import { readJsonBodyResult } from "@/lib/auth/request";
 import { findPublicUserIdsByKeyword, getPublicUsersByIds } from "@/lib/auth/store";
 import { cleanupExpiredLocalMediaAssets, deleteLocalMediaAssets, getLocalMediaAssetSummary, listLocalMediaAssets } from "@/lib/server/local-media-storage";
+import { hasAdminPermission } from "@/lib/admin-permissions";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -10,7 +12,7 @@ export const dynamic = "force-dynamic";
 export async function GET(request: Request) {
     const currentUser = await getCurrentUser();
     if (!currentUser) return NextResponse.json({ error: "请先登录" }, { status: 401 });
-    if (currentUser.role !== "admin") return NextResponse.json({ error: "需要管理员权限" }, { status: 403 });
+    if (!hasAdminPermission(currentUser, "generation.read")) return NextResponse.json({ error: "当前管理员没有查看生成资产的职责权限" }, { status: 403 });
 
     const params = new URL(request.url).searchParams;
     if (params.get("summaryOnly") === "1") return NextResponse.json({ code: 0, data: { summary: await getLocalMediaAssetSummary() }, msg: "OK" });
@@ -43,9 +45,11 @@ export async function GET(request: Request) {
 export async function DELETE(request: Request) {
     const currentUser = await getCurrentUser();
     if (!currentUser) return NextResponse.json({ error: "请先登录" }, { status: 401 });
-    if (currentUser.role !== "admin") return NextResponse.json({ error: "需要管理员权限" }, { status: 403 });
+    if (!hasAdminPermission(currentUser, "generation.manage")) return NextResponse.json({ error: "当前管理员没有管理生成资产的职责权限" }, { status: 403 });
 
-    const body = (await request.json().catch(() => ({}))) as { ids?: unknown; expired?: unknown };
+    const parsed = await readJsonBodyResult<{ ids?: unknown; expired?: unknown }>(request);
+    if (!parsed.ok) return NextResponse.json({ code: parsed.status, data: null, msg: parsed.message }, { status: parsed.status });
+    const body = parsed.data;
     if (body.expired === true) return NextResponse.json({ code: 0, data: await cleanupExpiredLocalMediaAssets(), msg: "过期临时文件已清理" });
     const ids = Array.isArray(body.ids) ? body.ids.filter((id): id is string => typeof id === "string") : [];
     if (!ids.length) return NextResponse.json({ code: 400, data: null, msg: "请选择要删除的媒体文件" }, { status: 400 });

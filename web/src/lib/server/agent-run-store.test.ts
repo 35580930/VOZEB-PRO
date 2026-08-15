@@ -2,16 +2,124 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { AgentRun } from "./agent-run-store";
 
-const mocks = vi.hoisted(() => ({ mutateCreativeRun: vi.fn() }));
+const mocks = vi.hoisted(() => ({ createCreativeRunBundle: vi.fn(), getCreativeAssetsByIds: vi.fn(), mutateCreativeRun: vi.fn() }));
 
 vi.mock("./creative-runtime-store", () => ({
-    createCreativeRunBundle: vi.fn(),
+    createCreativeRunBundle: mocks.createCreativeRunBundle,
+    getCreativeAssetsByIds: mocks.getCreativeAssetsByIds,
     getCreativeRunByClientRequestId: vi.fn(),
     mutateCreativeRun: mocks.mutateCreativeRun,
 }));
 vi.mock("./generation-task-store", () => ({ getStoredGenerationTask: vi.fn(), listStoredGenerationTasks: vi.fn() }));
 
-import { setAgentRunStatus, updateAgentRunById, updateAgentRunTaskById } from "./agent-run-store";
+import { createAgentRun, setAgentRunStatus, updateAgentRunById, updateAgentRunTaskById } from "./agent-run-store";
+
+describe("createAgentRun video frames", () => {
+    beforeEach(() => {
+        vi.clearAllMocks();
+        mocks.createCreativeRunBundle.mockImplementation(async (_userId, input) => input.run);
+    });
+
+    it("accepts ready image frames owned by the current user", async () => {
+        mocks.getCreativeAssetsByIds.mockResolvedValue([
+            { id: "first-image", userId: "user", type: "image", status: "ready" },
+            { id: "last-image", userId: "user", type: "image", status: "ready" },
+        ]);
+
+        await expect(createAgentRun("user", frameRunRequest())).resolves.toMatchObject({
+            referencedAssetIds: ["first-image", "last-image"],
+            generationPreferences: { video: { referenceMode: "first_last", firstFrameAssetId: "first-image", lastFrameAssetId: "last-image" } },
+        });
+    });
+
+    it.each([
+        [[{ id: "first-image", userId: "other-user", type: "image", status: "ready" }], "视频首尾帧图片不存在或已失效"],
+        [[{ id: "first-image", userId: "user", type: "video", status: "ready" }], "视频首尾帧只能使用图片素材"],
+        [[{ id: "first-image", userId: "user", type: "image", status: "deleted" }], "视频首尾帧图片不存在或已失效"],
+    ])("rejects invalid frame assets", async (assets, message) => {
+        mocks.getCreativeAssetsByIds.mockResolvedValue(assets);
+
+        await expect(createAgentRun("user", frameRunRequest({ lastFrameAssetId: undefined, referenceMode: "first_frame", assetIds: ["first-image"] }))).rejects.toThrow(message);
+        expect(mocks.createCreativeRunBundle).not.toHaveBeenCalled();
+    });
+});
+
+describe("createAgentRun Canvas snapshot", () => {
+    beforeEach(() => {
+        vi.clearAllMocks();
+        mocks.createCreativeRunBundle.mockImplementation(async (_userId, input) => input);
+    });
+
+    it("persists one trusted compact snapshot with exact config size and one-hop context", async () => {
+        const created = await createAgentRun("user", {
+            clientRequestId: "request-canvas",
+            surface: "canvas",
+            projectId: "trusted-project",
+            prompt: "按当前配置修改商品图",
+            assetIds: [],
+            skillIds: [],
+            modelIds: [],
+            snapshot: {
+                projectId: "spoofed-project",
+                imageSize: "1:1",
+                selectedNodeIds: ["selected", "selected"],
+                nodes: [
+                    { id: "config", type: "config", title: "配置", metadata: { size: "1824x1024" } },
+                    {
+                        id: "selected",
+                        type: "image",
+                        title: "商品",
+                        width: 400,
+                        height: 600,
+                        metadata: { content: `data:image/png;base64,${"binary-marker".repeat(20_000)}`, prompt: "红色商品包装", serverUrl: "/api/reference-assets/current", naturalWidth: 800, naturalHeight: 1200 },
+                    },
+                    { id: "related", type: "text", title: "文案", metadata: { content: "红色包装" } },
+                    { id: "unrelated", type: "image", title: "旧图", metadata: { serverUrl: "/api/reference-assets/old" } },
+                ],
+                connections: [{ id: "edge", fromNodeId: "related", toNodeId: "selected" }],
+                viewport: { x: 100, y: 200, k: 0.5 },
+            },
+        });
+
+        expect(created.run.snapshot).toMatchObject({
+            canvasSnapshotVersion: 1,
+            projectId: "trusted-project",
+            imageSize: "1:1",
+            selectedNodeIds: ["selected"],
+            analysis: { nodeCount: 4, selectedNodeTypes: ["image"] },
+        });
+        expect((created.run.snapshot as { nodes: Array<{ id: string; metadata: Record<string, unknown> }> }).nodes.map((node) => node.id)).toEqual(["config", "selected", "related"]);
+        expect((created.run.snapshot as { nodes: Array<{ id: string; metadata: Record<string, unknown> }> }).nodes[0]?.metadata.size).toBe("1824x1024");
+        expect((created.run.snapshot as { nodes: Array<{ id: string; metadata: Record<string, unknown> }> }).nodes[1]?.metadata).toMatchObject({ content: "红色商品包装", url: "/api/reference-assets/current" });
+        expect(JSON.stringify(created.run.snapshot)).not.toContain("binary-marker");
+        expect(created.run.snapshot).not.toHaveProperty("viewport");
+        expect(mocks.createCreativeRunBundle).toHaveBeenCalledWith("user", expect.objectContaining({ run: expect.objectContaining({ snapshot: created.run.snapshot }) }));
+    });
+
+    it("keeps the complete compact Canvas when the current turn has no selected nodes", async () => {
+        const created = await createAgentRun("user", {
+            clientRequestId: "request-canvas-all",
+            surface: "canvas",
+            projectId: "project",
+            prompt: "总结当前画布",
+            assetIds: [],
+            skillIds: [],
+            modelIds: [],
+            snapshot: {
+                selectedNodeIds: [],
+                nodes: [
+                    { id: "one", type: "text", title: "一", metadata: { content: "第一段" } },
+                    { id: "two", type: "image", title: "二", metadata: { url: "/api/reference-assets/two" } },
+                ],
+                connections: [{ id: "edge", fromNodeId: "one", toNodeId: "two" }],
+            },
+        });
+
+        expect((created.run.snapshot as { nodes: unknown[]; connections: unknown[]; analysis: { nodeCount: number } }).nodes).toHaveLength(2);
+        expect((created.run.snapshot as { nodes: unknown[]; connections: unknown[]; analysis: { nodeCount: number } }).connections).toHaveLength(1);
+        expect((created.run.snapshot as { nodes: unknown[]; connections: unknown[]; analysis: { nodeCount: number } }).analysis.nodeCount).toBe(2);
+    });
+});
 
 describe("setAgentRunStatus", () => {
     beforeEach(() => vi.clearAllMocks());
@@ -165,5 +273,24 @@ function canvasRun(): AgentRun {
         reviewed: false,
         createdAt: 1,
         updatedAt: 2,
+    };
+}
+
+function frameRunRequest(overrides: { referenceMode?: "first_frame" | "first_last"; firstFrameAssetId?: string; lastFrameAssetId?: string; assetIds?: string[] } = {}) {
+    return {
+        clientRequestId: "request-frames",
+        surface: "chat" as const,
+        prompt: "让首尾画面自然衔接",
+        assetIds: overrides.assetIds || ["first-image", "last-image"],
+        skillIds: [],
+        modelIds: [],
+        preferences: {
+            mode: "video" as const,
+            video: {
+                referenceMode: overrides.referenceMode || "first_last",
+                firstFrameAssetId: overrides.firstFrameAssetId || "first-image",
+                ...(overrides.lastFrameAssetId === undefined && overrides.referenceMode === "first_frame" ? {} : { lastFrameAssetId: overrides.lastFrameAssetId || "last-image" }),
+            },
+        },
     };
 }

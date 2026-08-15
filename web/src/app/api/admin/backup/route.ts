@@ -1,9 +1,11 @@
+import { hasAdminPermission } from "@/lib/admin-permissions";
 import { NextResponse } from "next/server";
 
 import { getCurrentUser } from "@/lib/auth/session";
 import { encryptAuthDbSecretsForStorage } from "@/lib/auth/store-normalizers";
-import { mergeAuthBackupSecrets, sanitizeAuthBackup } from "@/lib/server/admin-backup-policy";
+import { mergeAuthBackupSecrets } from "@/lib/server/admin-backup-policy";
 import { readAdminBackupData, restoreAdminBackupData, type AdminBackupData } from "@/lib/server/admin-backup-store";
+import { auditActorFromRequest, safeRecordAuditLog } from "@/lib/server/audit-log-store";
 import { getDatabaseProvider } from "@/lib/server/database";
 import { copyDataFile, ensureDataDirectory, listDataDirectory, removeDataPath, resolveDataPath, writeJsonDataFile } from "@/lib/server/data-adapter";
 import { readRequestBodyBytes, RequestBodyTooLargeError } from "@/lib/server/request-body-limit";
@@ -22,39 +24,10 @@ const MAX_IMPORT_REQUEST_BYTES = MAX_IMPORT_BYTES + 64 * 1024;
 const RESTORE_IMPORT_BACKUP_LIMIT = 3;
 const RESTORE_IMPORT_BACKUP_PATTERN = /^\d{4}-\d{2}-\d{2}T.+Z$/;
 
-export async function GET() {
-    const currentUser = await getCurrentUser();
-    if (!currentUser) return NextResponse.json({ error: "请先登录" }, { status: 401 });
-    if (currentUser.role !== "admin") return NextResponse.json({ error: "需要管理员权限" }, { status: 403 });
-
-    const exportedAt = new Date().toISOString();
-    const data = await readAdminBackupData();
-    const backup = {
-        app: "MOCREAI",
-        version: 1,
-        backupType: "account-config",
-        exportedAt,
-        files: {
-            auth: sanitizeAuthBackup(data.auth),
-            prompts: data.prompts,
-            generationLogs: data.generationLogs,
-            accountDeletionRequests: sanitizeAccountDeletionRequestBackup(data.accountDeletionRequests),
-        },
-    };
-
-    return new NextResponse(JSON.stringify(backup, null, 2), {
-        headers: {
-            "Content-Type": "application/json; charset=utf-8",
-            "Content-Disposition": `attachment; filename="vozeb-pro-data-backup-${exportedAt.slice(0, 10)}.json"`,
-            "Cache-Control": "no-store",
-        },
-    });
-}
-
 export async function POST(request: Request) {
     const currentUser = await getCurrentUser();
     if (!currentUser) return NextResponse.json({ error: "请先登录" }, { status: 401 });
-    if (currentUser.role !== "admin") return NextResponse.json({ error: "需要管理员权限" }, { status: 403 });
+    if (!hasAdminPermission(currentUser, "system.manage")) return NextResponse.json({ error: "需要管理员权限" }, { status: 403 });
 
     const contentType = request.headers.get("content-type") || "";
     if (!contentType.toLowerCase().includes("multipart/form-data")) return NextResponse.json({ error: "备份上传格式不正确" }, { status: 400 });
@@ -103,19 +76,38 @@ export async function POST(request: Request) {
     const safetyBackupName = importedAt.replace(/[:.]/g, "-");
     const safetyBackupPath = `restore-backups/${safetyBackupName}`;
     const safetyBackupDir = resolveDataPath(safetyBackupPath);
-    await ensureDataDirectory(safetyBackupPath);
-    await createSafetyBackup(currentData, safetyBackupPath);
     const valueByKey = new Map(values.map((entry) => [entry.key, entry.value]));
-    await restoreAdminBackupData(
-        {
-            auth: (valueByKey.get("auth") ?? currentData.auth) as AdminBackupData["auth"],
-            prompts: (valueByKey.get("prompts") ?? currentData.prompts) as AdminBackupData["prompts"],
-            generationLogs: (valueByKey.get("generationLogs") ?? currentData.generationLogs) as AdminBackupData["generationLogs"],
-            accountDeletionRequests: (valueByKey.get("accountDeletionRequests") ?? currentData.accountDeletionRequests) as AdminBackupData["accountDeletionRequests"],
-        },
-        { mode: "account-config" },
-    );
-    const removedSafetyBackups = await pruneRestoreImportBackups();
+    let removedSafetyBackups = 0;
+    try {
+        await ensureDataDirectory(safetyBackupPath);
+        await createSafetyBackup(currentData, safetyBackupPath);
+        await restoreAdminBackupData(
+            {
+                auth: (valueByKey.get("auth") ?? currentData.auth) as AdminBackupData["auth"],
+                prompts: (valueByKey.get("prompts") ?? currentData.prompts) as AdminBackupData["prompts"],
+                generationLogs: (valueByKey.get("generationLogs") ?? currentData.generationLogs) as AdminBackupData["generationLogs"],
+                accountDeletionRequests: (valueByKey.get("accountDeletionRequests") ?? currentData.accountDeletionRequests) as AdminBackupData["accountDeletionRequests"],
+            },
+            { mode: "account-config" },
+        );
+        removedSafetyBackups = await pruneRestoreImportBackups();
+        await safeRecordAuditLog({
+            action: "admin.backup.restore",
+            actor: auditActorFromRequest(request, currentUser),
+            target: { type: "backup", id: safetyBackupName },
+            metadata: { mode: "account-config", imported: values.map((entry) => entry.key) },
+        });
+    } catch (error) {
+        await safeRecordAuditLog({
+            action: "admin.backup.restore",
+            status: "failure",
+            actor: auditActorFromRequest(request, currentUser),
+            target: { type: "backup", id: safetyBackupName },
+            metadata: { error: error instanceof Error ? error.message : "unknown" },
+        });
+        console.error("Admin backup restore failed", error);
+        return NextResponse.json({ error: "备份恢复失败，原数据未被确认替换" }, { status: 500 });
+    }
 
     return NextResponse.json({
         ok: true,
@@ -206,11 +198,4 @@ async function pruneRestoreImportBackups() {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
     return Boolean(value && typeof value === "object" && !Array.isArray(value));
-}
-
-function sanitizeAccountDeletionRequestBackup(value: AdminBackupData["accountDeletionRequests"]) {
-    return {
-        version: 1,
-        requests: value.requests.map(({ email: _email, ...request }) => request),
-    };
 }

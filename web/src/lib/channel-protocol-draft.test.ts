@@ -42,6 +42,26 @@ curl --url https://api.example.com/v1/images/edits --header 'Authorization: Bear
         expect(draft?.operations[1].config).toMatchObject({ cancelPath: "/videos/:task_id/cancel", cancelMethod: "POST" });
     });
 
+    it("accepts explicit first-frame and last-frame video template variables", () => {
+        const draft = protocolDraftFromUnknown({
+            baseUrl: "https://api.example.com/v1",
+            authMode: "bearer",
+            operations: [
+                {
+                    capability: "video",
+                    models: ["video-frames"],
+                    config: {
+                        createPath: "/videos",
+                        requestTemplate: '{"model":"{{model}}","prompt":"{{prompt}}","first_frame":"{{first_frame}}","first_frame_url":"{{first_frame_url}}","last_frame":"{{last_frame}}","last_frame_url":"{{last_frame_url}}"}',
+                        resultField: "data.video_url",
+                    },
+                },
+            ],
+        });
+
+        expect(draft?.operations[0].config.requestTemplate).toContain("{{last_frame_url}}");
+    });
+
     it("extracts every capability path from one relative multi-endpoint example", () => {
         const draft = parseDeterministicProtocolDraft({
             text: `GET /v1/models

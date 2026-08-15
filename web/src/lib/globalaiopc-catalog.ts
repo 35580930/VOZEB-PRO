@@ -1,3 +1,5 @@
+import type { VideoReferenceRole } from "@/lib/video-reference-contract";
+
 export const GLOBAL_AIOPC_LLM_BASE_URL = "http://apillm.globalaiopc.com/gw_llm_power";
 export const GLOBAL_AIOPC_MEDIA_BASE_URL = "https://zcbservice.aizfw.cn/kyyReactApiServer";
 
@@ -19,6 +21,7 @@ export type GlobalAiOpcPreset = {
     supportsReferenceImage?: boolean;
     supportsReferenceVideo?: boolean;
     supportsReferenceAudio?: boolean;
+    videoReferenceRoles?: VideoReferenceRole[];
 };
 
 const presets = [
@@ -60,6 +63,7 @@ const presets = [
         requestMode: "input-reference",
         durationRange: "按模型限制",
         supportsReferenceImage: true,
+        videoReferenceRoles: ["reference", "first_frame"],
     },
     {
         id: "video-veo",
@@ -73,6 +77,7 @@ const presets = [
         requestMode: "input-reference",
         durationRange: "按模型限制",
         supportsReferenceImage: true,
+        videoReferenceRoles: ["reference", "first_frame"],
     },
     {
         id: "video-seedance",
@@ -86,6 +91,7 @@ const presets = [
         requestMode: "content",
         durationRange: "按模型限制",
         supportsReferenceImage: true,
+        videoReferenceRoles: ["reference"],
     },
     {
         id: "video-seedance-2",
@@ -101,6 +107,7 @@ const presets = [
         supportsReferenceImage: true,
         supportsReferenceVideo: true,
         supportsReferenceAudio: true,
+        videoReferenceRoles: ["reference"],
     },
     {
         id: "video-seedance-discount",
@@ -116,6 +123,7 @@ const presets = [
         supportsReferenceImage: true,
         supportsReferenceVideo: true,
         supportsReferenceAudio: true,
+        videoReferenceRoles: ["reference", "first_frame", "last_frame"],
     },
     {
         id: "video-seedance-special",
@@ -131,6 +139,7 @@ const presets = [
         supportsReferenceImage: true,
         supportsReferenceVideo: true,
         supportsReferenceAudio: true,
+        videoReferenceRoles: ["reference", "first_frame", "last_frame"],
     },
     {
         id: "video-seedance-x1",
@@ -144,6 +153,7 @@ const presets = [
         requestMode: "content-first-frame",
         durationRange: "按模型限制",
         supportsReferenceImage: true,
+        videoReferenceRoles: ["first_frame"],
     },
     {
         id: "video-sd2-manxue",
@@ -205,6 +215,7 @@ const presets = [
         requestMode: "happyhorse-i2v",
         durationRange: "按模型限制",
         supportsReferenceImage: true,
+        videoReferenceRoles: ["first_frame"],
     },
     {
         id: "video-happyhorse-r2v",
@@ -410,6 +421,8 @@ export type GlobalAiOpcVideoRequest = {
     videos: string[];
     audios: string[];
     generateAudio: boolean;
+    firstFrame?: string;
+    lastFrame?: string;
 };
 
 export function buildGlobalAiOpcVideoRequest(preset: GlobalAiOpcPreset, input: GlobalAiOpcVideoRequest): Record<string, unknown> {
@@ -420,7 +433,12 @@ export function buildGlobalAiOpcVideoRequest(preset: GlobalAiOpcPreset, input: G
         case "content-first-frame":
             return { model: input.model, resolution: input.resolution, ratio: input.ratio, duration: input.duration, content: globalAiOpcFirstFrameContent(input) };
         case "input-reference":
-            return { ...base, aspect_ratio: input.ratio, ...(preset.id === "video-sora" ? { seconds: input.duration } : { resolution: input.resolution }), ...(input.images.length ? { input_reference: input.images } : {}) };
+            return {
+                ...base,
+                aspect_ratio: input.ratio,
+                ...(preset.id === "video-sora" ? { seconds: input.duration } : { resolution: input.resolution }),
+                ...(input.firstFrame || input.images[0] ? { input_reference: [input.firstFrame || input.images[0]] } : {}),
+            };
         case "seedance2":
             return {
                 ...base,
@@ -452,7 +470,7 @@ export function buildGlobalAiOpcVideoRequest(preset: GlobalAiOpcPreset, input: G
         case "happyhorse-t2v":
             return { ...base, duration: input.duration, ratio: input.ratio, resolution: upperResolution(input.resolution), seed: 0 };
         case "happyhorse-i2v":
-            return { ...base, first_image: input.images[0], duration: input.duration, resolution: upperResolution(input.resolution), seed: 0 };
+            return { ...base, first_image: input.firstFrame || input.images[0], duration: input.duration, resolution: upperResolution(input.resolution), seed: 0 };
         case "happyhorse-r2v":
             return { ...base, ...(input.images.length ? { referenceImages: input.images } : {}), duration: input.duration, ratio: input.ratio, resolution: upperResolution(input.resolution), seed: 0 };
         case "happyhorse-edit":
@@ -475,6 +493,8 @@ export function buildGlobalAiOpcVideoRequest(preset: GlobalAiOpcPreset, input: G
 function globalAiOpcContent(input: GlobalAiOpcVideoRequest) {
     return [
         { type: "text", text: input.prompt },
+        ...(input.firstFrame ? [{ type: "image_url", role: "first_frame", image_url: { url: input.firstFrame } }] : []),
+        ...(input.lastFrame ? [{ type: "image_url", role: "last_frame", image_url: { url: input.lastFrame } }] : []),
         ...input.images.map((url) => ({ type: "image_url", role: "reference_image", image_url: { url } })),
         ...input.videos.map((url) => ({ type: "video_url", role: "reference_video", video_url: { url } })),
         ...input.audios.map((url) => ({ type: "audio_url", role: "reference_audio", audio_url: { url } })),
@@ -482,7 +502,8 @@ function globalAiOpcContent(input: GlobalAiOpcVideoRequest) {
 }
 
 function globalAiOpcFirstFrameContent(input: GlobalAiOpcVideoRequest) {
-    return [{ type: "text", text: input.prompt }, ...input.images.slice(0, 1).map((url) => ({ type: "image_url", role: "first_frame", image_url: { url } }))];
+    const firstFrame = input.firstFrame || input.images[0];
+    return [{ type: "text", text: input.prompt }, ...(firstFrame ? [{ type: "image_url", role: "first_frame", image_url: { url: firstFrame } }] : [])];
 }
 
 function upperResolution(value: string) {

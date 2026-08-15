@@ -10,7 +10,7 @@ import { GET } from "./route";
 describe("GET /api/admin/generation-overview", () => {
     beforeEach(() => {
         vi.clearAllMocks();
-        mocks.getCurrentUser.mockResolvedValue({ id: "admin", role: "admin" });
+        mocks.getCurrentUser.mockResolvedValue({ id: "admin", role: "admin", status: "active", adminPermissions: ["analytics.read"] });
         mocks.getAdminGenerationOverviewSummary.mockResolvedValue({ windowDays: 7, totalCalls: 0, dailyCalls: [] });
     });
 

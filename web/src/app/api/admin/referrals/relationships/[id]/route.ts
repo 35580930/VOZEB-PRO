@@ -1,3 +1,4 @@
+import { hasAdminPermission } from "@/lib/admin-permissions";
 import { NextResponse } from "next/server";
 
 import { readJsonBody } from "@/lib/auth/request";
@@ -12,7 +13,7 @@ export const dynamic = "force-dynamic";
 export async function PATCH(request: Request, context: { params: Promise<{ id: string }> }) {
     const admin = await getCurrentUser();
     if (!admin) return NextResponse.json({ code: 401, data: null, msg: "请先登录" }, { status: 401 });
-    if (admin.role !== "admin") return NextResponse.json({ code: 403, data: null, msg: "需要管理员权限" }, { status: 403 });
+    if (!hasAdminPermission(admin, "commerce.manage")) return NextResponse.json({ code: 403, data: null, msg: "需要管理员权限" }, { status: 403 });
     const { id } = await context.params;
     try {
         const body = await readJsonBody<{ riskStatus?: unknown; reason?: unknown }>(request);

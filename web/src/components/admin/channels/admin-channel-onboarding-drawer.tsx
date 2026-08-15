@@ -7,8 +7,9 @@ import { ArrowLeft, Check, CircleDollarSign, Info, Link2, PlugZap, RefreshCw, Sa
 import { AdminChannelProtocolSetup } from "@/components/admin/admin-channel-protocol-setup";
 import { LabeledControl } from "@/components/admin/admin-settings-controls";
 import { createSystemChannel } from "@/components/admin/admin-dashboard-elements";
-import type { SystemChannelAuthMode, SystemChannelProtocol, SystemModelChannel } from "@/lib/auth/store";
-import { applyChannelProtocol, channelConnectionReady, channelProtocolDefinition, channelProtocolOptions, channelRequiresApiKey, resolveChannelAuthMode } from "@/lib/channel-protocol-registry";
+import type { LogicalModelCapability, SystemChannelAuthMode, SystemChannelProtocol, SystemModelChannel } from "@/lib/auth/store";
+import { applyChannelProtocol, channelConnectionReady, channelProtocolDefinition, channelProtocolOptions, channelRequiresApiKey, channelSupportsModelCatalog, protocolModelConfig, resolveChannelAuthMode } from "@/lib/channel-protocol-registry";
+import { inferModelCapability, normalizeModelId } from "@/lib/model-capability";
 import { capabilityLabel, channelModelCapability, synchronizeLogicalModelsWithChannels } from "@/lib/model-routing-config";
 
 import { defaultModelField, removeChannelFromWorkspace, type ChannelWorkspaceSettings } from "./admin-channel-workspace-model";
@@ -25,7 +26,7 @@ type Props = {
     onPersist: (settings: ChannelWorkspaceSettings, successText: string) => Promise<boolean>;
 };
 
-const steps = [{ title: "选择协议" }, { title: "连接上游" }, { title: "获取模型" }, { title: "同步模型" }, { title: "确认启用" }];
+const steps = [{ title: "选择协议" }, { title: "连接上游" }, { title: "添加模型" }, { title: "同步模型" }, { title: "确认启用" }];
 
 export function AdminChannelOnboardingDrawer({ open, initialProtocol, settings, fetchingModelId, saving, onClose, onChange, onFetchModels, onPersist }: Props) {
     const { message, modal } = App.useApp();
@@ -121,7 +122,8 @@ export function AdminChannelOnboardingDrawer({ open, initialProtocol, settings, 
     return (
         <Drawer
             title="接入新渠道"
-            width="min(736px, 100vw)"
+            size={736}
+            styles={{ wrapper: { maxWidth: "100vw" } }}
             open={open}
             destroyOnHidden
             mask={{ closable: false }}
@@ -320,28 +322,92 @@ function ProtocolLockedSummary({ channel }: { channel: SystemModelChannel }) {
 }
 
 function ModelStep({ channel, fetching, onChange, onFetch }: { channel: SystemModelChannel; fetching: boolean; onChange: (patch: Partial<SystemModelChannel>) => void; onFetch: () => void }) {
+    const canSync = channelSupportsModelCatalog(channel);
+    const definition = channelProtocolDefinition(channel.advancedConfig?.protocol || "auto");
+    const hasDocumentedModels = Boolean(definition.builtInModels?.length);
+    const manualCapabilityOptions = definition.capabilities.map((capability) => ({ label: capabilityLabel(capability), value: capability }));
+    const updateModels = (models: string[]) => {
+        const nextModels = models.map((model) => model.trim()).filter(Boolean);
+        if (canSync) return onChange({ models: nextModels });
+        const advanced = channel.advancedConfig!;
+        const modelCapabilities = { ...(advanced.modelCapabilities || {}) };
+        const modelConfigs = { ...(advanced.modelConfigs || {}) };
+        for (const model of nextModels) {
+            const key = normalizeModelId(model);
+            const inferred = modelCapabilities[key] || inferModelCapability(model);
+            const capability = definition.capabilities.includes(inferred) ? inferred : definition.capabilities[0];
+            if (!capability) continue;
+            modelCapabilities[key] = capability;
+            const config = protocolModelConfig(advanced.protocol, capability);
+            if (config) modelConfigs[key] = config;
+        }
+        onChange({ models: nextModels, advancedConfig: { ...advanced, modelCapabilities, modelConfigs } });
+    };
+    const updateCapability = (model: string, capability: LogicalModelCapability) => {
+        const advanced = channel.advancedConfig!;
+        const key = normalizeModelId(model);
+        const config = protocolModelConfig(advanced.protocol, capability);
+        onChange({
+            advancedConfig: {
+                ...advanced,
+                modelCapabilities: { ...(advanced.modelCapabilities || {}), [key]: capability },
+                modelConfigs: { ...(advanced.modelConfigs || {}), ...(config ? { [key]: config } : {}) },
+            },
+        });
+    };
     return (
         <div>
             <div className="mb-4 flex flex-wrap items-center justify-between gap-2 border-b border-stone-200 pb-3 dark:border-stone-800">
                 <div>
                     <div className="text-sm font-semibold text-stone-950 dark:text-stone-100">上游模型</div>
-                    <div className="mt-1 text-xs text-stone-500 dark:text-stone-400">同步只会合并模型，不删除手工模型。</div>
+                    <div className="mt-1 text-xs text-stone-500 dark:text-stone-400">
+                        {canSync ? "同步只会合并模型，不删除手工模型。" : hasDocumentedModels ? `已按官方文档预置 ${definition.builtInModels?.length} 个模型，无需目录同步。` : "当前协议没有公开模型目录，请填写上游提供的真实模型 ID。"}
+                    </div>
                 </div>
-                <Button icon={<RefreshCw className="size-4" />} loading={fetching} onClick={onFetch}>
-                    同步模型
-                </Button>
+                {canSync ? (
+                    <Button icon={<RefreshCw className="size-4" />} loading={fetching} onClick={onFetch}>
+                        同步模型
+                    </Button>
+                ) : null}
             </div>
-            <LabeledControl label="模型列表">
-                <Select mode="tags" className="w-full" maxTagCount="responsive" value={channel.models} placeholder="同步失败时可手动输入模型 ID" onChange={(models) => onChange({ models })} />
+            {!canSync ? (
+                <div className="mb-4 flex items-start gap-2 border-y border-stone-200 py-3 text-sm leading-6 text-stone-600 dark:border-stone-800 dark:text-stone-300">
+                    <Info className="mt-1 size-4 shrink-0 text-stone-400" aria-hidden />
+                    <span>
+                        {hasDocumentedModels
+                            ? "模型 ID 已按官方新版文档写入协议配置；系统不会请求旧版 /v1/models。"
+                            : definition.id === "yumeng"
+                              ? "昱梦新版只公开了 V2 任务接口。请从上游控制台或文档复制模型 ID，在下方输入后按 Enter；系统不会请求旧版 /v1/models。"
+                              : "当前协议未配置模型目录。请从上游控制台或文档复制模型 ID，在下方输入后按 Enter。"}
+                    </span>
+                </div>
+            ) : null}
+            <LabeledControl label="模型 ID">
+                <Select
+                    mode="tags"
+                    className="w-full"
+                    maxTagCount="responsive"
+                    tokenSeparators={[",", "，", "\n"]}
+                    disabled={hasDocumentedModels}
+                    value={channel.models}
+                    placeholder={canSync ? "同步模型，或输入模型 ID 后按 Enter" : hasDocumentedModels ? "官方文档模型已预置" : "输入模型 ID 后按 Enter，可添加多个"}
+                    onChange={updateModels}
+                />
             </LabeledControl>
             <div className="mt-4 divide-y divide-stone-200 border-y border-stone-200 dark:divide-stone-800 dark:border-stone-800">
                 {channel.models.map((model) => (
                     <div key={model} className="flex min-w-0 items-center justify-between gap-3 py-2.5">
                         <span className="min-w-0 truncate text-sm font-medium text-stone-900 dark:text-stone-100">{model}</span>
-                        <Tag className="m-0">{capabilityLabel(channelModelCapability(channel, model))}</Tag>
+                        {canSync || hasDocumentedModels || manualCapabilityOptions.length <= 1 ? (
+                            <Tag className="m-0">{capabilityLabel(channelModelCapability(channel, model))}</Tag>
+                        ) : (
+                            <div className="w-24 shrink-0">
+                                <Select className="w-full" size="small" value={channelModelCapability(channel, model)} options={manualCapabilityOptions} onChange={(capability: LogicalModelCapability) => updateCapability(model, capability)} />
+                            </div>
+                        )}
                     </div>
                 ))}
-                {!channel.models.length ? <div className="py-8 text-center text-sm text-stone-500 dark:text-stone-400">尚未获得模型</div> : null}
+                {!channel.models.length ? <div className="py-8 text-center text-sm text-stone-500 dark:text-stone-400">{canSync ? "尚未获得模型" : "请先添加至少一个模型 ID"}</div> : null}
             </div>
         </div>
     );
@@ -362,7 +428,7 @@ function BindingStep({
 }) {
     return (
         <div className="space-y-4">
-            <ChannelInfoNote title="逻辑模型由渠道目录自动维护" description="同名上游模型会跨渠道合并；没有同名项时会按该上游模型名建立独立逻辑模型，无需填写逻辑 ID 或展示名称。" />
+            <ChannelInfoNote title="逻辑模型由渠道目录自动维护" description="同名上游模型会跨渠道合并；没有同名项时会按上游模型名建立独立逻辑模型，创建后可在逻辑模型页设置前端展示昵称。" />
             <div className="divide-y divide-stone-200 border-y border-stone-200 dark:divide-stone-800 dark:border-stone-800">
                 {channel.models.map((upstreamModel) => {
                     const logical = logicalModels.find((model) => model.bindings.some((binding) => normalizedUpstreamModel(binding.upstreamModel) === normalizedUpstreamModel(upstreamModel)));

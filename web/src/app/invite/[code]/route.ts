@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 
 import { normalizeReferralCode, recordReferralVisit, REFERRAL_COOKIE_NAME } from "@/lib/server/referral-service";
+import { resolvePublicRequestOrigin } from "@/lib/server/public-request-origin";
 import { checkRateLimit, getClientIp } from "@/lib/server/security";
 
 export const runtime = "nodejs";
@@ -11,7 +12,7 @@ export async function GET(request: NextRequest, context: { params: Promise<{ cod
     const code = normalizeReferralCode(rawCode);
     const countClick = code ? await canCountReferralVisit(request, code) : false;
     const recorded = code ? await recordReferralVisit(code, { countClick }).catch(() => null) : null;
-    const target = new URL("/register", request.url);
+    const target = new URL("/register", resolvePublicRequestOrigin(request));
     const next = safeNextPath(request.nextUrl.searchParams.get("next"));
     if (next) target.searchParams.set("next", next);
     if (recorded) target.searchParams.set("ref", recorded.code);
@@ -21,7 +22,7 @@ export async function GET(request: NextRequest, context: { params: Promise<{ cod
         response.cookies.set(REFERRAL_COOKIE_NAME, recorded.code, {
             httpOnly: true,
             sameSite: "lax",
-            secure: request.nextUrl.protocol === "https:",
+            secure: target.protocol === "https:",
             path: "/",
             maxAge: 30 * 24 * 60 * 60,
         });

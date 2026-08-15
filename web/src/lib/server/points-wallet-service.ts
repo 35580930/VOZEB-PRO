@@ -666,15 +666,22 @@ function consumptionRequestFingerprint(input: ConsumePointsInput & { amount: num
 }
 
 async function assertPostgresQuota(client: QueryExecutor, context: PostgresWalletContext, usageKind: PointUsageKind, units: number, cost: number) {
-    if (!context.settings?.entitlementsEnabled || !context.quotaPlan) return;
+    const control = generationCostControl(context.settings?.generationCostControl);
+    assertPlatformCostLimit(control.maxPointsPerTask, cost, "当前任务成本超过平台保护上限");
+    const planLimits = context.settings?.entitlementsEnabled && context.quotaPlan ? entitlementLimits(context.quotaPlan.limits) : undefined;
+    if (!planLimits && !costControlEnabled(control)) return;
+    if (control.dailyTotalPointSpend > 0) await client.query("SELECT pg_advisory_xact_lock(hashtext($1))", [`generation-cost:${context.clock.date}`]);
+    const totals = await postgresQuotaTotals(client, context.user.id, context.clock.date);
+    assertPlatformCostLimit(control.dailyUserPointSpend, totals.userPoints + cost, "今日个人生成成本保护已触发，请稍后再试");
+    assertPlatformCostLimit(control.dailyTotalPointSpend, totals.totalPoints + cost, "平台今日生成成本保护已触发，请稍后再试");
+    if (!planLimits) return;
     const usage = await createPostgresRepositories(client).points.getQuotaUsage(context.user.id, context.clock.date, usageKind);
-    const limits = entitlementLimits(context.quotaPlan.limits);
-    assertLimit(limits.dailyPointSpend, (usage?.pointsSpent || 0) + cost, "今日积分消费额度");
-    assertLimit(limits[usageLimitKey(usageKind)], (usage?.units || 0) + nonNegativePoints(units), usageLimitLabel(usageKind));
+    assertLimit(planLimits.dailyPointSpend, totals.userPoints + cost, "今日积分消费额度");
+    assertLimit(planLimits[usageLimitKey(usageKind)], (usage?.units || 0) + nonNegativePoints(units), usageLimitLabel(usageKind));
 }
 
 async function updatePostgresQuota(client: QueryExecutor, settings: AppSettingsRecord | undefined, date: string, userId: string, usageKind: PointUsageKind, unitsDelta: number, pointsDelta: number, updatedAt: string) {
-    if (!settings?.entitlementsEnabled) return;
+    if (!settings?.entitlementsEnabled && !costControlEnabled(generationCostControl(settings?.generationCostControl))) return;
     const repos = createPostgresRepositories(client);
     const usage = await repos.points.getQuotaUsage(userId, date, usageKind);
     await repos.points.upsertQuotaUsage({
@@ -688,15 +695,21 @@ async function updatePostgresQuota(client: QueryExecutor, settings: AppSettingsR
 }
 
 function assertFileQuota(db: AuthDatabase, user: StoredUser, date: string, usageKind: PointUsageKind, units: number, cost: number) {
+    const control = db.settings.generationCostControl;
+    assertPlatformCostLimit(control.maxPointsPerTask, cost, "当前任务成本超过平台保护上限");
+    const userPoints = db.quotaUsage.filter((item) => item.userId === user.id && item.date === date).reduce((sum, item) => sum + item.pointsSpent, 0);
+    const totalPoints = db.quotaUsage.filter((item) => item.date === date).reduce((sum, item) => sum + item.pointsSpent, 0);
+    assertPlatformCostLimit(control.dailyUserPointSpend, userPoints + cost, "今日个人生成成本保护已触发，请稍后再试");
+    assertPlatformCostLimit(control.dailyTotalPointSpend, totalPoints + cost, "平台今日生成成本保护已触发，请稍后再试");
     if (!db.settings.entitlements.enabled) return;
     const plan = resolveUserPlan(db, user);
     const usage = db.quotaUsage.find((item) => item.userId === user.id && item.date === date && item.usageKind === usageKind);
-    assertLimit(plan.limits.dailyPointSpend, (usage?.pointsSpent || 0) + cost, "今日积分消费额度");
+    assertLimit(plan.limits.dailyPointSpend, userPoints + cost, "今日积分消费额度");
     assertLimit(plan.limits[usageLimitKey(usageKind)], (usage?.units || 0) + nonNegativePoints(units), usageLimitLabel(usageKind));
 }
 
 function updateFileQuota(db: AuthDatabase, date: string, userId: string, usageKind: PointUsageKind, unitsDelta: number, pointsDelta: number, updatedAt: string) {
-    if (!db.settings.entitlements.enabled) return;
+    if (!db.settings.entitlements.enabled && !costControlEnabled(db.settings.generationCostControl)) return;
     let usage = db.quotaUsage.find((item) => item.userId === userId && item.date === date && item.usageKind === usageKind);
     if (!usage) {
         usage = { userId, date, usageKind, pointsSpent: 0, units: 0, updatedAt };
@@ -708,7 +721,7 @@ function updateFileQuota(db: AuthDatabase, date: string, userId: string, usageKi
 }
 
 function reverseFileQuota(db: AuthDatabase, date: string, userId: string, usageKind: PointUsageKind, units: number, points: number, updatedAt: string) {
-    if (!db.settings.entitlements.enabled) return;
+    if (!db.settings.entitlements.enabled && !costControlEnabled(db.settings.generationCostControl)) return;
     const usage = db.quotaUsage.find((item) => item.userId === userId && item.date === date && item.usageKind === usageKind);
     if (!usage) return;
     usage.units = Math.max(0, normalizePointAmount(usage.units - nonNegativePoints(units), 0));
@@ -736,6 +749,33 @@ function entitlementLimits(value: JsonValue) {
     };
 }
 
+function generationCostControl(value: JsonValue | undefined) {
+    const control = value && typeof value === "object" && !Array.isArray(value) ? value : {};
+    return {
+        maxPointsPerTask: nonNegativePoints(control.maxPointsPerTask),
+        dailyUserPointSpend: nonNegativePoints(control.dailyUserPointSpend),
+        dailyTotalPointSpend: nonNegativePoints(control.dailyTotalPointSpend),
+    };
+}
+
+function costControlEnabled(control: { maxPointsPerTask: number; dailyUserPointSpend: number; dailyTotalPointSpend: number }) {
+    return control.maxPointsPerTask > 0 || control.dailyUserPointSpend > 0 || control.dailyTotalPointSpend > 0;
+}
+
+async function postgresQuotaTotals(client: QueryExecutor, userId: string, date: string) {
+    const result = await client.query<{ user_points: string | number; total_points: string | number }>(
+        `SELECT COALESCE(sum(points_spent) FILTER (WHERE user_id = $1), 0) AS user_points,
+                COALESCE(sum(points_spent), 0) AS total_points
+           FROM quota_usage
+          WHERE date = $2::date`,
+        [userId, date],
+    );
+    return {
+        userPoints: nonNegativePoints(result.rows[0]?.user_points),
+        totalPoints: nonNegativePoints(result.rows[0]?.total_points),
+    };
+}
+
 function usageLimitKey(usageKind: PointUsageKind): "dailyApiCalls" | "dailyImages" | "dailyVideos" | "dailyAudio" | "dailyText" {
     if (usageKind === "image") return "dailyImages";
     if (usageKind === "video") return "dailyVideos";
@@ -754,6 +794,10 @@ function usageLimitLabel(usageKind: PointUsageKind) {
 
 function assertLimit(limit: number, next: number, label: string) {
     if (limit > 0 && next > limit) throw new QuotaExceededError(`${label}不足，今日额度 ${limit}，本次后将达到 ${normalizePointAmount(next, 0)}`);
+}
+
+function assertPlatformCostLimit(limit: number, next: number, message: string) {
+    if (limit > 0 && next > limit) throw new QuotaExceededError(message);
 }
 
 function requiredIdempotencyKey(value: string) {

@@ -1,95 +1,21 @@
 "use client";
 
-import type { ReactNode } from "react";
-import { useEffect, useMemo, useRef, useState } from "react";
-import { App, Button, Checkbox, DatePicker, Form, Input, InputNumber, Modal, Pagination, Popconfirm, Segmented, Select, Space, Switch, Table, Tag } from "antd";
-import type { TableColumnsType } from "antd";
-import Link from "next/link";
-import dynamic from "next/dynamic";
-import { BillingOperations } from "@/app/admin/billing/components/billing-operations";
-import { GenerationOperationsClient } from "@/app/admin/generation-operations/components/generation-operations-client";
-import {
-    formatAdminLogDuration,
-    formatAdminLogTime,
-    formatGenerationLogModel,
-    GenerationLogAssetPreview,
-    GenerationLogDetail,
-    GenerationLogMobileCard,
-    generationKindLabel,
-    generationSourceLabel,
-    generationStatusClass,
-    generationStatusLabel,
-} from "@/components/admin/admin-generation-log";
-import { GenerationConcurrencyPanel, GenerationDefaultsPanel, localAgentReadiness } from "@/components/admin/admin-generation-settings";
-import type { AgentReadiness } from "@/components/admin/admin-generation-settings";
-import { AdminLocalMediaStorage } from "@/components/admin/admin-local-media-storage";
-import { AdminOverview, buildOperationsSummary } from "@/components/admin/admin-overview";
-import { AdminLogicalModelManager } from "@/components/admin/admin-logical-model-manager";
-import { Metric, Panel, PanelHeader } from "@/components/admin/admin-panel";
-import { AdminSectionNav, adminSections } from "@/components/admin/admin-section-nav";
+import { GenerationLogDetail } from "@/components/admin/admin-generation-log";
+import { AdminOverview } from "@/components/admin/admin-overview";
+import { AdminSectionNav } from "@/components/admin/admin-section-nav";
 import type { AdminSectionKey } from "@/components/admin/admin-sections";
-import { UpdateCenterPanel } from "@/components/admin/admin-update-center";
-import { LabeledControl, SectionTitle, SettingInlineToggle, SettingToggle } from "@/components/admin/admin-settings-controls";
-import { SiteLogoPreview, SiteSettingStatus, SiteShowcasePreview, siteSocialItems } from "@/components/admin/admin-site-preview";
-import { createDefaultChannelAdvancedConfig, SystemChannelEditor } from "@/components/admin/admin-system-channel-editor";
-import { formatAdminMoney, toNumberOrOne, toNumberOrZero, uniqueList } from "@/components/admin/admin-values";
-import {
-    ArrowRight,
-    Copy,
-    CreditCard,
-    CircleDollarSign,
-    Database,
-    Download,
-    ExternalLink,
-    Eye,
-    Gift,
-    Globe2,
-    Image as ImageIcon,
-    KeyRound,
-    Mail,
-    Menu,
-    PlugZap,
-    Plus,
-    ReceiptText,
-    RefreshCw,
-    Save,
-    Search,
-    Send,
-    ShieldCheck,
-    SlidersHorizontal,
-    Sparkles,
-    Trash2,
-    Upload,
-    UserCog,
-    UserRound,
-    WalletCards,
-} from "lucide-react";
-import dayjs from "dayjs";
-import { nanoid } from "nanoid";
+import { Button, Form, Input, Modal } from "antd";
+import { ArrowRight, Copy, Menu, Plus, Sparkles } from "lucide-react";
+import dynamic from "next/dynamic";
+import Link from "next/link";
+import type { ReactNode } from "react";
+import { useEffect, useState } from "react";
 
-import { formatCreditAmount } from "@/constant/credits";
-import { normalizeDefaultModelsConfig } from "@/lib/model-routing-config";
-import type {
-    AgentSkill,
-    AuthSettings,
-    CreatedCdkCode,
-    PublicAnnouncement,
-    PublicCdkCode,
-    PublicUser,
-    PublicUserSummary,
-    SiteFriendLink,
-    SiteShowcaseItem,
-    SiteSocialKey,
-    SystemChannelAdvancedConfig,
-    SystemModelChannel,
-    UserRole,
-    UserStatus,
-} from "@/lib/auth/store";
-import type { GenerationAssetStats, StoredGenerationLog } from "@/lib/server/generation-log-store";
+import type { AuthSettings, PublicUser, PublicUserSummary } from "@/lib/auth/store";
 import type { AdminSetupSummary } from "@/lib/server/admin-setup-status";
-import type { PaymentConfigSummary } from "@/lib/payment-config-types";
-import type { AdminBillingSummary } from "@/lib/admin-billing-types";
-import type { Prompt } from "@/services/api/prompts";
+import { CdkRedemptionDetail } from "./admin-dashboard-elements";
+import { AdminUserEditorModal } from "./admin-user-editor-modal";
+import { useAdminDashboardController } from "./use-admin-dashboard-controller";
 
 type AdminDashboardProps = {
     initialUsers: PublicUser[];
@@ -101,318 +27,140 @@ type AdminDashboardProps = {
     setupSummary?: AdminSetupSummary;
     headerActions?: ReactNode;
 };
-type PromptFormValue = {
-    title: string;
-    prompt: string;
-    category?: string;
-    tags?: string;
-    coverUrl?: string;
-    preview?: string;
+const loadSiteSection = () => import("./admin-configuration-sections").then((module) => module.AdminSiteSection);
+const loadSettingsSection = () => import("./admin-configuration-sections").then((module) => module.AdminSettingsSection);
+const loadMediaStorageSection = () => import("./admin-system-sections").then((module) => module.AdminMediaStorageSection);
+const loadExternalStorageSection = () => import("./admin-system-sections").then((module) => module.AdminExternalStorageSection);
+const loadBackupSection = () => import("./admin-system-sections").then((module) => module.AdminBackupSection);
+const loadUpdatesSection = () => import("./admin-system-sections").then((module) => module.AdminUpdatesSection);
+const loadWalletSection = () => import("./admin-wallet-section").then((module) => module.AdminWalletSection);
+const loadPointsSection = () => import("./admin-points-section").then((module) => module.AdminPointsSection);
+const loadOrdersSection = () => import("./admin-billing-sections").then((module) => module.AdminOrdersSection);
+const loadProductsSection = () => import("./admin-billing-sections").then((module) => module.AdminProductsSection);
+const loadPromotionsSection = () => import("./admin-billing-sections").then((module) => module.AdminPromotionsSection);
+const loadCouponsSection = () => import("./admin-billing-sections").then((module) => module.AdminCouponsSection);
+const loadPaymentsSection = () => import("./admin-billing-sections").then((module) => module.AdminPaymentsSection);
+const loadCdkSection = () => import("./admin-cdk-section").then((module) => module.AdminCdkSection);
+const loadReferralsSection = () => import("./admin-marketing-sections").then((module) => module.AdminReferralsSection);
+const loadChannelsSection = () => import("./admin-upstream-sections").then((module) => module.AdminChannelsSection);
+const loadSkillsSection = () => import("./admin-upstream-sections").then((module) => module.AdminSkillsSection);
+const loadAnnouncementsSection = () => import("./admin-content-sections").then((module) => module.AdminAnnouncementsSection);
+const loadPromptsSection = () => import("./admin-content-sections").then((module) => module.AdminPromptsSection);
+const loadWorksSection = () => import("@/app/admin/works/components/admin-works-section").then((module) => module.AdminWorksSection);
+const loadHelpSection = () => import("./admin-help-section").then((module) => module.AdminHelpSection);
+const loadUsersSection = () => import("./admin-users-section").then((module) => module.AdminUsersSection);
+const loadLogsSection = () => import("./admin-logs-section").then((module) => module.AdminLogsSection);
+const loadGenerationOperationsSection = () => import("./admin-generation-operations-section").then((module) => module.AdminGenerationOperationsSection);
+const loadAccountDeletionSection = () => import("./admin-account-deletion-section").then((module) => module.AdminAccountDeletionSection);
+
+const sectionLoaders: Partial<Record<AdminSectionKey, () => Promise<unknown>>> = {
+    site: loadSiteSection,
+    settings: loadSettingsSection,
+    mediaStorage: loadMediaStorageSection,
+    externalStorage: loadExternalStorageSection,
+    backup: loadBackupSection,
+    updates: loadUpdatesSection,
+    wallet: loadWalletSection,
+    points: loadPointsSection,
+    orders: loadOrdersSection,
+    products: loadProductsSection,
+    payments: loadPaymentsSection,
+    cdk: loadCdkSection,
+    promotions: loadPromotionsSection,
+    coupons: loadCouponsSection,
+    referrals: loadReferralsSection,
+    channels: loadChannelsSection,
+    skills: loadSkillsSection,
+    announcements: loadAnnouncementsSection,
+    prompts: loadPromptsSection,
+    works: loadWorksSection,
+    adminHelp: loadHelpSection,
+    users: loadUsersSection,
+    logs: loadLogsSection,
+    generationOperations: loadGenerationOperationsSection,
+    accountDeletion: loadAccountDeletionSection,
 };
 
-type UserEditorValue = {
-    username?: string;
-    displayName: string;
-    email?: string;
-    password?: string;
-    role: UserRole;
-    status: UserStatus;
-    pointsBalance: number;
-};
-
-const PROMPT_PAGE_SIZE = 20;
-const PROMPT_SEARCH_DEBOUNCE_MS = 300;
-const CDK_PAGE_SIZE = 20;
-const GENERATION_LOG_PAGE_SIZE = 20;
-import {
-    settingsStatusToneClass,
-    SettingsStatusTile,
-    SettingsAnchorItem,
-    FinanceFlowItem,
-    FinanceMiniRow,
-    createSystemChannel,
-    suggestedChannelModels,
-    requestAdminModels,
-    modelNameFromOption,
-    isCdkExpired,
-    cdkStatusLabel,
-    cdkStatusTone,
-    formatCreatedCdkExport,
-    downloadTextFile,
-    CdkRedemptionDetail,
-    splitTags,
-    clampInteger,
-} from "./admin-dashboard-elements";
-import { useAdminDashboardController } from "./use-admin-dashboard-controller";
-
-const AdminSiteSection = dynamic(() => import("./admin-configuration-sections").then((module) => module.AdminSiteSection), { loading: AdminSectionLoading });
-const AdminSettingsSection = dynamic(() => import("./admin-configuration-sections").then((module) => module.AdminSettingsSection), { loading: AdminSectionLoading });
-const AdminBackupSection = dynamic(() => import("./admin-system-sections").then((module) => module.AdminBackupSection), { loading: AdminSectionLoading });
-const AdminExternalStorageSection = dynamic(() => import("./admin-system-sections").then((module) => module.AdminExternalStorageSection), { loading: AdminSectionLoading });
-const AdminMediaStorageSection = dynamic(() => import("./admin-system-sections").then((module) => module.AdminMediaStorageSection), { loading: AdminSectionLoading });
-const AdminUpdatesSection = dynamic(() => import("./admin-system-sections").then((module) => module.AdminUpdatesSection), { loading: AdminSectionLoading });
-const AdminWalletSection = dynamic(() => import("./admin-finance-sections").then((module) => module.AdminWalletSection), { loading: AdminSectionLoading });
-const AdminPointsSection = dynamic(() => import("./admin-finance-sections").then((module) => module.AdminPointsSection), { loading: AdminSectionLoading });
-const AdminOrdersSection = dynamic(() => import("./admin-finance-sections").then((module) => module.AdminOrdersSection), { loading: AdminSectionLoading });
-const AdminProductsSection = dynamic(() => import("./admin-finance-sections").then((module) => module.AdminProductsSection), { loading: AdminSectionLoading });
-const AdminPromotionsSection = dynamic(() => import("./admin-marketing-sections").then((module) => module.AdminPromotionsSection), { loading: AdminSectionLoading });
-const AdminCouponsSection = dynamic(() => import("./admin-marketing-sections").then((module) => module.AdminCouponsSection), { loading: AdminSectionLoading });
-const AdminReferralsSection = dynamic(() => import("./admin-marketing-sections").then((module) => module.AdminReferralsSection), { loading: AdminSectionLoading });
-const AdminPaymentsSection = dynamic(() => import("./admin-finance-sections").then((module) => module.AdminPaymentsSection), { loading: AdminSectionLoading });
-const AdminCdkSection = dynamic(() => import("./admin-finance-sections").then((module) => module.AdminCdkSection), { loading: AdminSectionLoading });
-const AdminChannelsSection = dynamic(() => import("./admin-upstream-sections").then((module) => module.AdminChannelsSection), { loading: AdminSectionLoading });
-const AdminSkillsSection = dynamic(() => import("./admin-upstream-sections").then((module) => module.AdminSkillsSection), { loading: AdminSectionLoading });
-const AdminAnnouncementsSection = dynamic(() => import("./admin-content-sections").then((module) => module.AdminAnnouncementsSection), { loading: AdminSectionLoading });
-const AdminPromptsSection = dynamic(() => import("./admin-content-sections").then((module) => module.AdminPromptsSection), { loading: AdminSectionLoading });
-const AdminWorksSection = dynamic(() => import("@/app/admin/works/components/admin-works-section").then((module) => module.AdminWorksSection), { loading: AdminSectionLoading });
-const AdminHelpSection = dynamic(() => import("./admin-help-section").then((module) => module.AdminHelpSection), { loading: AdminSectionLoading });
-const AdminUsersSection = dynamic(() => import("./admin-operations-sections").then((module) => module.AdminUsersSection), { loading: AdminSectionLoading });
-const AdminLogsSection = dynamic(() => import("./admin-operations-sections").then((module) => module.AdminLogsSection), { loading: AdminSectionLoading });
-const AdminGenerationOperationsSection = dynamic(() => import("./admin-operations-sections").then((module) => module.AdminGenerationOperationsSection), { loading: AdminSectionLoading });
-const AdminAccountDeletionSection = dynamic(() => import("./admin-account-deletion-section").then((module) => module.AdminAccountDeletionSection), { loading: AdminSectionLoading });
+const AdminSiteSection = dynamic(loadSiteSection, { loading: AdminSectionLoading });
+const AdminSettingsSection = dynamic(loadSettingsSection, { loading: AdminSectionLoading });
+const AdminBackupSection = dynamic(loadBackupSection, { loading: AdminSectionLoading });
+const AdminExternalStorageSection = dynamic(loadExternalStorageSection, { loading: AdminSectionLoading });
+const AdminMediaStorageSection = dynamic(loadMediaStorageSection, { loading: AdminSectionLoading });
+const AdminUpdatesSection = dynamic(loadUpdatesSection, { loading: AdminSectionLoading });
+const AdminWalletSection = dynamic(loadWalletSection, { loading: AdminSectionLoading });
+const AdminPointsSection = dynamic(loadPointsSection, { loading: AdminSectionLoading });
+const AdminOrdersSection = dynamic(loadOrdersSection, { loading: AdminSectionLoading });
+const AdminProductsSection = dynamic(loadProductsSection, { loading: AdminSectionLoading });
+const AdminPromotionsSection = dynamic(loadPromotionsSection, { loading: AdminSectionLoading });
+const AdminCouponsSection = dynamic(loadCouponsSection, { loading: AdminSectionLoading });
+const AdminReferralsSection = dynamic(loadReferralsSection, { loading: AdminSectionLoading });
+const AdminPaymentsSection = dynamic(loadPaymentsSection, { loading: AdminSectionLoading });
+const AdminCdkSection = dynamic(loadCdkSection, { loading: AdminSectionLoading });
+const AdminChannelsSection = dynamic(loadChannelsSection, { loading: AdminSectionLoading });
+const AdminSkillsSection = dynamic(loadSkillsSection, { loading: AdminSectionLoading });
+const AdminAnnouncementsSection = dynamic(loadAnnouncementsSection, { loading: AdminSectionLoading });
+const AdminPromptsSection = dynamic(loadPromptsSection, { loading: AdminSectionLoading });
+const AdminWorksSection = dynamic(loadWorksSection, { loading: AdminSectionLoading });
+const AdminHelpSection = dynamic(loadHelpSection, { loading: AdminSectionLoading });
+const AdminUsersSection = dynamic(loadUsersSection, { loading: AdminSectionLoading });
+const AdminLogsSection = dynamic(loadLogsSection, { loading: AdminSectionLoading });
+const AdminGenerationOperationsSection = dynamic(loadGenerationOperationsSection, { loading: AdminSectionLoading });
+const AdminAccountDeletionSection = dynamic(loadAccountDeletionSection, { loading: AdminSectionLoading });
 
 function AdminSectionLoading() {
     return <div className="flex min-h-36 items-center justify-center text-sm text-zinc-500 dark:text-zinc-400">正在加载分区...</div>;
 }
 
 export function AdminDashboard(props: AdminDashboardProps) {
+    const [hydrated, setHydrated] = useState(false);
+    useEffect(() => setHydrated(true), []);
     const controller = useAdminDashboardController(props);
     const {
-        initialUsers,
-        initialSettings,
-        initialPromptCount,
         currentUser,
-        initialSection,
         setupSummary,
         headerActions,
-        message,
         promptForm,
-        userForm,
         logoInputRef,
         iconInputRef,
-        promptRequestIdRef,
-        generationLogRequestIdRef,
-        users,
-        setUsers,
-        settings,
-        setSettings,
-        prompts,
-        setPrompts,
         promptCount,
-        setPromptCount,
-        promptListTotal,
-        setPromptListTotal,
-        updatingUserId,
-        setUpdatingUserId,
-        settingsLoading,
-        setSettingsLoading,
         assetStats,
-        setAssetStats,
-        mailTestLoading,
-        setMailTestLoading,
-        mailTestTo,
-        setMailTestTo,
-        fetchingModelId,
-        setFetchingModelId,
         promptSaving,
-        setPromptSaving,
-        promptsLoading,
-        setPromptsLoading,
-        deletingPromptId,
-        setDeletingPromptId,
-        promptSearch,
-        setPromptSearch,
-        debouncedPromptSearch,
-        setDebouncedPromptSearch,
-        promptPage,
-        setPromptPage,
-        selectedPromptIds,
-        setSelectedPromptIds,
-        bulkDeletingPrompts,
-        setBulkDeletingPrompts,
-        userSearch,
-        setUserSearch,
-        selectedUserIds,
-        setSelectedUserIds,
-        bulkDeletingUsers,
-        setBulkDeletingUsers,
-        generationLogs,
-        setGenerationLogs,
-        generationLogTotal,
-        setGenerationLogTotal,
-        generationLogPage,
-        setGenerationLogPage,
-        generationLogSearch,
-        setGenerationLogSearch,
-        generationLogKind,
-        setGenerationLogKind,
-        generationLogSource,
-        setGenerationLogSource,
-        generationLogStatus,
-        setGenerationLogStatus,
-        generationLogUserId,
-        setGenerationLogUserId,
-        generationLogStart,
-        setGenerationLogStart,
-        generationLogEnd,
-        setGenerationLogEnd,
-        selectedGenerationLogIds,
-        setSelectedGenerationLogIds,
-        generationLogsLoading,
         operationsSummaryLoading,
-        setGenerationLogsLoading,
-        bulkDeletingGenerationLogs,
-        setBulkDeletingGenerationLogs,
         viewingGenerationLog,
         setViewingGenerationLog,
-        paymentConfig,
-        setPaymentConfig,
         billingSummary,
-        setBillingSummary,
         billingSummaryLoading,
-        setBillingSummaryLoading,
         viewingCdkCode,
         setViewingCdkCode,
-        cdkCodes,
-        setCdkCodes,
-        cdkLoading,
-        setCdkLoading,
-        cdkGenerating,
-        setCdkGenerating,
-        createdCdkCodes,
-        setCreatedCdkCodes,
-        selectedCreatedCdkIds,
-        setSelectedCreatedCdkIds,
-        cdkForm,
-        setCdkForm,
-        cdkSearch,
-        setCdkSearch,
-        debouncedCdkSearch,
-        setDebouncedCdkSearch,
-        cdkFilter,
-        setCdkFilter,
-        cdkPage,
-        setCdkPage,
-        cdkTotal,
-        setCdkTotal,
-        cdkStats,
-        setCdkStats,
-        selectedCdkIds,
-        setSelectedCdkIds,
-        bulkDeletingCdk,
-        setBulkDeletingCdk,
-        announcements,
-        setAnnouncements,
-        announcementsLoading,
-        setAnnouncementsLoading,
-        announcementSaving,
-        setAnnouncementSaving,
-        announcementModalOpen,
-        setAnnouncementModalOpen,
         promptModalOpen,
-        setPromptModalOpen,
-        announcementDraft,
-        setAnnouncementDraft,
-        editingUser,
-        setEditingUser,
-        creatingUser,
-        setCreatingUser,
         activeSection,
         setActiveSection,
-        agentReadiness,
-        setAgentReadiness,
         mobileNavOpen,
         setMobileNavOpen,
         desktopNavCollapsed,
         setDesktopNavCollapsed,
-        customPointModel,
-        setCustomPointModel,
         stats,
         settingsSummary,
         walletSummary,
         operationsSummary,
-        filteredUsers,
-        selectedUsers,
-        selectedPrompts,
-        selectedGenerationLogs,
-        promptListStart,
-        promptListEnd,
-        selectedCreatedCdkCodes,
-        createdCdkActionCodes,
-        allCreatedCdkSelected,
-        saveSettings,
         loadBillingSummary,
         loadOperationsSummary,
-        loadGenerationAssetStats,
-        updateUser,
-        createUser,
-        deleteUser,
-        bulkDeleteUsers,
         createPrompt,
-        deletePrompt,
-        bulkDeletePrompts,
-        loadPrompts,
-        loadGenerationLogs,
-        loadPaymentConfig,
-        deleteGenerationLogsByIds,
-        resetGenerationLogFilters,
-        loadCdkCodes,
-        generateCdkCodes,
-        deleteCdkById,
-        deleteCreatedCdkCodes,
-        bulkDeleteCdkCodes,
-        copyCreatedCdkCodes,
         copyCdkPlainCode,
-        exportCreatedCdkCodes,
-        loadAnnouncements,
-        saveAnnouncementDraft,
-        openAnnouncementModal,
-        closeAnnouncementModal,
-        openPromptModal,
         closePromptModal,
-        updateAnnouncementById,
-        deleteAnnouncementById,
-        updateChannel,
-        addChannel,
-        deleteChannel,
-        updateGenerationConcurrency,
-        updateGenerationDefaults,
-        updateModelPointCost,
-        updateGenerationPointMultiplier,
-        deleteGenerationPointMultiplier,
-        addCustomPointModel,
-        deleteModelPointCost,
-        updateMailSetting,
-        testMailSettings,
-        updateSiteSetting,
         uploadSiteLogo,
         uploadSiteIcon,
-        updateSiteSocialSetting,
-        addFriendLink,
-        updateFriendLink,
-        deleteFriendLink,
-        addHomeShowcaseItem,
-        updateHomeShowcaseItem,
-        deleteHomeShowcaseItem,
-        fetchModelsForChannel,
-        fetchAllModels,
-        openUserEditor,
-        openCreateUserEditor,
-        closeUserEditor,
-        saveUserEditor,
-        userColumns,
-        promptColumns,
-        generationLogColumns,
-        cdkColumns,
         activeSectionInfo,
         nextSetupStep,
     } = controller;
     return (
-        <div className={`admin-mobile-safe admin-dashboard-shell min-h-dvh w-full min-w-0 ${desktopNavCollapsed ? "is-sidebar-collapsed" : ""}`}>
+        <div data-hydrated={hydrated ? "true" : "false"} className={`admin-mobile-safe admin-dashboard-shell min-h-dvh w-full min-w-0 ${desktopNavCollapsed ? "is-sidebar-collapsed" : ""}`}>
             {mobileNavOpen ? <button type="button" className="admin-section-nav-backdrop lg:hidden" aria-label="收起后台侧边栏" onClick={() => setMobileNavOpen(false)} /> : null}
             <AdminSectionNav
                 activeKey={activeSection}
+                currentUser={currentUser}
                 onChange={setActiveSection}
+                onIntent={(section) => void sectionLoaders[section]?.()}
                 mobileOpen={mobileNavOpen}
                 desktopCollapsed={desktopNavCollapsed}
                 onDesktopToggle={() => setDesktopNavCollapsed((collapsed) => !collapsed)}
@@ -479,7 +227,9 @@ export function AdminDashboard(props: AdminDashboardProps) {
                             promptCount={promptCount}
                             assetStats={assetStats}
                             enabledProducts={setupSummary?.enabledProducts || 0}
+                            billingLoading={billingSummaryLoading}
                             loading={operationsSummaryLoading}
+                            onRefreshBilling={loadBillingSummary}
                             onRefresh={() => void loadOperationsSummary()}
                         />
                     ) : null}
@@ -557,61 +307,7 @@ export function AdminDashboard(props: AdminDashboardProps) {
                     </div>
                 </Form>
             </Modal>
-            <Modal
-                title={creatingUser ? "新增用户" : editingUser ? `用户管理：${editingUser.displayName}` : "用户管理"}
-                open={creatingUser || Boolean(editingUser)}
-                okText={creatingUser ? "新增" : "保存"}
-                cancelText="取消"
-                confirmLoading={creatingUser ? updatingUserId === "__new__" : Boolean(editingUser && updatingUserId === editingUser.id)}
-                onOk={() => userForm.submit()}
-                onCancel={closeUserEditor}
-            >
-                <Form form={userForm} layout="vertical" requiredMark={false} onFinish={saveUserEditor}>
-                    <div className="grid gap-4 md:grid-cols-2">
-                        <Form.Item label="用户名" name="username" rules={[{ required: creatingUser, message: "请输入用户名" }]}>
-                            <Input disabled={!creatingUser} placeholder="用于登录的账号" />
-                        </Form.Item>
-                        <Form.Item label="显示昵称" name="displayName" rules={[{ required: true, message: "请输入显示昵称" }]}>
-                            <Input placeholder="显示在顶部账号菜单" />
-                        </Form.Item>
-                    </div>
-                    <div className="grid gap-4 md:grid-cols-2">
-                        <Form.Item label="绑定邮箱" name="email">
-                            <Input placeholder="可留空" />
-                        </Form.Item>
-                        <Form.Item
-                            label={creatingUser ? "登录密码" : "重置密码"}
-                            name="password"
-                            rules={[{ required: creatingUser, message: "请输入登录密码" }]}
-                            extra={creatingUser ? "至少 8 位，创建后用户可自行修改。" : "留空则不修改密码；填写后该用户需要重新登录。"}
-                        >
-                            <Input.Password placeholder="至少 8 位" />
-                        </Form.Item>
-                    </div>
-                    <div className="grid gap-4 md:grid-cols-3">
-                        <Form.Item label="角色" name="role" rules={[{ required: true, message: "请选择角色" }]}>
-                            <Select
-                                options={[
-                                    { value: "user", label: "普通用户" },
-                                    { value: "admin", label: "管理员" },
-                                ]}
-                            />
-                        </Form.Item>
-                        <Form.Item label="账号状态" name="status" rules={[{ required: true, message: "请选择状态" }]}>
-                            <Select
-                                disabled={editingUser?.id === currentUser.id}
-                                options={[
-                                    { value: "active", label: "可用" },
-                                    { value: "disabled", label: "禁用" },
-                                ]}
-                            />
-                        </Form.Item>
-                        <Form.Item label="永久积分" name="pointsBalance" extra={editingUser ? "每日积分由系统自动结算" : undefined} rules={[{ required: true, message: "请输入永久积分" }]}>
-                            <InputNumber className="!w-full" min={0} precision={2} />
-                        </Form.Item>
-                    </div>
-                </Form>
-            </Modal>
+            <AdminUserEditorModal controller={controller} />
             <Modal title="生成日志详情" open={Boolean(viewingGenerationLog)} footer={null} onCancel={() => setViewingGenerationLog(null)} width={860}>
                 {viewingGenerationLog ? <GenerationLogDetail log={viewingGenerationLog} /> : null}
             </Modal>

@@ -25,7 +25,7 @@ import { PATCH } from "./route";
 describe("administrator account deletion review API", () => {
     beforeEach(() => {
         vi.clearAllMocks();
-        mocks.user.mockResolvedValue({ id: "admin-one", username: "admin", role: "admin" });
+        mocks.user.mockResolvedValue({ id: "admin-one", username: "admin", role: "admin", status: "active", adminPermissions: ["users.manage"] });
         mocks.review.mockResolvedValue({ id: "request-one", username: "creator", status: "accepted", reviewNote: "进入人工核验" });
     });
 

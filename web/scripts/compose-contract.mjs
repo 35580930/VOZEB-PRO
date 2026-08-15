@@ -4,19 +4,20 @@ import path from "node:path";
 import { parse } from "yaml";
 
 export const composeProfiles = [
-    { file: "docker-compose.yml", embeddedPostgres: true, image: "${VOZEB_PRO_IMAGE:-ghcr.io/csyqlz/vozeb-pro:v0.0.5}", workerOrigin: "http://app:3000" },
+    { file: "docker-compose.yml", embeddedPostgres: true, image: "${VOZEB_PRO_IMAGE:-ghcr.io/csyqlz/vozeb-pro:v0.0.6}", workerOrigin: "http://app:3000" },
     { file: "docker-compose.local.yml", embeddedPostgres: true, image: "vozeb-pro:local", workerOrigin: "http://app:3000" },
-    { file: "docker-compose.baota.yml", embeddedPostgres: false, hostNetwork: true, image: "${VOZEB_PRO_IMAGE:-ghcr.io/csyqlz/vozeb-pro:v0.0.5}", workerOrigin: "http://127.0.0.1:3000" },
-    { file: "docker-compose.external-db.yml", embeddedPostgres: false, image: "${VOZEB_PRO_IMAGE:-ghcr.io/csyqlz/vozeb-pro:v0.0.5}", workerOrigin: "http://app:3000" },
-    { file: "docker-compose.lowmem.yml", embeddedPostgres: false, image: "${VOZEB_PRO_IMAGE:-ghcr.io/csyqlz/vozeb-pro:v0.0.5}", workerOrigin: "http://app:3000" },
+    { file: "docker-compose.baota.yml", embeddedPostgres: false, hostNetwork: true, image: "${VOZEB_PRO_IMAGE:-ghcr.io/csyqlz/vozeb-pro:v0.0.6}", workerOrigin: "http://127.0.0.1:3000" },
+    { file: "docker-compose.external-db.yml", embeddedPostgres: false, image: "${VOZEB_PRO_IMAGE:-ghcr.io/csyqlz/vozeb-pro:v0.0.6}", workerOrigin: "http://app:3000" },
+    { file: "docker-compose.lowmem.yml", embeddedPostgres: false, image: "${VOZEB_PRO_IMAGE:-ghcr.io/csyqlz/vozeb-pro:v0.0.6}", workerOrigin: "http://app:3000" },
 ];
 
 export const docsComposeProfiles = [
-    { file: "docs/docker-compose.yml", image: "ghcr.io/csyqlz/vozeb-pro-docs:v0.0.5" },
+    { file: "docs/docker-compose.yml", image: "ghcr.io/csyqlz/vozeb-pro-docs:v0.0.6" },
     { file: "docs/docker-compose.local.yml", build: { context: "..", dockerfile: "docs/Dockerfile" } },
 ];
 
 const maintenanceToken = "${VOZEB_PRO_MAINTENANCE_TOKEN:?请在 .env 中配置至少 32 位维护令牌}";
+const workerToken = "${VOZEB_PRO_WORKER_TOKEN:?请在 .env 中配置独立的至少 32 位 Worker 令牌}";
 const installToken = "${VOZEB_PRO_INSTALL_TOKEN:?请在 .env 中配置至少 32 位一次性安装令牌}";
 
 export function validateComposeContracts({ repoRoot }) {
@@ -81,7 +82,9 @@ export function validateComposeContract(source, profile) {
     ensure(appEnvironment.VOZEB_PRO_INSTALL_TOKEN === installToken, "app 未声明强制一次性安装令牌");
     ensure(!("VOZEB_PRO_INSTALL_TOKEN" in workerEnvironment), "generation-worker 不得获得一次性安装令牌");
     ensure(appEnvironment.VOZEB_PRO_MAINTENANCE_TOKEN === maintenanceToken, "app 未声明强制维护令牌");
-    ensure(workerEnvironment.VOZEB_PRO_MAINTENANCE_TOKEN === maintenanceToken, "generation-worker 未声明同一强制维护令牌");
+    ensure(appEnvironment.VOZEB_PRO_WORKER_TOKEN === workerToken, "app 未声明强制 Worker 令牌");
+    ensure(workerEnvironment.VOZEB_PRO_WORKER_TOKEN === workerToken, "generation-worker 未声明同一强制 Worker 令牌");
+    ensure(!("VOZEB_PRO_MAINTENANCE_TOKEN" in workerEnvironment), "generation-worker 不得获得外部维护令牌");
     ensure(workerEnvironment.VOZEB_PRO_WORKER_API_ORIGIN === profile.workerOrigin, `Worker API 地址必须为 ${profile.workerOrigin}`);
     ensure(appEnvironment.VOZEB_PRO_DATABASE_PROVIDER === "postgres", "app 必须使用 PostgreSQL provider");
     ensure(typeof appEnvironment.DATABASE_URL === "string", "app 缺少 DATABASE_URL");

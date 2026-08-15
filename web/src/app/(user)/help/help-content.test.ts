@@ -4,7 +4,7 @@ import { findHelpArticle, helpArticles, searchHelpArticles } from "./help-conten
 
 describe("help center content", () => {
     it("covers every user workspace with complete flows and tutorials", () => {
-        expect(helpArticles.map((article) => article.id)).toEqual(["start", "agent", "image", "video", "canvas", "drama", "assets", "prompts", "account", "troubleshooting"]);
+        expect(helpArticles.map((article) => article.id)).toEqual(["start", "agent", "image", "video", "canvas", "drama", "assets", "prompts", "account", "rights", "troubleshooting"]);
         for (const article of helpArticles) {
             expect(article.flow.length).toBeGreaterThanOrEqual(4);
             expect(article.steps.length).toBeGreaterThanOrEqual(3);
@@ -18,6 +18,7 @@ describe("help center content", () => {
         expect(findHelpArticle("canvas")?.title).toContain("节点");
         expect(searchHelpArticles("全景").map((article) => article.id)).toContain("canvas");
         expect(searchHelpArticles("订单").map((article) => article.id)).toContain("account");
+        expect(searchHelpArticles("注销").map((article) => article.id)).toContain("rights");
         expect(searchHelpArticles("不存在的功能关键词")).toEqual([]);
     });
 });

@@ -16,7 +16,7 @@ const mocks = vi.hoisted(() => ({
     listCanvasProjectSummaries: vi.fn(),
     getCanvasProject: vi.fn(),
     createCanvasProject: vi.fn(),
-    saveCanvasProject: vi.fn(),
+    saveCanvasProjectMutation: vi.fn(),
     deleteCanvasProjects: vi.fn(),
     listDramaProjectSummaries: vi.fn(),
     getDramaProject: vi.fn(),
@@ -37,10 +37,18 @@ vi.mock("@/services/api/library-assets", () => ({
 vi.mock("@/services/image-storage", () => ({ uploadImage: mocks.uploadImage }));
 vi.mock("@/services/file-storage", () => ({ uploadMediaFile: mocks.uploadMediaFile }));
 vi.mock("@/services/api/canvas-projects", () => ({
+    CanvasProjectRequestError: class extends Error {
+        constructor(
+            message: string,
+            readonly status: number,
+        ) {
+            super(message);
+        }
+    },
     listCanvasProjectSummaries: mocks.listCanvasProjectSummaries,
     getCanvasProject: mocks.getCanvasProject,
     createCanvasProject: mocks.createCanvasProject,
-    saveCanvasProject: mocks.saveCanvasProject,
+    saveCanvasProjectMutation: mocks.saveCanvasProjectMutation,
     deleteCanvasProjects: mocks.deleteCanvasProjects,
 }));
 vi.mock("@/services/api/drama-projects", () => ({
@@ -56,6 +64,7 @@ vi.mock("@/services/api/drama-projects", () => ({
 
 import { useCanvasStore } from "@/app/(user)/canvas/stores/use-canvas-store";
 import { useDramaStore } from "@/app/(user)/drama/stores/use-drama-store";
+import { CanvasProjectRequestError } from "@/services/api/canvas-projects";
 import { useAssetStore } from "@/stores/use-asset-store";
 import { useUserStore } from "@/stores/use-user-store";
 
@@ -162,6 +171,137 @@ describe("client store session isolation", () => {
         expect(useCanvasStore.getState().summaries).toEqual(secondPage);
         expect(useCanvasStore.getState().summaryTotal).toBe(14);
         expect(useCanvasStore.getState().projects).toContainEqual(created);
+    });
+
+    it("coalesces rapid Canvas edits and exposes a non-blocking save state", async () => {
+        vi.useFakeTimers();
+        try {
+            const project = canvasProject("canvas-save", "保存队列");
+            useUserStore.getState().setUser(user("user-a"));
+            mocks.getCanvasProject.mockResolvedValue(project);
+            mocks.saveCanvasProjectMutation.mockResolvedValue({ projectId: project.id, updatedAt: "2026-08-05T12:00:00.000Z", mutationId: "mutation-one" });
+            await useCanvasStore.getState().loadProject(project.id);
+
+            useCanvasStore.getState().updateProject(project.id, { backgroundMode: "dots" });
+            useCanvasStore.getState().updateProject(project.id, { backgroundMode: "blank" });
+
+            expect(useCanvasStore.getState().saveStateByProject[project.id]).toEqual({ status: "saving" });
+            await vi.advanceTimersByTimeAsync(250);
+
+            expect(mocks.saveCanvasProjectMutation).toHaveBeenCalledTimes(1);
+            expect(mocks.saveCanvasProjectMutation).toHaveBeenCalledWith(project.id, expect.objectContaining({ baseUpdatedAt: project.updatedAt, backgroundMode: "blank", mutationId: expect.any(String) }));
+            expect(useCanvasStore.getState().saveStateByProject[project.id]).toEqual({ status: "saved" });
+        } finally {
+            vi.useRealTimers();
+        }
+    });
+
+    it("keeps a failed Canvas snapshot available for an automatic retry", async () => {
+        vi.useFakeTimers();
+        try {
+            const project = canvasProject("canvas-retry", "失败重试");
+            useUserStore.getState().setUser(user("user-a"));
+            mocks.getCanvasProject.mockResolvedValue(project);
+            mocks.saveCanvasProjectMutation.mockRejectedValueOnce(new Error("网络暂时不可用")).mockResolvedValueOnce({ projectId: project.id, updatedAt: "2026-08-05T12:00:01.000Z", mutationId: "mutation-two" });
+            await useCanvasStore.getState().loadProject(project.id);
+
+            useCanvasStore.getState().updateProject(project.id, { showImageInfo: true });
+            await vi.advanceTimersByTimeAsync(250);
+
+            expect(useCanvasStore.getState().projects[0]).toMatchObject({ id: project.id, showImageInfo: true });
+            expect(useCanvasStore.getState().saveStateByProject[project.id]).toEqual({ status: "saving", message: "网络波动，正在重新保存" });
+            await vi.advanceTimersByTimeAsync(1_000);
+
+            expect(mocks.saveCanvasProjectMutation).toHaveBeenCalledTimes(2);
+            expect(useCanvasStore.getState().saveStateByProject[project.id]).toEqual({ status: "saved" });
+        } finally {
+            vi.useRealTimers();
+        }
+    });
+
+    it("replays the failed Canvas mutation before saving newer edits", async () => {
+        vi.useFakeTimers();
+        try {
+            const project = canvasProject("canvas-retry-order", "重试顺序");
+            useUserStore.getState().setUser(user("user-a"));
+            mocks.getCanvasProject.mockResolvedValue(project);
+            mocks.saveCanvasProjectMutation
+                .mockRejectedValueOnce(new Error("响应丢失"))
+                .mockResolvedValueOnce({ projectId: project.id, updatedAt: "2026-08-05T12:00:01.000Z", mutationId: "mutation-first" })
+                .mockResolvedValueOnce({ projectId: project.id, updatedAt: "2026-08-05T12:00:02.000Z", mutationId: "mutation-second" });
+            await useCanvasStore.getState().loadProject(project.id);
+
+            useCanvasStore.getState().updateProject(project.id, { backgroundMode: "dots" });
+            await vi.advanceTimersByTimeAsync(250);
+            const firstMutation = mocks.saveCanvasProjectMutation.mock.calls[0][1];
+
+            useCanvasStore.getState().updateProject(project.id, { backgroundMode: "blank" });
+            await vi.advanceTimersByTimeAsync(1_000);
+
+            expect(mocks.saveCanvasProjectMutation).toHaveBeenCalledTimes(3);
+            expect(mocks.saveCanvasProjectMutation.mock.calls[1][1]).toMatchObject({ mutationId: firstMutation.mutationId, baseUpdatedAt: project.updatedAt, backgroundMode: "dots" });
+            expect(mocks.saveCanvasProjectMutation.mock.calls[2][1]).toMatchObject({ baseUpdatedAt: "2026-08-05T12:00:01.000Z", backgroundMode: "blank" });
+            expect(useCanvasStore.getState().saveStateByProject[project.id]).toEqual({ status: "saved" });
+        } finally {
+            vi.useRealTimers();
+        }
+    });
+
+    it("exposes a Canvas version conflict instead of retrying it as a network error", async () => {
+        vi.useFakeTimers();
+        try {
+            const project = canvasProject("canvas-conflict", "并发冲突");
+            useUserStore.getState().setUser(user("user-a"));
+            mocks.getCanvasProject.mockResolvedValue(project);
+            mocks.saveCanvasProjectMutation.mockRejectedValue(new CanvasProjectRequestError("画布项目已在其他页面更新，请刷新后重试", 409));
+            await useCanvasStore.getState().loadProject(project.id);
+
+            useCanvasStore.getState().updateProject(project.id, { showImageInfo: true });
+            await vi.advanceTimersByTimeAsync(250);
+
+            expect(useCanvasStore.getState().saveStateByProject[project.id]).toEqual({ status: "conflict", message: "画布项目已在其他页面更新，请刷新后重试" });
+        } finally {
+            vi.useRealTimers();
+        }
+    });
+
+    it("flushes the current Canvas snapshot with keepalive when the page is leaving", async () => {
+        const project = canvasProject("canvas-keepalive", "离开前保存");
+        useUserStore.getState().setUser(user("user-a"));
+        mocks.getCanvasProject.mockResolvedValue(project);
+        mocks.saveCanvasProjectMutation.mockResolvedValue({ projectId: project.id, updatedAt: "2026-08-05T12:00:02.000Z", mutationId: "mutation-keepalive" });
+        await useCanvasStore.getState().loadProject(project.id);
+
+        useCanvasStore.getState().updateProject(project.id, { showImageInfo: true });
+        await useCanvasStore.getState().flushProjectSave(project.id, true);
+
+        expect(mocks.saveCanvasProjectMutation).toHaveBeenCalledWith(project.id, expect.objectContaining({ showImageInfo: true }), { keepalive: true });
+        expect(useCanvasStore.getState().saveStateByProject[project.id]).toEqual({ status: "saved" });
+    });
+
+    it("serializes a second Canvas edit against the acknowledged revision", async () => {
+        const project = canvasProject("canvas-serialized", "串行保存");
+        const first = deferred<{ projectId: string; updatedAt: string; mutationId: string }>();
+        useUserStore.getState().setUser(user("user-a"));
+        mocks.getCanvasProject.mockResolvedValue(project);
+        mocks.saveCanvasProjectMutation.mockReturnValueOnce(first.promise).mockResolvedValueOnce({ projectId: project.id, updatedAt: "2026-08-05T12:00:03.000Z", mutationId: "mutation-second" });
+        await useCanvasStore.getState().loadProject(project.id);
+
+        vi.useFakeTimers();
+        try {
+            useCanvasStore.getState().updateProject(project.id, { backgroundMode: "dots" });
+            await vi.advanceTimersByTimeAsync(250);
+            useCanvasStore.getState().updateProject(project.id, { backgroundMode: "blank" });
+            const pending = useCanvasStore.getState().flushProjectSave(project.id);
+            expect(mocks.saveCanvasProjectMutation).toHaveBeenCalledTimes(1);
+
+            first.resolve({ projectId: project.id, updatedAt: "2026-08-05T12:00:02.500Z", mutationId: "mutation-first" });
+            await pending;
+            expect(mocks.saveCanvasProjectMutation).toHaveBeenCalledTimes(2);
+            expect(mocks.saveCanvasProjectMutation).toHaveBeenLastCalledWith(project.id, expect.objectContaining({ baseUpdatedAt: "2026-08-05T12:00:02.500Z", backgroundMode: "blank" }));
+        } finally {
+            vi.useRealTimers();
+        }
     });
 
     it("reloads Drama projects for the new user after a reset", async () => {
@@ -344,11 +484,13 @@ function user(id: string) {
         displayName: id,
         bio: "",
         role: "user" as const,
+        adminPermissions: [],
         status: "active" as const,
         planId: "free",
         planName: "免费",
         hasActivePlan: false,
         pointsBalance: 0,
+        mfaEnabled: false,
     };
 }
 

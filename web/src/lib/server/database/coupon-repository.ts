@@ -5,15 +5,17 @@ import { jsonParam, mapCouponRedemption, mapCouponTemplate, mapUserCoupon, norma
 export class CouponRepository {
     constructor(private readonly db: QueryExecutor) {}
 
-    async listTemplates(input: PageInput & { includeDisabled?: boolean; claimableOnly?: boolean; at?: string; userId?: string } = {}): Promise<PageResult<CouponTemplateRecord>> {
+    async listTemplates(input: PageInput & { includeDisabled?: boolean; claimableOnly?: boolean; at?: string; userId?: string; keyword?: string; selectedId?: string } = {}): Promise<PageResult<CouponTemplateRecord>> {
         const page = normalizePage(input.page);
         const pageSize = normalizePageSize(input.pageSize);
+        const keyword = input.keyword?.trim().slice(0, 80);
+        const keywordPattern = keyword ? `%${keyword.replace(/[\\%_]/g, "\\$&")}%` : null;
         const result = await this.db.query(
             `
             SELECT template.*, count(*) OVER() AS total_count,
                 coalesce((SELECT jsonb_agg(product.product_id ORDER BY product.product_id) FROM coupon_template_products product WHERE product.template_id = template.id), '[]'::jsonb) AS product_ids
             FROM coupon_templates template
-            WHERE ($1::boolean = true OR template.enabled = true)
+            WHERE ($1::boolean = true OR template.enabled = true OR template.id = $7)
               AND ($2::boolean = false OR template.claimable = true)
               AND ($2::boolean = false OR template.total_limit = 0 OR template.issued_count < template.total_limit)
               AND ($3::timestamptz IS NULL OR (template.starts_at <= $3 AND template.ends_at > $3))
@@ -21,10 +23,11 @@ export class CouponRepository {
                   $4::text IS NULL OR
                   (SELECT count(*) FROM user_coupons coupon WHERE coupon.template_id = template.id AND coupon.user_id = $4) < template.per_user_limit
               )
-            ORDER BY template.created_at DESC
+              AND ($8::text IS NULL OR template.id = $7 OR template.name ILIKE $8 ESCAPE '\\' OR template.code ILIKE $8 ESCAPE '\\')
+            ORDER BY CASE WHEN template.id = $7 THEN 0 ELSE 1 END, template.created_at DESC
             LIMIT $5 OFFSET $6
             `,
-            [input.includeDisabled === true, input.claimableOnly === true, input.at || null, input.userId || null, pageSize, (page - 1) * pageSize],
+            [input.includeDisabled === true, input.claimableOnly === true, input.at || null, input.userId || null, pageSize, (page - 1) * pageSize, input.selectedId || null, keywordPattern],
         );
         return pageResult(result.rows.map(mapCouponTemplate), Number(result.rows[0]?.total_count || 0), page, pageSize);
     }

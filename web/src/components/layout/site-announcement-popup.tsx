@@ -13,7 +13,7 @@ import { useUserStore } from "@/stores/use-user-store";
 export function SiteAnnouncementPopup() {
     const pathname = usePathname();
     const user = useUserStore((state) => state.user);
-    const { data: announcements = [] } = useAnnouncements();
+    const { data: announcements = [] } = useAnnouncements({ enabled: pathname === "/" || Boolean(user) });
     const { markRead } = useAnnouncementReadState();
     const [open, setOpen] = useState(false);
     const [activeId, setActiveId] = useState("");

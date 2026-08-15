@@ -1,5 +1,7 @@
 import { createPostgresRepositories, ensurePostgresSchema, isPostgresDatabaseEnabled, postgresQuery, type QueryExecutor } from "@/lib/server/database";
 import { formatAccountId } from "@/lib/account-id";
+import { normalizeRegistrationPolicyConsent } from "@/lib/registration-consent";
+import { normalizeAdminPermissions } from "@/lib/admin-permissions";
 import { readJsonDataFile, writeJsonDataFile } from "@/lib/server/data-adapter";
 import { decryptSecretValue, encryptSecretValue } from "@/lib/server/secret-crypto";
 import {
@@ -33,8 +35,6 @@ import {
     type PublicAnnouncement,
     type AnnouncementPage,
     type SiteSettings,
-    type SiteShowcaseMode,
-    type SiteShowcaseItem,
     type SiteFriendLink,
     type SiteSocialKey,
     type SiteSocialSettings,
@@ -80,7 +80,6 @@ import {
     encryptAuthDbSecretsForStorage,
     decryptAuthSettingsSecrets,
     encryptAuthSettingsSecrets,
-    pruneExpiredSessions,
     resolveDefaultPlan,
     resolveUserPlan,
     resolvePlanById,
@@ -108,8 +107,6 @@ import {
     normalizeFeatureList,
     normalizeGenerationConcurrency,
     normalizeSiteSettings,
-    normalizeSiteShowcaseItems,
-    normalizeShowcaseTags,
     normalizeSiteFriendLinks,
     normalizeSiteSocials,
     normalizeSiteSocial,
@@ -169,7 +166,7 @@ export async function readAuthDb(): Promise<AuthDatabase> {
 export async function mutateAuthDb<T>(mutator: (db: AuthDatabase) => T | Promise<T>) {
     if (isPostgresDatabaseEnabled()) throw new Error("PostgreSQL auth mutations must use entity repositories");
     const run = mutationQueue.then(async () => {
-        const db = pruneExpiredSessions(await readAuthDb());
+        const db = await readAuthDb();
         try {
             const result = await mutator(db);
             await writeAuthDb(db);
@@ -321,6 +318,8 @@ export function mapPostgresSettings(settingsRow: Record<string, unknown> | undef
         allowUserApiConfig: dbBool(settingsRow?.allow_user_api_config, fallback.allowUserApiConfig),
         modelPointCosts: dbJson(settingsRow?.model_point_costs, fallback.modelPointCosts),
         generationPointMultipliers: dbJson(settingsRow?.generation_point_multipliers, fallback.generationPointMultipliers),
+        generationCostControl: dbJson(settingsRow?.generation_cost_control, fallback.generationCostControl),
+        dataLifecycle: dbJson(settingsRow?.data_lifecycle, fallback.dataLifecycle),
         entitlements: {
             enabled: dbBool(settingsRow?.entitlements_enabled, fallback.entitlements.enabled),
             defaultPlanId: dbText(settingsRow?.default_plan_id) || fallback.entitlements.defaultPlanId,
@@ -364,10 +363,20 @@ export function mapPostgresUser(row: Record<string, unknown>): StoredUser {
         bio: dbText(row.bio),
         avatarStorageKey: dbOptionalText(row.avatar_storage_key),
         role: row.role === "admin" ? "admin" : "user",
+        adminPermissions: row.role === "admin" ? normalizeAdminPermissions(dbJson(row.admin_permissions, [])) : [],
         status: row.status === "disabled" ? "disabled" : "active",
         planId: dbText(row.plan_id),
         pointsBalance: dbNumber(row.points_balance, DEFAULT_USER_POINTS),
         passwordHash: dbText(row.password_hash),
+        mfaSecretCiphertext: dbOptionalText(row.mfa_secret_ciphertext),
+        mfaEnabledAt: dbOptionalIso(row.mfa_enabled_at),
+        registrationConsent: normalizeRegistrationPolicyConsent({
+            termsVersion: row.terms_version,
+            termsUrl: row.terms_url,
+            privacyVersion: row.privacy_version,
+            privacyUrl: row.privacy_url,
+            acceptedAt: row.policy_accepted_at,
+        }),
         createdAt: dbIso(row.created_at),
         updatedAt: dbIso(row.updated_at),
         lastLoginAt: dbOptionalIso(row.last_login_at),
@@ -502,10 +511,10 @@ export async function upsertPostgresSettings(db: QueryExecutor, settings: AuthSe
         `
         INSERT INTO app_settings (
             id, site, registration_enabled, email_registration_enabled, free_daily_points_enabled, mail, allow_user_api_config,
-            model_point_costs, generation_point_multipliers, entitlements_enabled, default_plan_id, generation_concurrency, generation_defaults,
+            model_point_costs, generation_point_multipliers, generation_cost_control, data_lifecycle, entitlements_enabled, default_plan_id, generation_concurrency, generation_defaults,
             logical_models, default_models, agent_skills, free_daily_points
         )
-        VALUES ('default', $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
+        VALUES ('default', $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18)
         ON CONFLICT (id) DO UPDATE SET
             site = EXCLUDED.site,
             registration_enabled = EXCLUDED.registration_enabled,
@@ -515,6 +524,8 @@ export async function upsertPostgresSettings(db: QueryExecutor, settings: AuthSe
             allow_user_api_config = EXCLUDED.allow_user_api_config,
             model_point_costs = EXCLUDED.model_point_costs,
             generation_point_multipliers = EXCLUDED.generation_point_multipliers,
+            generation_cost_control = EXCLUDED.generation_cost_control,
+            data_lifecycle = EXCLUDED.data_lifecycle,
             entitlements_enabled = EXCLUDED.entitlements_enabled,
             default_plan_id = EXCLUDED.default_plan_id,
             generation_concurrency = EXCLUDED.generation_concurrency,
@@ -533,6 +544,8 @@ export async function upsertPostgresSettings(db: QueryExecutor, settings: AuthSe
             settings.allowUserApiConfig,
             dbJsonParam(settings.modelPointCosts),
             dbJsonParam(settings.generationPointMultipliers),
+            dbJsonParam(settings.generationCostControl),
+            dbJsonParam(settings.dataLifecycle),
             settings.entitlements.enabled,
             settings.entitlements.defaultPlanId,
             dbJsonParam(settings.generationConcurrency),
@@ -572,8 +585,8 @@ export async function insertPostgresUsers(db: QueryExecutor, users: StoredUser[]
     for (const user of users) {
         await db.query(
             `
-            INSERT INTO users (id, account_id, username, email, display_name, bio, avatar_storage_key, role, status, plan_id, points_balance, password_hash, last_login_at, created_at, updated_at)
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
+            INSERT INTO users (id, account_id, username, email, display_name, bio, avatar_storage_key, role, admin_permissions, status, plan_id, points_balance, password_hash, mfa_secret_ciphertext, mfa_enabled_at, terms_version, terms_url, privacy_version, privacy_url, policy_accepted_at, last_login_at, created_at, updated_at)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::jsonb, $10, $11, $12::numeric, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23)
             ON CONFLICT (id) DO UPDATE SET
                 account_id = EXCLUDED.account_id,
                 username = EXCLUDED.username,
@@ -582,10 +595,18 @@ export async function insertPostgresUsers(db: QueryExecutor, users: StoredUser[]
                 bio = EXCLUDED.bio,
                 avatar_storage_key = EXCLUDED.avatar_storage_key,
                 role = EXCLUDED.role,
+                admin_permissions = EXCLUDED.admin_permissions,
                 status = EXCLUDED.status,
                 plan_id = EXCLUDED.plan_id,
                 points_balance = EXCLUDED.points_balance,
                 password_hash = EXCLUDED.password_hash,
+                mfa_secret_ciphertext = EXCLUDED.mfa_secret_ciphertext,
+                mfa_enabled_at = EXCLUDED.mfa_enabled_at,
+                terms_version = EXCLUDED.terms_version,
+                terms_url = EXCLUDED.terms_url,
+                privacy_version = EXCLUDED.privacy_version,
+                privacy_url = EXCLUDED.privacy_url,
+                policy_accepted_at = EXCLUDED.policy_accepted_at,
                 last_login_at = EXCLUDED.last_login_at,
                 created_at = EXCLUDED.created_at,
                 updated_at = EXCLUDED.updated_at
@@ -599,10 +620,18 @@ export async function insertPostgresUsers(db: QueryExecutor, users: StoredUser[]
                 user.bio,
                 user.avatarStorageKey || null,
                 user.role,
+                JSON.stringify(user.adminPermissions),
                 user.status,
                 user.planId,
                 user.pointsBalance,
                 user.passwordHash,
+                user.mfaSecretCiphertext || null,
+                user.mfaEnabledAt || null,
+                user.registrationConsent?.termsVersion || null,
+                user.registrationConsent?.termsUrl || null,
+                user.registrationConsent?.privacyVersion || null,
+                user.registrationConsent?.privacyUrl || null,
+                user.registrationConsent?.acceptedAt || null,
                 user.lastLoginAt || null,
                 user.createdAt,
                 user.updatedAt,

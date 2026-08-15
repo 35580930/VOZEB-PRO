@@ -1,11 +1,21 @@
 import { registerCreativeAssets } from "@/lib/server/creative-runtime-store";
+import { agentTaskResultItems } from "@/lib/server/agent-run-result-items";
 import type { AgentRun, AgentRunTask } from "@/lib/server/agent-run-store";
 
 export async function registerAgentTaskAssets(run: AgentRun, task: AgentRunTask, result: unknown, sourceTaskIds: string[]) {
-    const records = taskResultItems(result);
+    const records: Array<{ record: Record<string, unknown>; textContent?: string; location?: NonNullable<ReturnType<typeof persistentMediaLocation>> }> = [];
+    for (const record of agentTaskResultItems(result)) {
+        if (task.type === "text") {
+            const textContent = typeof record.content === "string" ? record.content.trim() : "";
+            if (textContent) records.push({ record, textContent });
+            continue;
+        }
+        const location = persistentMediaLocation(record);
+        if (location) records.push({ record, location });
+    }
     const inputs: Parameters<typeof registerCreativeAssets>[0] = [];
     const parentAssetIds = Array.from(new Set([task.referenceAssetId, ...(task.references || []).map((item) => item.assetId)].filter((item): item is string => Boolean(item))));
-    records.forEach((record, ordinal) => {
+    records.forEach(({ record, textContent, location }, ordinal) => {
         const sourceTaskId = sourceTaskIds[Math.min(ordinal, Math.max(0, sourceTaskIds.length - 1))] || `direct-${run.id}-${task.id}`;
         const base = {
             userId: run.userId,
@@ -17,14 +27,12 @@ export async function registerAgentTaskAssets(run: AgentRun, task: AgentRunTask,
             ordinal,
             type: task.type,
             title: records.length > 1 ? `${task.title} ${ordinal + 1}` : task.title,
-            metadata: { agentTaskId: task.id, model: task.model, surface: run.surface, projectId: run.projectId, parentAssetIds },
+            metadata: { agentTaskId: task.id, model: task.model, surface: run.surface, projectId: run.projectId, parentAssetIds, ...publicResultMetadata(record) },
         };
         if (task.type === "text") {
-            const textContent = typeof record.content === "string" ? record.content.trim() : "";
             if (textContent) inputs.push({ ...base, textContent });
             return;
         }
-        const location = persistentMediaLocation(record);
         if (!location) return;
         inputs.push({
             ...base,
@@ -37,14 +45,6 @@ export async function registerAgentTaskAssets(run: AgentRun, task: AgentRunTask,
         });
     });
     return registerCreativeAssets(inputs);
-}
-
-function taskResultItems(value: unknown): Record<string, unknown>[] {
-    if (!value || typeof value !== "object") return [{}];
-    const record = value as Record<string, unknown>;
-    const list = [record.results, record.images, record.outputs, record.items].find(Array.isArray);
-    if (!Array.isArray(list) || !list.length) return [record];
-    return list.filter((item): item is Record<string, unknown> => Boolean(item) && typeof item === "object").slice(0, 10);
 }
 
 function persistentMediaLocation(record: Record<string, unknown>) {
@@ -76,4 +76,11 @@ function resultDurationMs(record: Record<string, unknown>) {
     if (milliseconds !== undefined) return milliseconds;
     const seconds = resultNumber(record.seconds ?? record.duration);
     return seconds === undefined ? undefined : Math.round(seconds * 1000);
+}
+
+function publicResultMetadata(record: Record<string, unknown>) {
+    const coverUrl = cleanPersistentUrl(record.coverUrl ?? record.posterUrl ?? record.poster ?? record.thumbnailUrl ?? record.thumbnail ?? record.firstFrame);
+    const ratio = cleanResultText(record.ratio ?? record.aspectRatio ?? record.size)?.slice(0, 32);
+    const resolution = cleanResultText(record.resolution)?.slice(0, 32);
+    return { ...(coverUrl ? { coverUrl } : {}), ...(ratio ? { ratio } : {}), ...(resolution ? { resolution } : {}) };
 }

@@ -117,7 +117,7 @@ export function CanvasNodeHoverToolbar({
     if (!node) return null;
 
     const left = viewport.x + (node.position.x + node.width / 2) * viewport.k;
-    const top = viewport.y + node.position.y * viewport.k - 14;
+    const top = viewport.y + node.position.y * viewport.k - 12;
     const safeViewportWidth = toolbarMetrics.viewportWidth || 0;
     const safeToolbarWidth = Math.min(toolbarMetrics.width || 0, Math.max(0, safeViewportWidth - 32));
     const toolbarLeft = safeViewportWidth && safeToolbarWidth ? Math.min(Math.max(left, safeToolbarWidth / 2 + 16), safeViewportWidth - safeToolbarWidth / 2 - 16) : left;
@@ -130,7 +130,7 @@ export function CanvasNodeHoverToolbar({
     const hasAudio = isAudio && Boolean(node.metadata?.content);
     const isText = node.type === CanvasNodeType.Text;
     const isConfig = node.type === CanvasNodeType.Config;
-    const canOpenDialog = isText || hasImage || isVideo;
+    const canOpenDialog = isText || isImage || isVideo || isAudio;
     const canRetry = node.metadata?.status === "error";
     const quickImageToolIdSet = new Set(quickImageToolIds);
     const copyImagePrompt = (target: CanvasNodeData) => {
@@ -197,8 +197,9 @@ export function CanvasNodeHoverToolbar({
         <>
             <div
                 ref={toolbarRef}
-                className="hide-scrollbar absolute z-[70] flex h-11 max-w-[calc(100vw-32px)] -translate-x-1/2 -translate-y-full items-center overflow-x-auto overflow-y-hidden rounded-[14px] border shadow-[0_8px_28px_rgba(15,23,42,.12)]"
-                style={{ left: toolbarLeft, top, background: theme.toolbar.panel, borderColor: theme.toolbar.border, color: theme.toolbar.item }}
+                data-canvas-hover-toolbar
+                className="hide-scrollbar absolute z-[70] flex h-10 max-w-[calc(100vw-32px)] items-center overflow-x-auto overflow-y-hidden rounded-xl border shadow-[0_7px_22px_rgba(15,23,42,.10)]"
+                style={{ left: toolbarLeft, top, transform: "translate(-50%, -100%)", background: theme.toolbar.panel, borderColor: theme.toolbar.border, color: theme.toolbar.item }}
                 onMouseEnter={() => onKeep(node.id)}
                 onMouseLeave={() => {
                     if (!imageToolSettingsOpen) onLeave();
@@ -264,22 +265,7 @@ export function CanvasNodeInfoModal({ node, open, onClose }: { node: CanvasNodeD
                     {view === "info" ? (
                         <div className="thin-scrollbar h-full space-y-3 overflow-auto pr-1">
                             <InfoRow label="ID" value={node.id} />
-                            <InfoRow
-                                label="类型"
-                                value={
-                                    node.type === CanvasNodeType.Text
-                                        ? "文本"
-                                        : node.type === CanvasNodeType.Image
-                                          ? "图片"
-                                          : node.type === CanvasNodeType.Panorama
-                                            ? "全景图"
-                                            : node.type === CanvasNodeType.Video
-                                              ? "视频"
-                                              : node.type === CanvasNodeType.Audio
-                                                ? "音频"
-                                                : "生成配置"
-                                }
-                            />
+                            <InfoRow label="类型" value={CANVAS_NODE_TYPE_LABELS[node.type]} />
                             <InfoRow label="尺寸" value={`${Math.round(node.width)} x ${Math.round(node.height)}`} />
                             <InfoRow label="位置" value={`${Math.round(node.position.x)}, ${Math.round(node.position.y)}`} />
                             <InfoRow label="状态" value={node.metadata?.status || "idle"} />
@@ -303,12 +289,24 @@ export function CanvasNodeInfoModal({ node, open, onClose }: { node: CanvasNodeD
     );
 }
 
+const CANVAS_NODE_TYPE_LABELS = {
+    [CanvasNodeType.Image]: "图片",
+    [CanvasNodeType.Panorama]: "全景图",
+    [CanvasNodeType.Text]: "文本",
+    [CanvasNodeType.Config]: "生成配置",
+    [CanvasNodeType.Video]: "视频",
+    [CanvasNodeType.Audio]: "音频",
+    [CanvasNodeType.Brief]: "创作简报",
+    [CanvasNodeType.Task]: "Agent 任务",
+    [CanvasNodeType.BrandKit]: "品牌规范",
+} satisfies Record<CanvasNodeType, string>;
+
 function ToolbarAction({ title, icon, onClick, active = false, danger = false, theme }: ToolbarTool & { theme: (typeof canvasThemes)[keyof typeof canvasThemes] }) {
     return (
         <Tooltip title={title} placement="top" mouseEnterDelay={0.2}>
             <button
                 type="button"
-                className="group relative flex size-11 shrink-0 items-center justify-center"
+                className="group relative flex size-10 shrink-0 items-center justify-center"
                 style={{ color: danger ? "#ef4444" : theme.toolbar.item, "--canvas-tool-hover": theme.toolbar.itemHover } as CSSProperties}
                 onClick={onClick}
                 aria-label={title}

@@ -5,15 +5,20 @@ export function friendlyAgentError(value: unknown, fallback = "Agent 暂时无�
     const message = value instanceof Error ? value.message : typeof value === "string" ? value : "";
     const actionable = actionableErrorMessage(message);
     if (actionable) return actionable;
-    if (!message || TECHNICAL_ERROR_PATTERN.test(message)) return fallback;
+    const classified = classifiedTechnicalError(message);
+    if (classified) return classified;
+    if (!message) return fallback;
     if (/任务依赖无法继续执行/.test(message)) return "部分创作任务未能完成，请调整需求后重试。";
     return message;
 }
 
 export function formatAgentMessageText(text: string) {
-    const actionable = actionableErrorMessage(text);
-    if (actionable) return actionable;
-    if (TECHNICAL_ERROR_PATTERN.test(text)) return "当前模型暂不可用，请切换模型或稍后重试。";
+    if (isErrorPayload(text)) {
+        const actionable = actionableErrorMessage(text);
+        if (actionable) return actionable;
+        const classified = classifiedTechnicalError(text);
+        if (classified) return classified;
+    }
     const legacyTextResult = text.match(/^已完成 1 个创作任务。\s*「[^」]+」已完成：\s*\*\*(.+?)\*\*/s);
     if (legacyTextResult?.[1]) return legacyTextResult[1].trim();
     if (/^正在执行任务 task-[^（]+（第 \d+ 次）…?$/.test(text.trim())) return "正在执行创作任务…";
@@ -21,7 +26,7 @@ export function formatAgentMessageText(text: string) {
     if (text.trim() === "创作计划与后台生成任务已全部完成。") return "创作任务已完成。";
     const planningBoundary = ["\n\n我的选择：", "\n\n已安排 "].map((value) => text.indexOf(value)).filter((index) => index >= 0);
     const visibleText = planningBoundary.length ? text.slice(0, Math.min(...planningBoundary)) : text;
-    return stripUpstreamDisplayDirectives(visibleText)
+    return formatAgentArtifactText(visibleText)
         .split("\n")
         .filter((line) => !/^「[^」]+」已生成(?:并返回画布)?。$/.test(line.trim()))
         .join("\n")
@@ -29,8 +34,18 @@ export function formatAgentMessageText(text: string) {
         .trim();
 }
 
-function stripUpstreamDisplayDirectives(value: string) {
-    return value.replace(/:::writing\{[^}\r\n]*\}([\s\S]*?):::/g, "$1");
+export function formatAgentArtifactText(value: string) {
+    if (!/:::writing\{[^}\r\n]*\}/.test(value)) return value.trim();
+    return value
+        .replace(/:::writing\{[^}\r\n]*\}([\s\S]*?):::/g, "$1")
+        .replace(/:::writing\{[^}\r\n]*\}[ \t]*(?:\r?\n)?/g, "")
+        .replace(/(?:\r?\n)?[ \t]*:::[ \t]*$/g, "")
+        .trim();
+}
+
+function isErrorPayload(value: string) {
+    const text = value.trim();
+    return text.startsWith("{") || /^(?:<!doctype\s+html|<html\b)/i.test(text);
 }
 
 function actionableErrorMessage(value: string) {
@@ -48,13 +63,43 @@ function actionableErrorMessage(value: string) {
     }
 }
 
+function classifiedTechnicalError(value: string) {
+    const message = extractErrorMessage(value);
+    if (!message) return "";
+    if (/积分不足|余额不足/.test(message)) return "积分不足";
+    if (/status\s*[=:]\s*(401|403)|unauthorized|forbidden|鉴权失败|api\s*key|密钥/i.test(message)) return "当前渠道鉴权失败，请管理员检查 API Key 和模型权限。";
+    if (/status\s*[=:]\s*429|rate.?limit|限流|请求过于频繁/i.test(message)) return "请求过于频繁，请稍后重试。";
+    if (/timeout|timed\s*out|超时|响应超时/i.test(message)) return "模型响应超时，请稍后重试。";
+    if (/network|fetch failed|econn|enotfound|dns|证书|连接失败|无法连接|服务器网络/i.test(message)) return "模型服务连接失败，请稍后重试。";
+    if (/status\s*[=:]\s*4\d{2}|invalid|unsupported|参数(?:错误|无效|不支持)|请求参数/i.test(message)) return "当前请求参数不被模型支持，请检查模型与生成参数。";
+    if (/status\s*[=:]\s*5\d{2}|not available|convert_request_failed|backend-(?:anon|api)\/conversation failed|<!doctype\s+html|<html\b|\bnginx\b|request id|new_api_error/i.test(message)) {
+        return "当前模型暂不可用，请切换模型或稍后重试。";
+    }
+    return TECHNICAL_ERROR_PATTERN.test(value) ? "当前模型暂不可用，请切换模型或稍后重试。" : "";
+}
+
+function extractErrorMessage(value: string) {
+    const text = value.trim();
+    if (!text) return "";
+    if (!text.startsWith("{")) return text;
+    try {
+        const payload = JSON.parse(text) as Record<string, unknown>;
+        const error = payload.error;
+        const response = payload.response && typeof payload.response === "object" ? (payload.response as Record<string, unknown>) : undefined;
+        const responseError = response?.error;
+        return [payload.msg, payload.message, error, objectMessage(error), response?.msg, responseError, objectMessage(responseError)].map((candidate) => (typeof candidate === "string" ? candidate.trim() : "")).find(Boolean) || text;
+    } catch {
+        return text;
+    }
+}
+
 function objectMessage(value: unknown) {
     return value && typeof value === "object" && typeof (value as { message?: unknown }).message === "string" ? String((value as { message: string }).message) : "";
 }
 
 function normalizeActionableError(message: string) {
     if (/积分不足|余额不足/.test(message)) return "积分不足";
-    if (/must use application\/json|requires? application\/json|content[- ]type[^\n]*application\/json/i.test(message)) return "当前视频渠道要求 application/json，请在后台选择“VOZEB推荐”协议。";
+    if (/must use application\/json|requires? application\/json|content[- ]type[^\n]*application\/json/i.test(message)) return "当前视频渠道要求 application/json，请在后台选择匹配的内置协议，或使用自定义协议配置请求模板。";
     if (/\b(?:unauthorized|forbidden|permission denied)\b|未授权|权限不足|无权调用/i.test(message)) return "当前渠道拒绝了请求，请管理员检查 API Key 和模型权限。";
     if (/\b(?:invalid|unsupported) (?:request|parameter|field|argument)\b|参数(?:错误|无效|不支持)|不支持的参数/i.test(message)) return "当前渠道拒绝了请求参数，请管理员核对所选协议与模型能力。";
     return ACTIONABLE_ERROR_PATTERN.test(message) ? message : "";

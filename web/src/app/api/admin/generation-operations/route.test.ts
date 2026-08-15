@@ -10,7 +10,7 @@ import { GET } from "./route";
 describe("GET /api/admin/generation-operations", () => {
     beforeEach(() => {
         vi.clearAllMocks();
-        mocks.getCurrentUser.mockResolvedValue({ id: "admin", role: "admin" });
+        mocks.getCurrentUser.mockResolvedValue({ id: "admin", role: "admin", status: "active", adminPermissions: ["generation.read"] });
         mocks.listAdminGenerationOperations.mockResolvedValue({ items: [], total: 0, page: 1, pageSize: 20, summary: {}, channels: [] });
     });
 

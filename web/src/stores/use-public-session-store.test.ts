@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { loadPublicSession, resetPublicSession, usePublicSessionStore } from "@/stores/use-public-session-store";
+import { applyPublicSiteSettings, loadPublicSession, resetPublicSession, usePublicSessionStore } from "@/stores/use-public-session-store";
 
 afterEach(() => {
     resetPublicSession();
@@ -8,6 +8,20 @@ afterEach(() => {
 });
 
 describe("public session refresh", () => {
+    it("applies the administrator save response immediately while preserving the current session", () => {
+        usePublicSessionStore.setState({
+            ready: true,
+            payload: { user: { id: "user-1" } as never, settings: { site: { title: "旧标题", logoUrl: "/old.svg" }, logicalModels: [] } },
+        });
+
+        applyPublicSiteSettings({ title: "新标题", logoUrl: "/new.svg" });
+
+        expect(usePublicSessionStore.getState().payload).toMatchObject({
+            user: { id: "user-1" },
+            settings: { site: { title: "新标题", logoUrl: "/new.svg" }, logicalModels: [] },
+        });
+    });
+
     it("can replace a cached model catalog after an administrator saves settings", async () => {
         const fetchMock = vi
             .fn()

@@ -4,10 +4,11 @@ import type { FormEvent, ReactNode } from "react";
 import { useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { ArrowLeft, ArrowRight, Gift, LockKeyhole, Mail, UserRound } from "lucide-react";
-import { App, Button, Input } from "antd";
+import { ArrowLeft, ArrowRight, Gift, LockKeyhole, Mail, ShieldCheck, UserRound } from "lucide-react";
+import { App, Button, Checkbox, Input } from "antd";
 
 import { SiteLogo } from "@/components/layout/site-logo";
+import { DEFAULT_SITE_TITLE, resolveSiteTitle } from "@/lib/site-brand";
 import { usePublicSessionStore } from "@/stores/use-public-session-store";
 import { type LocalUser, useUserStore } from "@/stores/use-user-store";
 import { cn } from "@/lib/utils";
@@ -47,14 +48,18 @@ export function AuthForm({
 }: AuthFormProps) {
     const router = useRouter();
     const { message } = App.useApp();
-    const site = usePublicSessionStore((state) => state.payload?.settings?.site) || { title: "MOCREAI", logoUrl: "/logo.svg" };
+    const site = usePublicSessionStore((state) => state.payload?.settings?.site) || { title: DEFAULT_SITE_TITLE, logoUrl: "/logo.svg" };
+    const siteTitle = resolveSiteTitle(site.title);
     const setUser = useUserStore((state) => state.setUser);
     const [username, setUsername] = useState("");
     const [email, setEmail] = useState("");
     const [emailCode, setEmailCode] = useState("");
     const [displayName, setDisplayName] = useState("");
     const [password, setPassword] = useState("");
+    const [totpCode, setTotpCode] = useState("");
+    const [mfaRequired, setMfaRequired] = useState(false);
     const [referralCode, setReferralCode] = useState(initialReferralCode);
+    const [policyAccepted, setPolicyAccepted] = useState(false);
     const [submitting, setSubmitting] = useState(false);
     const [sendingCode, setSendingCode] = useState(false);
     const isRegister = mode === "register";
@@ -69,12 +74,33 @@ export function AuthForm({
             const response = await fetch(isRegister ? "/api/auth/register" : "/api/auth/login", {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ username, email, emailCode, displayName, password, referralCode: isRegister && !firstUser ? referralCode : undefined, referralSource, installToken: firstUser ? installToken.trim() : undefined }),
+                body: JSON.stringify({
+                    username,
+                    email,
+                    emailCode,
+                    displayName,
+                    password,
+                    totpCode: !isRegister && mfaRequired ? totpCode : undefined,
+                    referralCode: isRegister && !firstUser ? referralCode : undefined,
+                    referralSource,
+                    policyAccepted: isRegister && !firstUser ? policyAccepted : undefined,
+                    installToken: firstUser ? installToken.trim() : undefined,
+                }),
             });
-            const payload = (await response.json()) as { user?: LocalUser; error?: string };
+            const payload = (await response.json()) as { user?: LocalUser; error?: string; mfaRequired?: boolean; securityNotice?: { networkChanged: boolean; deviceChanged: boolean } };
+            if (!isRegister && payload.mfaRequired) {
+                setMfaRequired(true);
+                message.info("请输入身份验证器动态码");
+                return;
+            }
             if (!response.ok || !payload.user) throw new Error(payload.error || (isRegister ? "注册失败" : "登录失败"));
             setUser(payload.user);
-            message.success(isRegister ? "注册成功" : "登录成功");
+            if (!isRegister && payload.securityNotice) {
+                const changed = [payload.securityNotice.deviceChanged ? "设备" : "", payload.securityNotice.networkChanged ? "网络" : ""].filter(Boolean).join("和");
+                message.warning(`检测到登录${changed}发生变化，请在账户与安全中核对登录记录`);
+            } else {
+                message.success(isRegister ? "注册成功" : "登录成功");
+            }
             router.replace(nextPath);
             router.refresh();
         } catch (error) {
@@ -107,8 +133,8 @@ export function AuthForm({
             <form onSubmit={submit} className={cn("auth-form-body w-full", variant === "embedded" ? "space-y-4" : "space-y-6")}>
                 {headerSlot}
                 <div className="auth-form-header">
-                    <p className="auth-form-kicker text-sm font-medium text-cyan-600 dark:text-cyan-300">{firstUser ? "首次初始化" : isRegister ? "创建创作账号" : "欢迎回来"}</p>
-                    <h2 className={cn("mt-2 font-semibold tracking-normal text-stone-950 dark:text-white", variant === "embedded" ? "text-2xl" : "text-3xl")}>{firstUser ? "创建首个管理员" : isRegister ? "注册 MOCREAI" : "登录 MOCREAI"}</h2>
+                    <p className="auth-form-kicker text-sm font-medium">{firstUser ? "首次初始化" : isRegister ? "创建创作账号" : "欢迎回来"}</p>
+                    <h2 className={cn("mt-2 font-semibold tracking-normal text-stone-950 dark:text-white", variant === "embedded" ? "text-2xl" : "text-3xl")}>{firstUser ? "创建首个管理员" : isRegister ? `注册 ${siteTitle}` : `登录 ${siteTitle}`}</h2>
                     <p className="auth-form-description mt-3 text-sm leading-6 text-stone-500 dark:text-stone-400">{isRegister ? "保存创作项目、提示词和常用风格，从同一个入口继续。" : "继续你的电商、短剧、美颜与画布创作。"}</p>
                 </div>
 
@@ -141,7 +167,11 @@ export function AuthForm({
                         size="large"
                         prefix={<UserRound className="size-4 text-stone-500" />}
                         value={username}
-                        onChange={(event) => setUsername(event.target.value)}
+                        onChange={(event) => {
+                            setUsername(event.target.value);
+                            setMfaRequired(false);
+                            setTotpCode("");
+                        }}
                         placeholder={isRegister ? "设置登录用户名" : "输入用户名或已绑定邮箱"}
                         autoComplete="username"
                         disabled={submitting || disabled}
@@ -212,7 +242,11 @@ export function AuthForm({
                         size="large"
                         prefix={<LockKeyhole className="size-4 text-stone-500" />}
                         value={password}
-                        onChange={(event) => setPassword(event.target.value)}
+                        onChange={(event) => {
+                            setPassword(event.target.value);
+                            setMfaRequired(false);
+                            setTotpCode("");
+                        }}
                         placeholder={isRegister ? "至少 8 位" : "请输入密码"}
                         autoComplete={isRegister ? "new-password" : "current-password"}
                         disabled={submitting || disabled}
@@ -220,8 +254,51 @@ export function AuthForm({
                     />
                 </label>
 
-                <Button className="auth-submit-button" type="primary" htmlType="submit" size="large" block loading={submitting} disabled={disabled || !installTokenReady} icon={<ArrowRight className="size-4" />} iconPlacement="end">
-                    {firstUser ? "创建管理员并进入后台" : isRegister ? "注册并开始创作" : "登录并继续"}
+                {!isRegister && mfaRequired ? (
+                    <label className="block space-y-3">
+                        <span className="text-sm font-medium text-stone-700 dark:text-stone-200">动态验证码</span>
+                        <Input
+                            size="large"
+                            prefix={<ShieldCheck className="size-4 text-stone-500" />}
+                            value={totpCode}
+                            autoFocus
+                            autoComplete="one-time-code"
+                            inputMode="numeric"
+                            placeholder="输入身份验证器动态码"
+                            disabled={submitting}
+                            onChange={(event) => setTotpCode(event.target.value)}
+                            required
+                        />
+                    </label>
+                ) : null}
+
+                {isRegister && !firstUser ? (
+                    <Checkbox checked={policyAccepted} disabled={submitting || disabled} onChange={(event) => setPolicyAccepted(event.target.checked)}>
+                        <span className="text-sm leading-6 text-stone-600 dark:text-stone-300">
+                            我已阅读并同意
+                            <a className="mx-1 font-medium text-stone-950 hover:underline dark:text-white" href={site.termsUrl || "/terms"} target="_blank" rel="noreferrer" onClick={(event) => event.stopPropagation()}>
+                                服务条款
+                            </a>
+                            和
+                            <a className="ml-1 font-medium text-stone-950 hover:underline dark:text-white" href={site.privacyUrl || "/privacy"} target="_blank" rel="noreferrer" onClick={(event) => event.stopPropagation()}>
+                                隐私政策
+                            </a>
+                        </span>
+                    </Checkbox>
+                ) : null}
+
+                <Button
+                    className="auth-submit-button"
+                    type="primary"
+                    htmlType="submit"
+                    size="large"
+                    block
+                    loading={submitting}
+                    disabled={disabled || !installTokenReady || (isRegister && !firstUser && !policyAccepted)}
+                    icon={<ArrowRight className="size-4" />}
+                    iconPlacement="end"
+                >
+                    {firstUser ? "创建管理员并进入后台" : isRegister ? "注册并开始创作" : mfaRequired ? "验证并登录" : "登录并继续"}
                 </Button>
 
                 <div className="auth-switch-link pt-2 text-center text-sm text-stone-500 dark:text-stone-400">
@@ -253,8 +330,8 @@ export function AuthForm({
 
     return (
         <main className="auth-page-bg app-scroll-page flex items-center justify-center px-4 py-6 text-foreground sm:px-6 sm:py-10">
-            <div className="auth-page-card grid w-full max-w-5xl overflow-hidden border border-stone-200 bg-white/86 shadow-2xl shadow-cyan-950/10 backdrop-blur md:grid-cols-[0.9fr_1fr] dark:border-white/10 dark:bg-black/50 dark:shadow-cyan-950/20">
-                <section className="auth-page-brand-panel flex min-h-[220px] flex-col justify-between gap-5 border-b border-stone-200 p-5 text-stone-950 sm:min-h-[360px] sm:gap-8 sm:p-8 md:border-b-0 md:border-r dark:border-white/10 dark:text-white">
+            <div className="auth-page-card grid w-full max-w-5xl overflow-hidden border backdrop-blur md:grid-cols-[0.9fr_1fr]">
+                <section className="auth-page-brand-panel flex min-h-[220px] flex-col justify-between gap-5 border-b p-5 text-stone-950 sm:min-h-[360px] sm:gap-8 sm:p-8 md:border-b-0 md:border-r dark:text-white">
                     <div className="flex items-start justify-between gap-4">
                         <Link href="/" className="inline-flex items-center gap-4 text-base font-semibold">
                             <SiteLogo logoUrl={site.logoUrl} className="size-16 sm:size-20" />
@@ -272,9 +349,9 @@ export function AuthForm({
                         <h1 className="text-balance text-2xl font-semibold tracking-normal sm:text-3xl">{firstUser ? "创建首个管理员" : isRegister ? "从一个入口开始视觉创作" : "回到你的视觉创作台"}</h1>
                     </div>
                     <div className="auth-page-feature-list grid gap-2 text-sm text-stone-600 dark:text-stone-300">
-                        {["电商、短剧与美颜创作", "画布项目与提示词复用", "图片、视频工作台自由切换"].map((item) => (
+                        {["电商、短剧与美颜创作", "画布项目与提示词复用", "图片、视频与音频统一创作"].map((item) => (
                             <div key={item} className="flex items-center gap-2">
-                                <span className="size-1.5 rounded-full bg-cyan-400" />
+                                <span className="auth-feature-dot size-1.5 rounded-full" />
                                 <span>{item}</span>
                             </div>
                         ))}

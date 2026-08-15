@@ -271,7 +271,7 @@ function VideoSecondsMultiplierGroup({
                     ))}
                 </div>
                 <div className="col-span-full mt-1 grid grid-cols-[minmax(0,1fr)_auto] gap-2">
-                    <InputNumber className="w-full" min={1} max={20} precision={0} placeholder="自定义秒数" value={customSeconds} onChange={setCustomSeconds} />
+                    <InputNumber className="w-full" min={1} precision={0} placeholder="自定义秒数" value={customSeconds} onChange={setCustomSeconds} />
                     <Button size="small" icon={<Plus className="size-3.5" />} onClick={addCustomSeconds}>
                         添加
                     </Button>

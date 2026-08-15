@@ -38,7 +38,10 @@ export function AdminLogicalModelManager({ channels, logicalModels, defaultModel
     const [capabilityFilter, setCapabilityFilter] = useState<LogicalModelCapability | "all">("all");
     const deferredQuery = useDeferredValue(query.trim().toLowerCase());
     const visibleModels = useMemo(
-        () => logicalModels.filter((model) => (capabilityFilter === "all" || model.capability === capabilityFilter) && (!deferredQuery || `${model.id} ${model.name}`.toLowerCase().includes(deferredQuery))),
+        () =>
+            logicalModels.filter(
+                (model) => (capabilityFilter === "all" || model.capability === capabilityFilter) && (!deferredQuery || `${model.id} ${model.name} ${model.bindings.map((binding) => binding.upstreamModel).join(" ")}`.toLowerCase().includes(deferredQuery)),
+            ),
         [capabilityFilter, deferredQuery, logicalModels],
     );
     const availableDefaultFields = defaultFields.filter(({ capability }) => logicalModels.some((model) => model.capability === capability && isLogicalModelResolvable(logicalModels, channels, capability, model.id)));
@@ -53,7 +56,12 @@ export function AdminLogicalModelManager({ channels, logicalModels, defaultModel
 
     const saveDraft = () => {
         if (!draft) return;
-        const nextModels = logicalModels.map((model) => (model.id === editingId ? cloneLogicalModel(draft) : model));
+        const name = draft.name.trim();
+        if (!name) {
+            message.error("请填写前端展示昵称");
+            return;
+        }
+        const nextModels = logicalModels.map((model) => (model.id === editingId ? cloneLogicalModel({ ...draft, name }) : model));
         onChange({ logicalModels: nextModels, defaultModels: normalizeDefaultModelsConfig(defaultModels, nextModels, channels) });
         setDrawerOpen(false);
         message.success("模型路由设置已更新，请保存渠道配置");
@@ -81,7 +89,7 @@ export function AdminLogicalModelManager({ channels, logicalModels, defaultModel
                             默认能力 {readyCount}/{availableDefaultFields.length} 可用
                         </Tag>
                     </div>
-                    <p className="mt-1 text-xs leading-5 text-stone-500 dark:text-stone-400">逻辑模型由渠道模型目录自动生成；同名上游模型跨渠道合并，不同名称自动独立。</p>
+                    <p className="mt-1 text-xs leading-5 text-stone-500 dark:text-stone-400">逻辑模型由渠道模型目录自动生成；同名上游模型跨渠道合并，前端昵称可独立设置。</p>
                 </div>
                 <Button icon={<RefreshCw className="size-4" />} onClick={syncChannelModels}>
                     重新同步
@@ -91,7 +99,7 @@ export function AdminLogicalModelManager({ channels, logicalModels, defaultModel
             <div className="mt-4 grid gap-4 xl:grid-cols-[minmax(0,1fr)_360px]">
                 <div className="min-w-0">
                     <div className="mb-3 grid gap-2 sm:grid-cols-[minmax(0,1fr)_160px]">
-                        <Input allowClear value={query} prefix={<Search className="size-4 text-stone-400" />} placeholder="搜索上游模型名" onChange={(event) => setQuery(event.target.value)} />
+                        <Input allowClear value={query} prefix={<Search className="size-4 text-stone-400" />} placeholder="搜索模型昵称、ID 或上游模型" onChange={(event) => setQuery(event.target.value)} />
                         <Select value={capabilityFilter} options={[{ label: "全部能力", value: "all" }, ...availableCapabilityOptions]} onChange={(value) => setCapabilityFilter(value)} />
                     </div>
                     <div className="max-h-[680px] space-y-2 overflow-y-auto pr-1">
@@ -162,14 +170,15 @@ export function AdminLogicalModelManager({ channels, logicalModels, defaultModel
 
             <Drawer
                 title="模型路由设置"
-                width="min(760px, 100vw)"
+                size={760}
+                styles={{ wrapper: { maxWidth: "100vw" } }}
                 open={drawerOpen}
                 destroyOnHidden
                 onClose={() => setDrawerOpen(false)}
                 extra={
                     <Space>
                         <Button onClick={() => setDrawerOpen(false)}>取消</Button>
-                        <Button type="primary" onClick={saveDraft}>
+                        <Button type="primary" disabled={!draft?.name.trim()} onClick={saveDraft}>
                             应用修改
                         </Button>
                     </Space>
@@ -178,9 +187,18 @@ export function AdminLogicalModelManager({ channels, logicalModels, defaultModel
                 {draft ? (
                     <>
                         <div className="rounded-lg border border-stone-200 bg-stone-50/70 p-3 dark:border-stone-800 dark:bg-stone-900/40">
-                            <div className="truncate text-sm font-semibold text-stone-950 dark:text-stone-100">{draft.name}</div>
-                            <div className="mt-1 truncate text-xs text-stone-500 dark:text-stone-400">逻辑 ID：{draft.id}（由上游模型自动建立）</div>
-                            <div className="mt-3 grid gap-3 sm:grid-cols-2">
+                            <div className="truncate text-xs text-stone-500 dark:text-stone-400">逻辑 ID：{draft.id}（由上游模型自动建立）</div>
+                            <div className="mt-2 grid gap-3 sm:max-w-[456px] sm:grid-cols-[192px_144px_96px]">
+                                <LabeledControl label="前端昵称">
+                                    <Input
+                                        className="!w-full"
+                                        aria-label="前端展示昵称"
+                                        maxLength={120}
+                                        value={draft.name}
+                                        placeholder={draft.bindings[0]?.upstreamModel || draft.id}
+                                        onChange={(event) => setDraft((current) => (current ? { ...current, name: event.target.value } : current))}
+                                    />
+                                </LabeledControl>
                                 <LabeledControl label="能力类型">
                                     <Select className="w-full" value={draft.capability} options={capabilityOptions} onChange={(capability) => setDraft((current) => (current ? { ...current, capability } : current))} />
                                 </LabeledControl>
@@ -193,7 +211,7 @@ export function AdminLogicalModelManager({ channels, logicalModels, defaultModel
                         </div>
                         <div className="mt-5">
                             <h3 className="text-sm font-semibold text-stone-950 dark:text-stone-100">同名渠道绑定</h3>
-                            <p className="mt-1 text-xs text-stone-500 dark:text-stone-400">渠道与上游模型由目录自动同步；这里仅调整优先级、启停和能力档案。</p>
+                            <p className="mt-1 text-xs text-stone-500 dark:text-stone-400">渠道与上游模型由目录自动同步；这里调整路由优先级、启停和能力档案。</p>
                             <div className="mt-3 space-y-3">
                                 {draft.bindings.map((binding) => (
                                     <BindingEditor

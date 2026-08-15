@@ -32,13 +32,20 @@ const mocks = vi.hoisted(() => {
 
 vi.mock("@/lib/server/database", () => mocks);
 
-import { listPublicGallery, resolveWorkGovernanceCase, submitPublicWorkReport, WorkGovernanceServiceError } from "./work-governance-service";
+import { listPublicGallery, listWorkCasesForOwner, resolveWorkGovernanceCase, submitPublicWorkReport, WorkGovernanceServiceError } from "./work-governance-service";
 
 describe("work governance service", () => {
     beforeEach(() => {
         vi.clearAllMocks();
         mocks.getDatabaseProvider.mockReturnValue("postgres");
         mocks.createPostgresRepositories.mockReturnValue({ workPublications: mocks.workPublications, workGovernance: mocks.workGovernance });
+    });
+
+    it("forwards owner appeal pagination without widening the work scope", async () => {
+        mocks.workGovernance.listCasesForOwner.mockResolvedValue({ items: [], total: 51, page: 3, pageSize: 20 });
+
+        await expect(listWorkCasesForOwner("user-one", "work-one", { page: 3, pageSize: 20 })).resolves.toMatchObject({ total: 51, page: 3 });
+        expect(mocks.workGovernance.listCasesForOwner).toHaveBeenCalledWith("work-one", "user-one", { page: 3, pageSize: 20 });
     });
 
     it("returns a public gallery contract without internal ids", async () => {

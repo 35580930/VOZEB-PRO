@@ -1,3 +1,4 @@
+import { hasAdminPermission } from "@/lib/admin-permissions";
 import { readJsonBody } from "@/lib/auth/request";
 import { getCurrentUser } from "@/lib/auth/session";
 import { GithubSkillImportError, importAgentSkillFromGithub } from "@/lib/server/github-agent-skill-import";
@@ -9,7 +10,7 @@ export const runtime = "nodejs";
 export async function POST(request: Request) {
     const currentUser = await getCurrentUser();
     if (!currentUser) return apiCompatError(401, "请先登录");
-    if (currentUser.role !== "admin") return apiCompatError(403, "需要管理员权限");
+    if (!hasAdminPermission(currentUser, "upstream.manage")) return apiCompatError(403, "需要管理员权限");
 
     try {
         const body = await readJsonBody<{ url?: unknown; path?: unknown }>(request);

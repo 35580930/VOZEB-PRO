@@ -5,7 +5,7 @@ import { RefreshCw } from "lucide-react";
 
 import { SystemChannelEditor } from "@/components/admin/admin-system-channel-editor";
 import type { SystemModelChannel } from "@/lib/auth/store";
-import { channelRequiresApiKey } from "@/lib/channel-protocol-registry";
+import { channelProtocolDefinition, channelRequiresApiKey, channelSupportsModelCatalog } from "@/lib/channel-protocol-registry";
 import { capabilityLabel, channelModelCapability } from "@/lib/model-routing-config";
 
 import { ChannelStatusBadge } from "./admin-channel-status-badge";
@@ -26,7 +26,7 @@ export function AdminChannelDetailDrawer({ open, channel, settings, fetching, on
     if (!channel) return null;
     const status = channelWorkspaceStatus(channel);
     return (
-        <Drawer title={channel.name || "渠道详情"} width="min(720px, 100vw)" open={open} destroyOnHidden onClose={onClose}>
+        <Drawer title={channel.name || "渠道详情"} size={720} styles={{ wrapper: { maxWidth: "100vw" } }} open={open} destroyOnHidden onClose={onClose}>
             <Tabs
                 items={[
                     {
@@ -58,6 +58,7 @@ export function AdminChannelDetailDrawer({ open, channel, settings, fetching, on
 
 function ChannelOverview({ channel, settings, status, onFetchModels, fetching }: { channel: SystemModelChannel; settings: ChannelWorkspaceSettings; status: ReturnType<typeof channelWorkspaceStatus>; onFetchModels: () => void; fetching: boolean }) {
     const capabilities = channelCapabilityLabels(channel);
+    const canSync = channelSupportsModelCatalog(channel);
     return (
         <div className="space-y-5">
             <div className="flex flex-wrap items-center justify-between gap-3 border-b border-stone-200 pb-4 dark:border-stone-800">
@@ -68,11 +69,15 @@ function ChannelOverview({ channel, settings, status, onFetchModels, fetching }:
                         <Tag key={capability}>{capability}</Tag>
                     ))}
                 </div>
-                <Space wrap>
-                    <Button icon={<RefreshCw className="size-4" />} loading={fetching} onClick={onFetchModels}>
-                        同步模型
-                    </Button>
-                </Space>
+                {canSync ? (
+                    <Space wrap>
+                        <Button icon={<RefreshCw className="size-4" />} loading={fetching} onClick={onFetchModels}>
+                            同步模型
+                        </Button>
+                    </Space>
+                ) : (
+                    <Tag className="m-0">{channelProtocolDefinition(channel.advancedConfig?.protocol || "auto").builtInModels?.length ? "官方预置模型" : "模型手动维护"}</Tag>
+                )}
             </div>
             <div className="grid gap-x-6 gap-y-4 sm:grid-cols-2">
                 <OverviewValue label="Base URL" value={channel.baseUrl || "未配置"} />

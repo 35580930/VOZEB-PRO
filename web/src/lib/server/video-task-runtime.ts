@@ -13,6 +13,7 @@ import { writeVideoGenerationLog } from "@/lib/server/video-task-log";
 import { maintenanceWorkerHeaders } from "@/lib/server/maintenance-auth";
 import { systemAiBillingHeaders } from "@/lib/server/system-ai-billing";
 import { refundVideoTask } from "@/lib/server/video-task-refund";
+import { geminiVideoQueryPath, parseGeminiVideoOperation } from "@/lib/server/gemini-video-provider";
 
 export type VideoUpstreamStep = { state: "pending"; status: string } | { state: "result_ready"; status: string; resultUrl: string } | { state: "failed"; status: string; error: string };
 
@@ -29,6 +30,7 @@ export async function refreshVideoTaskFromUpstream(task: VideoTask, origin: stri
 
 export async function queryVideoTaskUpstream(task: VideoTask, origin: string, cookie = "", workerUserId = ""): Promise<VideoUpstreamStep> {
     if (task.upstream.resultUrl) return { state: "result_ready", status: "completed", resultUrl: task.upstream.resultUrl };
+    if (isGeminiVideoTask(task)) return queryGeminiVideoUpstream(task, origin, cookie, workerUserId);
     const data = await queryVideoUpstream(task, origin, cookie, workerUserId);
     const status = readVideoProviderStatus(data, task.config.advancedConfig?.statusField);
     const resultUrl = readVideoProviderUrl(data, task.config.advancedConfig?.resultField);
@@ -37,6 +39,28 @@ export async function queryVideoTaskUpstream(task: VideoTask, origin: string, co
     }
     if (isProviderBusinessError(data) || VIDEO_PROVIDER_FAILED.has(status)) return { state: "failed", status: status || "failed", error: readProviderError(data) || "视频生成失败" };
     return { state: "pending", status: status || "processing" };
+}
+
+async function queryGeminiVideoUpstream(task: VideoTask, origin: string, cookie: string, workerUserId: string): Promise<VideoUpstreamStep> {
+    const path = task.upstream.queryPath || geminiVideoQueryPath(task.config.model, task.upstream.id);
+    const url = `${origin}${task.config.baseUrl.replace(/\/+$/, "")}${path.startsWith("/") ? path : `/${path}`}`;
+    const response = await fetchInternalApi(url, {
+        headers: videoProxyHeaders(task, cookie, workerUserId),
+        cache: "no-store",
+        signal: AbortSignal.timeout(Math.min(resolveModelRequestTimeoutMs(task.config, "video"), 60_000)),
+    });
+    const text = await response.text();
+    if (!response.ok) throw new Error(readVideoProviderHttpError(text, response.status));
+    let data: unknown;
+    try {
+        data = parseVideoProviderJson(text);
+    } catch (error) {
+        throw error instanceof Error ? error : new Error("Gemini Veo 查询接口返回了无效 JSON");
+    }
+    const operation = parseGeminiVideoOperation(data);
+    if (operation.state === "pending") return { state: "pending", status: operation.status };
+    if (operation.state === "failed") return { state: "failed", status: operation.status, error: operation.error };
+    return { state: "result_ready", status: operation.status, resultUrl: operation.resultUrl };
 }
 
 export async function persistVideoTaskResult(task: VideoTask, resultUrl: string, origin: string, cookie = "", workerUserId = "") {
@@ -196,4 +220,8 @@ function videoProxyHeaders(task: VideoTask, cookie: string, workerUserId: string
 function globalAiOpcPreset(task: VideoTask) {
     const preset = resolveGlobalAiOpcPreset(task.config.advancedConfig, task.config.model);
     return preset?.capability === "video" ? preset : undefined;
+}
+
+function isGeminiVideoTask(task: VideoTask) {
+    return task.config.apiFormat === "gemini" && task.config.advancedConfig?.protocol !== "globalaiopc";
 }

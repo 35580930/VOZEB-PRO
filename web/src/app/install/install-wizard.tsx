@@ -8,6 +8,7 @@ import { AuthForm } from "@/components/auth/auth-form";
 import { SiteLogo } from "@/components/layout/site-logo";
 import type { InstallStatus } from "@/lib/server/install-status";
 import { usePublicSessionStore } from "@/stores/use-public-session-store";
+import type { SiteSettings } from "@/lib/auth/store";
 import { DatabaseConfigBuilder } from "./database-config-builder";
 
 type InstallStepId = "intro" | "database" | "admin";
@@ -23,11 +24,12 @@ const steps = [
     { id: "admin" as const, title: "创建管理员", description: "创建第一个后台账号" },
 ];
 
-export function InstallWizard({ install }: { install: InstallStatus }) {
+export function InstallWizard({ install, initialSite }: { install: InstallStatus; initialSite: Pick<SiteSettings, "title" | "logoUrl"> }) {
     const [activeStep, setActiveStep] = useState<InstallStepId>("intro");
     const [currentInstall, setCurrentInstall] = useState(install);
     const [installToken, setInstallToken] = useState("");
-    const site = usePublicSessionStore((state) => state.payload?.settings?.site) || { title: "MOCREAI", logoUrl: "/logo.svg" };
+    const sessionSite = usePublicSessionStore((state) => state.payload?.settings?.site);
+    const site = sessionSite || initialSite;
     const databaseReady = currentInstall.database.healthy && currentInstall.database.schemaReady;
     const schemaPending = currentInstall.database.healthy && !currentInstall.database.schemaReady;
     const runtimeReady = databaseReady && currentInstall.security.encryptionReady && currentInstall.security.installTokenReady;
@@ -98,7 +100,7 @@ export function InstallWizard({ install }: { install: InstallStatus }) {
                 </aside>
 
                 <div className="min-w-0 bg-white/50">
-                    {activeStep === "intro" ? <IntroStep onNext={() => setActiveStep("database")} /> : null}
+                    {activeStep === "intro" ? <IntroStep siteTitle={site.title} onNext={() => setActiveStep("database")} /> : null}
                     {activeStep === "database" ? (
                         <DatabaseStep
                             install={currentInstall}
@@ -117,14 +119,14 @@ export function InstallWizard({ install }: { install: InstallStatus }) {
     );
 }
 
-function IntroStep({ onNext }: { onNext: () => void }) {
+function IntroStep({ siteTitle, onNext }: { siteTitle: string; onNext: () => void }) {
     return (
         <section className="p-5 sm:p-8">
-            <StepHeader step="步骤 1 / 3" title="先确认安装流程" description="MOCREAI 面向服务器部署，商业数据会进入 PostgreSQL。安装向导会引导你生成配置、检查初始化状态，并创建第一个管理员账号。" />
+            <StepHeader step="步骤 1 / 3" title="先确认安装流程" description={`${siteTitle} 面向服务器部署，商业数据会进入 PostgreSQL。安装向导会引导你生成配置、检查初始化状态，并创建第一个管理员账号。`} />
 
             <div className="mt-7 overflow-hidden rounded-lg border border-slate-200/80 bg-white/75 shadow-sm">
                 <ProcessRow index="01" title="准备 PostgreSQL" text="本机使用 localhost；Docker 内置数据库使用 postgres；宝塔宿主机数据库使用 127.0.0.1；云数据库使用服务商连接地址。" />
-                <ProcessRow index="02" title="写入部署配置" text="安装页不会保存数据库密码。复制的环境变量包含加密密钥与维护令牌，Compose 模板同时包含 App 和生成 Worker。" />
+                <ProcessRow index="02" title="写入部署配置" text="安装页不会保存数据库密码。复制的环境变量包含彼此隔离的维护令牌与 Worker 令牌，Compose 模板同时包含 App 和生成 Worker。" />
                 <ProcessRow index="03" title="让配置生效并初始化" text="根据所选部署方式执行页面给出的重启命令，等待服务恢复后刷新检查；连接成功后手动初始化表结构，再创建管理员。" last />
             </div>
 

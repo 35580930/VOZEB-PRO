@@ -1,8 +1,14 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import type { SystemChannelAdvancedConfig, SystemModelChannel } from "@/lib/auth/store";
+import { channelProtocolDefinitions, registeredChannelProtocolDefinitions } from "@/lib/channel-protocol-registry";
+import { GLOBAL_AIOPC_PRESETS } from "@/lib/globalaiopc-catalog";
 import { createProtocolFixtureServer } from "../../../scripts/protocol-fixture-server.mjs";
 import { requestStructuredText, type TextPlanningCandidate } from "./text-planning-runtime";
+
+const STRICT_TEXT_PROTOCOLS = registeredChannelProtocolDefinitions.filter((definition) => definition.strict && definition.operations.text);
+const MANUAL_TEXT_PROTOCOLS = channelProtocolDefinitions.filter((definition) => !definition.strict && definition.capabilities.includes("text"));
+const GLOBAL_AIOPC_TEXT_PRESETS = GLOBAL_AIOPC_PRESETS.filter((preset) => preset.capability === "text");
 
 let fixture: ReturnType<typeof createProtocolFixtureServer>;
 let origin = "";
@@ -20,19 +26,22 @@ afterAll(async () => {
 });
 
 describe("text planning runtime live protocol fixture", () => {
-    it.each(["openai", "sub2api", "newapi"] as const)("sends the %s preset through Chat and reads strict JSON", async (protocol) => {
-        const result = await requestStructuredText(input(candidate(protocol)));
+    it.each(STRICT_TEXT_PROTOCOLS)("sends the $id preset through Chat and reads strict JSON", async (definition) => {
+        const result = await requestStructuredText(input(candidate(definition.id)));
 
         expect(result).toMatchObject({ protocol: "chat", arguments: "{}" });
-        expect(lastRequest()).toMatchObject({ path: `/api/ai/system/${protocol}/chat/completions`, body: expect.any(Buffer) });
+        expect(lastRequest()).toMatchObject({ path: `/api/ai/system/${definition.id}/chat/completions`, body: expect.any(Buffer) });
         expect(JSON.parse(lastRequest().body.toString("utf8"))).toMatchObject({ model: "mock-text", messages: expect.any(Array) });
     });
 
-    it("sends a configured Responses model once and reads output_text", async () => {
-        const result = await requestStructuredText(input(candidate("compatible", { createPath: "/responses" })));
+    it.each(MANUAL_TEXT_PROTOCOLS)("receives structured text from the configured $id protocol", async (definition) => {
+        const options = manualTextOptions(definition.id);
+        const result = await requestStructuredText(input(candidate(definition.id, options)));
+        const expectedProtocol = definition.id === "custom" ? "custom" : definition.id === "compatible" ? "responses" : "chat";
+        const expectedPath = definition.id === "custom" ? "/planner/run" : definition.id === "compatible" ? "/responses" : "/chat/completions";
 
-        expect(result).toMatchObject({ protocol: "responses", arguments: "{}" });
-        expect(lastRequest().path).toBe("/api/ai/system/compatible/responses");
+        expect(result).toMatchObject({ protocol: expectedProtocol, arguments: "{}" });
+        expect(lastRequest().path).toBe(`/api/ai/system/${definition.id}${expectedPath}`);
     });
 
     it("sends a native Gemini model to generateContent and reads candidate text", async () => {
@@ -42,13 +51,18 @@ describe("text planning runtime live protocol fixture", () => {
         expect(lastRequest().path).toBe("/api/ai/system/compatible/models/mock-text:generateContent");
     });
 
-    it("sends a custom text template and reads the configured result field", async () => {
-        const result = await requestStructuredText(input(candidate("custom", { createPath: "/planner/run", requestTemplate: '{"deployment":"{{model}}","conversation":"{{messages}}"}', resultField: "data.plan" })));
+    it.each(GLOBAL_AIOPC_TEXT_PRESETS)("receives structured text through the legacy $id preset", async (preset) => {
+        const result = await requestStructuredText(input(candidate("globalaiopc", { apiFormat: preset.apiFormat, globalAiOpcPreset: preset.id as never }, preset.modelExamples[0])));
 
-        expect(result).toMatchObject({ protocol: "custom", arguments: "{}" });
-        expect(lastRequest().path).toBe("/api/ai/system/custom/planner/run");
+        expect(result.arguments).toBe("{}");
+        expect(lastRequest().path).toMatch(/^\/api\/ai\/system\/globalaiopc\/(?:chat\/completions|responses)$/);
     });
 });
+
+function manualTextOptions(protocol: SystemChannelAdvancedConfig["protocol"]): Partial<SystemChannelAdvancedConfig> {
+    if (protocol === "custom") return { createPath: "/planner/run", requestTemplate: '{"deployment":"{{model}}","conversation":"{{messages}}"}', resultField: "data.plan" };
+    return protocol === "compatible" ? { createPath: "/responses" } : {};
+}
 
 function input(configured: TextPlanningCandidate) {
     return {
@@ -60,10 +74,10 @@ function input(configured: TextPlanningCandidate) {
     };
 }
 
-function candidate(protocol: SystemChannelAdvancedConfig["protocol"], options: Partial<SystemChannelAdvancedConfig> & { apiFormat?: "openai" | "gemini" } = {}): TextPlanningCandidate {
+function candidate(protocol: SystemChannelAdvancedConfig["protocol"], options: Partial<SystemChannelAdvancedConfig> & { apiFormat?: "openai" | "gemini" } = {}, model = "mock-text"): TextPlanningCandidate {
     const advancedConfig = {
         protocol,
-        textModel: "mock-text",
+        textModel: model,
         imageModel: "",
         videoModel: "",
         createPath: "",
@@ -78,8 +92,8 @@ function candidate(protocol: SystemChannelAdvancedConfig["protocol"], options: P
         supportsReferenceAudio: false,
         ...options,
     } satisfies SystemChannelAdvancedConfig;
-    const channel = { id: protocol, name: protocol, baseUrl: origin, apiKey: "fixture", apiFormat: options.apiFormat || "openai", models: ["mock-text"], enabled: true, advancedConfig } satisfies SystemModelChannel;
-    return { channelId: channel.id, upstreamModel: "mock-text", channel };
+    const channel = { id: protocol, name: protocol, baseUrl: origin, apiKey: "fixture", apiFormat: options.apiFormat || "openai", models: [model], enabled: true, advancedConfig } satisfies SystemModelChannel;
+    return { channelId: channel.id, upstreamModel: model, channel };
 }
 
 function lastRequest() {

@@ -11,7 +11,6 @@ export type BillingRefundJobRecord = {
     status: BillingRefundJobStatus;
     providerRefundId?: string;
     attempts: number;
-    maxAttempts: number;
     nextAttemptAt?: string;
     lastError?: string;
     rawPayload?: import("./repository-shared").JsonValue;
@@ -33,16 +32,15 @@ export class BillingRefundRepository {
     async upsert(job: BillingRefundJobRecord) {
         const result = await this.db.query(
             `INSERT INTO billing_refund_jobs (
-                id, order_id, payment_id, provider, status, provider_refund_id, attempts, max_attempts,
+                id, order_id, payment_id, provider, status, provider_refund_id, attempts,
                 next_attempt_at, last_error, raw_payload, worker_id, lease_until, completed_at, created_at, updated_at
-             ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
+             ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
              ON CONFLICT (order_id) DO UPDATE SET
                 payment_id = COALESCE(EXCLUDED.payment_id, billing_refund_jobs.payment_id),
                 provider = EXCLUDED.provider,
                 status = EXCLUDED.status,
                 provider_refund_id = COALESCE(EXCLUDED.provider_refund_id, billing_refund_jobs.provider_refund_id),
                 attempts = EXCLUDED.attempts,
-                max_attempts = EXCLUDED.max_attempts,
                 next_attempt_at = EXCLUDED.next_attempt_at,
                 last_error = EXCLUDED.last_error,
                 raw_payload = EXCLUDED.raw_payload,
@@ -59,7 +57,6 @@ export class BillingRefundRepository {
                 job.status,
                 job.providerRefundId || null,
                 job.attempts,
-                job.maxAttempts,
                 job.nextAttemptAt || null,
                 job.lastError || null,
                 jsonParam(job.rawPayload ?? {}),
@@ -115,34 +112,22 @@ export class BillingRefundRepository {
         return result.rows[0] ? mapBillingRefundJob(result.rows[0]) : null;
     }
 
-    async release(id: string, workerId: string, patch: Pick<BillingRefundJobRecord, "status" | "attempts" | "maxAttempts"> & Partial<Pick<BillingRefundJobRecord, "providerRefundId" | "nextAttemptAt" | "lastError" | "rawPayload" | "completedAt">>) {
+    async release(id: string, workerId: string, patch: Pick<BillingRefundJobRecord, "status" | "attempts"> & Partial<Pick<BillingRefundJobRecord, "providerRefundId" | "nextAttemptAt" | "lastError" | "rawPayload" | "completedAt">>) {
         const result = await this.db.query(
             `UPDATE billing_refund_jobs SET
                 status = $3,
                 provider_refund_id = COALESCE($4, provider_refund_id),
                 attempts = $5,
-                max_attempts = $6,
-                next_attempt_at = $7,
-                last_error = $8,
-                raw_payload = COALESCE($9::jsonb, raw_payload),
-                completed_at = $10,
+                next_attempt_at = $6,
+                last_error = $7,
+                raw_payload = COALESCE($8::jsonb, raw_payload),
+                completed_at = $9,
                 worker_id = NULL,
                 lease_until = NULL,
                 updated_at = now()
              WHERE id = $1 AND worker_id = $2
              RETURNING *`,
-            [
-                id,
-                workerId,
-                patch.status,
-                patch.providerRefundId || null,
-                patch.attempts,
-                patch.maxAttempts,
-                patch.nextAttemptAt || null,
-                patch.lastError || null,
-                patch.rawPayload === undefined ? null : jsonParam(patch.rawPayload),
-                patch.completedAt || null,
-            ],
+            [id, workerId, patch.status, patch.providerRefundId || null, patch.attempts, patch.nextAttemptAt || null, patch.lastError || null, patch.rawPayload === undefined ? null : jsonParam(patch.rawPayload), patch.completedAt || null],
         );
         return result.rows[0] ? mapBillingRefundJob(result.rows[0]) : null;
     }
@@ -158,7 +143,6 @@ function mapBillingRefundJob(row: Record<string, unknown>): BillingRefundJobReco
         status: isStatus(status) ? status : "failed",
         providerRefundId: optionalString(row.provider_refund_id),
         attempts: Math.max(0, Math.floor(Number(row.attempts) || 0)),
-        maxAttempts: Math.max(1, Math.floor(Number(row.max_attempts) || 8)),
         nextAttemptAt: optionalIso(row.next_attempt_at),
         lastError: optionalString(row.last_error),
         rawPayload: optionalJson(row.raw_payload),

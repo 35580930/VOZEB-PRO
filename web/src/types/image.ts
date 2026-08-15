@@ -1,3 +1,5 @@
+import type { VideoReferenceRole } from "@/lib/video-reference-contract";
+
 export type ReferenceImage = {
     id: string;
     name: string;
@@ -12,4 +14,5 @@ export type ReferenceImage = {
     storageKey?: string;
     width?: number;
     height?: number;
+    videoRole?: VideoReferenceRole;
 };

@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
     buildModelCatalogUrls,
     buildModelsUrl,
+    configuredModelCatalog,
     isModelCatalogUnsupported,
     mergeModelCatalogEntries,
     mergeModelConfigs,
@@ -136,6 +137,34 @@ describe("admin model catalog", () => {
             { id: "writer-v3", capability: "text", source: "provider" },
         ]);
         expect(parseModelCatalog({ data: [{ id: "opaque-writer", supported_generation_methods: ["generateContent"] }] })).toEqual([{ id: "opaque-writer", capability: "text", source: "provider" }]);
+    });
+
+    it("excludes non-creative discovery models while keeping text-to-speech models", () => {
+        const payload = {
+            data: [
+                { id: "gpt-4.1" },
+                { id: "text-embedding-3-small" },
+                { id: "bge-reranker-v2-m3" },
+                { id: "dots.ocr" },
+                { id: "gcp-speech-to-text", capability: "audio" },
+                { id: "whisper-1", capability: "audio" },
+                { id: "omni-moderation-latest" },
+                { id: "llama-3.1-nemoguard-8b-topic-control" },
+                { id: "tts-1", capability: "audio" },
+                { id: "gcp-text-to-speech", capability: "audio" },
+            ],
+        };
+
+        expect(parseModelCatalog(payload)).toEqual([
+            { id: "gcp-text-to-speech", capability: "audio", source: "provider" },
+            { id: "gpt-4.1", capability: "text", source: "provider" },
+            { id: "tts-1", capability: "audio", source: "provider" },
+        ]);
+        expect(Object.keys(parseModelConfigs(payload)).sort()).toEqual(["gcp-text-to-speech", "gpt-4.1", "tts-1"]);
+    });
+
+    it("preserves an explicitly manual model when merging a saved catalog", () => {
+        expect(configuredModelCatalog(["whisper-1", "text-embedding-3-small"], { "whisper-1": "audio" }, { "whisper-1": { capability: "audio", source: "manual" } })).toEqual([{ id: "whisper-1", capability: "audio", source: "configured" }]);
     });
 
     it("does not overwrite an administrator's manual model route during discovery", () => {

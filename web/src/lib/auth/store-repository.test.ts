@@ -38,8 +38,27 @@ describe("PostgreSQL auth read paths", () => {
 
         expect(settings.generationDefaults).toMatchObject({
             imageCount: 2,
-            workbenchSmartPlanning: { image: true, video: true },
         });
+    });
+
+    it("normalizes persisted generation cost controls", () => {
+        const settings = mapPostgresSettings({ generation_cost_control: { maxPointsPerTask: 1.7, dailyUserPointSpend: 20, dailyTotalPointSpend: 100 } }, [], []);
+
+        expect(settings.generationCostControl).toEqual({ maxPointsPerTask: 1.7, dailyUserPointSpend: 20, dailyTotalPointSpend: 100 });
+        expect(POSTGRESQL_SCHEMA_SQL).toContain("generation_cost_control jsonb");
+    });
+
+    it("normalizes persisted technical data lifecycle controls", () => {
+        const settings = mapPostgresSettings({ data_lifecycle: { cleanupExpiredGenerationTasks: false, maintenanceBatchSize: 80 } }, [], []);
+
+        expect(settings.dataLifecycle).toEqual({
+            cleanupExpiredSessions: true,
+            cleanupExpiredEmailCodes: true,
+            cleanupExpiredGenerationTasks: false,
+            cleanupExpiredTemporaryMedia: true,
+            maintenanceBatchSize: 80,
+        });
+        expect(POSTGRESQL_SCHEMA_SQL).toContain("data_lifecycle jsonb");
     });
 
     it("fills missing fields in partial PostgreSQL settings JSON", () => {

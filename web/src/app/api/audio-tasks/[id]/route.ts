@@ -1,5 +1,6 @@
 import { after, NextResponse } from "next/server";
 import { getCurrentUser } from "@/lib/auth/session";
+import { readJsonBodyResult } from "@/lib/auth/request";
 import { getAudioTask, transitionAudioTask } from "@/lib/server/audio-task-store";
 import { refundAudioTask } from "@/lib/server/audio-task-refund";
 import { pointsResponseHeaders } from "@/lib/server/points-response";
@@ -24,14 +25,16 @@ export async function GET(request: Request, { params }: { params: Promise<{ id: 
     const shouldRefund = Boolean(task.billing?.pointsRecordId && !task.billing.refunded && task.status === "error");
     const settledTask = shouldRefund ? await refundAudioTask(task) : task;
     const refreshedUser = shouldRefund ? await getCurrentUser(request) : user;
-    return NextResponse.json({ task: { ...publicTask(settledTask), needsReview: task.executionPhase === "needs_review", executionPhase: task.executionPhase } }, { headers: pointsResponseHeaders(refreshedUser) });
+    return NextResponse.json({ task: { ...publicTask(settledTask), needsReview: task.executionPhase === "needs_review", reviewReason: task.reviewReason, executionPhase: task.executionPhase } }, { headers: pointsResponseHeaders(refreshedUser) });
 }
 
 export async function PATCH(request: Request, { params }: { params: Promise<{ id: string }> }) {
     const user = await getCurrentUser(request);
     const task = user ? await getAudioTask((await params).id) : null;
     if (!user || !task || (task.userId !== user.id && user.role !== "admin")) return NextResponse.json({ error: "任务不存在或已过期" }, { status: user ? 404 : 401 });
-    const body = (await request.json().catch(() => ({}))) as { status?: string };
+    const parsed = await readJsonBodyResult<{ status?: string }>(request);
+    if (!parsed.ok) return NextResponse.json({ error: parsed.message }, { status: parsed.status });
+    const body = parsed.data;
     if (body.status !== "cancelled" || !["pending", "running"].includes(task.status)) return NextResponse.json({ error: "当前任务无法取消" }, { status: 409 });
     const target: GenerationCancellationTarget = {
         type: "audio",

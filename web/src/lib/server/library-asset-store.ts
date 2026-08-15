@@ -11,15 +11,11 @@ const FILE_NAME = "library-assets.json";
 let mutationQueue = Promise.resolve();
 
 export async function listLibraryAssets(userId: string) {
-    if (getDatabaseProvider() === "postgres") {
-        await ensurePostgresSchema();
-        const result = await postgresQuery<{ asset_json: Asset }>("SELECT asset_json FROM library_assets WHERE user_id = $1 ORDER BY updated_at DESC", [userId]);
-        return result.rows.map((row) => row.asset_json);
-    }
+    if (getDatabaseProvider() === "postgres") throw new Error("PostgreSQL library reads must use a paginated asset query");
     return (await readDatabase()).assets
         .filter((record) => record.userId === userId)
         .map((record) => record.asset)
-        .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
+        .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt) || a.id.localeCompare(b.id));
 }
 
 export async function listLibraryAssetPage(userId: string, input: LibraryAssetPageInput): Promise<LibraryAssetPage> {

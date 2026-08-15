@@ -36,6 +36,44 @@ describe("system AI proxy policy", () => {
         ).toMatchObject({ allowed: true, logicalModelId: "writer", operation: "create" });
     });
 
+    it("authorizes Gemini Veo creation and operation polling paths", () => {
+        const base = {
+            channelId: "main",
+            upstreamModel: "veo-3.1-generate-preview",
+            preferredLogicalModelId: "video-pro",
+            logicalModels: [
+                ...logicalModels,
+                {
+                    id: "video-pro",
+                    name: "Gemini 视频",
+                    capability: "video" as const,
+                    enabled: true,
+                    bindings: [{ id: "gemini-video", channelId: "main", upstreamModel: "veo-3.1-generate-preview", enabled: true, priority: 1 }],
+                },
+            ],
+            apiFormat: "gemini" as const,
+        };
+
+        expect(
+            authorizeSystemAiProxyRequest({
+                ...base,
+                method: "POST",
+                path: ["models", "veo-3.1-generate-preview:predictLongRunning"],
+                search: "",
+                pointsUsageKind: "video",
+            }),
+        ).toMatchObject({ allowed: true, operation: "create", logicalModelId: "video-pro" });
+        expect(
+            authorizeSystemAiProxyRequest({
+                ...base,
+                method: "GET",
+                path: ["models", "veo-3.1-generate-preview", "operations", "operation-one"],
+                search: "",
+                upstreamTaskIdHint: "operation-one",
+            }),
+        ).toMatchObject({ allowed: true, operation: "query", upstreamTaskId: "operation-one" });
+    });
+
     it("rejects unbound models, unknown paths, and unbilled create requests", () => {
         const base = { method: "POST", search: "", channelId: "main", preferredLogicalModelId: "", logicalModels, apiFormat: "openai" as const };
         expect(authorizeSystemAiProxyRequest({ ...base, path: ["chat", "completions"], upstreamModel: "unknown", pointsUsageKind: "text" })).toMatchObject({ allowed: false, status: 403 });

@@ -79,10 +79,10 @@ describe("图片任务轮询", () => {
     });
 
     it("stops polling when the upstream submission needs manual review", async () => {
-        const fetchMock = vi.fn(async () => Response.json({ task: { id: "review-task", kind: "generation", model: "image-model", status: "running", needsReview: true } }));
+        const fetchMock = vi.fn(async () => Response.json({ task: { id: "review-task", kind: "generation", model: "image-model", status: "running", needsReview: true, reviewReason: "渠道未返回可查询任务 ID" } }));
         vi.stubGlobal("fetch", fetchMock);
 
-        await expect(waitForImageGenerationTask({ apiSource: "system" } as AiConfig, { id: "review-task", kind: "generation", model: "image-model" })).rejects.toThrow("上游创建状态待确认");
+        await expect(waitForImageGenerationTask({ apiSource: "system" } as AiConfig, { id: "review-task", kind: "generation", model: "image-model" })).rejects.toThrow("渠道未返回可查询任务 ID");
         expect(fetchMock).toHaveBeenCalledTimes(1);
     });
 

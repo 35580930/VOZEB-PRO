@@ -9,7 +9,7 @@ const mocks = vi.hoisted(() => ({
 vi.mock("@/lib/server/database", () => ({ getDatabaseProvider: () => mocks.provider }));
 vi.mock("@/lib/server/billing-refund-orchestration-service", () => ({ runBillingRefundReconciliationBatch: mocks.runBatch }));
 vi.mock("@/lib/server/install-status", () => ({ getInstallStatus: mocks.installStatus }));
-vi.mock("@/lib/server/maintenance-auth", () => ({ isAuthorizedMaintenanceRequest: () => true, isMaintenanceTokenConfigured: () => true }));
+vi.mock("@/lib/server/maintenance-auth", () => ({ isAuthorizedWorkerRequest: () => true, isWorkerTokenConfigured: () => true }));
 
 import { POST } from "./route";
 

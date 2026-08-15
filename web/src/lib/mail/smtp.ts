@@ -2,12 +2,14 @@ import net from "node:net";
 import tls from "node:tls";
 
 import type { MailSettings } from "@/lib/auth/store";
+import { DEFAULT_SITE_TITLE, resolveSiteTitle } from "@/lib/site-brand";
 
 type SmtpSocket = net.Socket | tls.TLSSocket;
 
 type SendTestMailInput = {
     mail: MailSettings;
     to?: string;
+    siteTitle?: string;
 };
 
 type SendSmtpMailInput = {
@@ -15,30 +17,34 @@ type SendSmtpMailInput = {
     to: string;
     subject: string;
     text: string;
+    siteTitle?: string;
 };
 
 const COMMAND_TIMEOUT_MS = 15000;
 
-export async function sendSmtpTestMail({ mail, to }: SendTestMailInput) {
+export async function sendSmtpTestMail({ mail, to, siteTitle }: SendTestMailInput) {
     const username = mail.username.trim();
     const fromEmail = (mail.fromEmail || username).trim();
     const recipient = (to || fromEmail || username).trim();
+    const title = resolveSiteTitle(siteTitle);
     await sendSmtpMail({
         mail,
         to: recipient,
-        subject: "MOCREAI 邮箱服务测试",
-        text: ["这是一封来自 MOCREAI 管理后台的测试邮件。", "", "如果你收到这封邮件，说明 SMTP 配置可以正常发送。"].join("\r\n"),
+        subject: `${title} 邮箱服务测试`,
+        text: [`这是一封来自 ${title} 管理后台的测试邮件。`, "", "如果你收到这封邮件，说明 SMTP 配置可以正常发送。"].join("\r\n"),
+        siteTitle: title,
     });
 }
 
-export async function sendSmtpMail({ mail, to, subject, text }: SendSmtpMailInput) {
+export async function sendSmtpMail({ mail, to, subject, text, siteTitle }: SendSmtpMailInput) {
     const host = mail.host.trim();
     const port = Number(mail.port) || 465;
     const username = mail.username.trim();
     const password = mail.password;
     const fromEmail = (mail.fromEmail || username).trim();
     const recipient = to.trim();
-    const fromName = (mail.fromName || "MOCREAI").trim();
+    const configuredFromName = mail.fromName.trim();
+    const fromName = configuredFromName && configuredFromName !== DEFAULT_SITE_TITLE ? configuredFromName : resolveSiteTitle(siteTitle);
 
     if (!host) throw new Error("请填写 SMTP 服务器");
     if (!username) throw new Error("请填写邮箱账号");

@@ -1,12 +1,12 @@
 import { getPublicUsersByIds, listPointRecordsPage } from "@/lib/auth/store";
 import { listPrompts } from "@/lib/prompts/store";
-import { listCanvasProjects } from "@/lib/server/canvas-project-store";
+import { listCanvasProjectPage } from "@/lib/server/canvas-project-store";
 import { listCreativeAssets, listCreativeConversations, listCreativeMessages } from "@/lib/server/creative-runtime-store";
 import { createPostgresRepositories, ensurePostgresSchema, isPostgresDatabaseEnabled } from "@/lib/server/database";
 import { getDramaProject, listDramaProjectSummaries } from "@/lib/server/drama-project-store";
 import { listGenerationLogs } from "@/lib/server/generation-log-store";
-import { listLibraryAssets } from "@/lib/server/library-asset-store";
-import { listLocalMediaRegistrationsForUser } from "@/lib/server/local-media-registry";
+import { listLibraryAssetPage } from "@/lib/server/library-asset-store";
+import { listLocalMediaRegistrationsForUserPage } from "@/lib/server/local-media-registry";
 import { getOwnAccountDeletionRequest } from "@/lib/server/account-deletion-request-service";
 import { sanitizePortableData } from "@/lib/server/user-data-export-policy";
 
@@ -23,8 +23,8 @@ export async function buildUserDataExport(userId: string) {
         readPromptsExportData(userId),
         readCreativeData(userId),
         readGenerationLogsExportData(userId),
-        listCanvasProjects(userId).then(sanitizePortableData),
-        listLibraryAssets(userId).then(sanitizePortableData),
+        readCanvasProjectsExportData(userId),
+        readLibraryAssetsExportData(userId),
         readDramaProjects(userId).then(sanitizePortableData),
         readMediaExportData(userId),
         getOwnAccountDeletionRequest(userId),
@@ -62,8 +62,8 @@ export async function createUserDataExportStream(userId: string) {
         ["prompts", () => readPromptsExportData(userId)],
         ["creative", () => readCreativeData(userId)],
         ["generationLogs", () => readGenerationLogsExportData(userId)],
-        ["canvasProjects", () => listCanvasProjects(userId).then(sanitizePortableData)],
-        ["libraryAssets", () => listLibraryAssets(userId).then(sanitizePortableData)],
+        ["canvasProjects", () => readCanvasProjectsExportData(userId)],
+        ["libraryAssets", () => readLibraryAssetsExportData(userId)],
         ["dramaProjects", () => readDramaProjects(userId).then(sanitizePortableData)],
         ["media", () => readMediaExportData(userId)],
         ["accountDeletionRequest", () => getOwnAccountDeletionRequest(userId)],
@@ -133,8 +133,16 @@ async function readGenerationLogsExportData(userId: string) {
     );
 }
 
+async function readCanvasProjectsExportData(userId: string) {
+    return collectPages((page) => listCanvasProjectPage(userId, { page, pageSize: PAGE_SIZE })).then(sanitizePortableData);
+}
+
+async function readLibraryAssetsExportData(userId: string) {
+    return collectPages((page) => listLibraryAssetPage(userId, { page, pageSize: PAGE_SIZE })).then(sanitizePortableData);
+}
+
 async function readMediaExportData(userId: string) {
-    const media = await listLocalMediaRegistrationsForUser(userId);
+    const media = await collectPages((page) => listLocalMediaRegistrationsForUserPage(userId, { page, pageSize: PAGE_SIZE }));
     return media.map(({ ownerUserId: _ownerUserId, externalStorageId: _externalStorageId, externalObjectKey: _externalObjectKey, ...item }) => item);
 }
 

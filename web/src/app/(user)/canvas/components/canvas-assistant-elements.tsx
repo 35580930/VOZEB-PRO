@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Bot, History, PanelRightClose, Pause, Play, Plus, Square, Trash2, X } from "lucide-react";
+import { ArrowRight, Bot, History, PanelRightClose, Pause, Pencil, Play, Plus, Square, Trash2, X } from "lucide-react";
 import { Button, Modal, Tooltip } from "antd";
 import { motion } from "motion/react";
 
@@ -17,7 +17,6 @@ import { serverMediaUrl } from "@/services/server-media-storage";
 import { DiaTextReveal } from "@/components/ui/dia-text-reveal";
 import { ModelIcon } from "@/components/model-picker";
 import { Select, SelectContent, SelectItem, SelectTrigger } from "@/components/ui/select";
-import { CanvasPromptLibrary } from "./canvas-prompt-library";
 import { watchCanvasAgentRun } from "./canvas-agent-run-client";
 import type { CanvasAgentRunStage } from "./canvas-agent-progress";
 import { formatAgentMessageText, friendlyAgentError } from "@/components/agent/agent-message-format";
@@ -73,35 +72,120 @@ export function AgentTextModelPicker({ config, value, onChange }: { config: AiCo
     );
 }
 
-export function AssistantHistory({ sessions, activeSession, onOpen, onDelete }: { sessions: CanvasAssistantSession[]; activeSession: CanvasAssistantSession | null; onOpen: (id: string) => void; onDelete: (id: string) => void }) {
+export function AssistantHistory({
+    sessions,
+    activeSession,
+    onOpen,
+    onDelete,
+    onRename,
+}: {
+    sessions: CanvasAssistantSession[];
+    activeSession: CanvasAssistantSession | null;
+    onOpen: (id: string) => void;
+    onDelete: (ids: string[]) => void;
+    onRename: (id: string, title: string) => void;
+}) {
     const theme = canvasThemes[useThemeStore((state) => state.theme)];
+    const [selectedIds, setSelectedIds] = useState<string[]>([]);
+    const [editingId, setEditingId] = useState<string | null>(null);
+    const [titleDraft, setTitleDraft] = useState("");
+    const selectedSet = useMemo(() => new Set(selectedIds), [selectedIds]);
+    const sessionIdsKey = sessions.map((session) => session.id).join("|");
+    const sessionIds = useMemo(() => new Set(sessionIdsKey.split("|").filter(Boolean)), [sessionIdsKey]);
+    const allSelected = sessions.length > 0 && selectedIds.length === sessions.length;
+
+    useEffect(() => {
+        setSelectedIds((current) => current.filter((id) => sessionIds.has(id)));
+        if (editingId && !sessionIds.has(editingId)) setEditingId(null);
+    }, [editingId, sessionIds]);
+
+    const startRename = (session: CanvasAssistantSession) => {
+        setEditingId(session.id);
+        setTitleDraft(session.title);
+    };
+
+    const finishRename = () => {
+        if (!editingId) return;
+        const title = titleDraft.trim();
+        if (title) onRename(editingId, title);
+        setEditingId(null);
+    };
 
     return (
         <div className="space-y-3">
-            <div className="text-sm" style={{ color: theme.node.muted }}>
-                {sessions.length ? `${sessions.length} 条历史` : "暂无历史"}
+            <div className="flex items-center justify-between gap-3">
+                <div>
+                    <div className="text-sm font-semibold" style={{ color: theme.node.text }}>
+                        历史对话
+                    </div>
+                    <div className="mt-0.5 text-xs" style={{ color: theme.node.muted }}>
+                        {sessions.length ? `${sessions.length} 条记录` : "暂无历史"}
+                    </div>
+                </div>
+                {sessions.length ? (
+                    <div className="flex items-center gap-2">
+                        <label className="inline-flex cursor-pointer items-center gap-1.5 text-xs" style={{ color: theme.node.muted }}>
+                            <input type="checkbox" checked={allSelected} onChange={(event) => setSelectedIds(event.target.checked ? sessions.map((session) => session.id) : [])} className="size-3.5 accent-current" aria-label="全选历史对话" />
+                            全选
+                        </label>
+                        {selectedIds.length ? (
+                            <button
+                                type="button"
+                                className="inline-flex min-h-7 items-center gap-1 rounded-lg px-2 text-xs font-medium transition hover:opacity-80"
+                                style={{ color: theme.node.danger, background: theme.node.dangerSurface }}
+                                onClick={() => onDelete(selectedIds)}
+                            >
+                                <Trash2 className="size-3.5" />
+                                删除所选 ({selectedIds.length})
+                            </button>
+                        ) : null}
+                    </div>
+                ) : null}
             </div>
             {sessions.map((session) => (
-                <div key={session.id} className="rounded-lg border px-2.5 py-1.5 transition" style={{ borderColor: session.id === activeSession?.id ? theme.node.text : theme.node.stroke, background: "transparent", color: theme.node.text }}>
-                    <div className="flex items-center gap-2">
+                <div
+                    key={session.id}
+                    className="rounded-xl border px-3 py-2.5 transition"
+                    style={{ borderColor: session.id === activeSession?.id ? theme.node.activeStroke : theme.node.stroke, background: session.id === activeSession?.id ? theme.node.fill : theme.toolbar.panel, color: theme.node.text }}
+                >
+                    <div className="flex min-w-0 items-center gap-2.5">
+                        <input
+                            type="checkbox"
+                            checked={selectedSet.has(session.id)}
+                            onChange={(event) => setSelectedIds((current) => (event.target.checked ? [...current, session.id] : current.filter((id) => id !== session.id)))}
+                            className="size-4 shrink-0 accent-current"
+                            aria-label={`选择对话：${session.title}`}
+                        />
                         <div className="min-w-0 flex-1">
-                            <div className="flex min-w-0 items-center gap-1.5">
-                                {session.id === activeSession?.id ? (
-                                    <span className="shrink-0 text-[10px] font-medium" style={{ color: theme.node.text }}>
-                                        当前
-                                    </span>
-                                ) : null}
-                                <div className="truncate text-sm font-medium leading-5">{session.title}</div>
-                            </div>
-                            <div className="truncate text-[11px] leading-4 opacity-65">{sessionPreview(session)}</div>
+                            {editingId === session.id ? (
+                                <input
+                                    autoFocus
+                                    value={titleDraft}
+                                    onChange={(event) => setTitleDraft(event.target.value)}
+                                    onBlur={finishRename}
+                                    onKeyDown={(event) => {
+                                        if (event.key === "Enter") finishRename();
+                                        if (event.key === "Escape") setEditingId(null);
+                                    }}
+                                    className="w-full rounded-md border bg-transparent px-1.5 py-1 text-sm font-semibold outline-none"
+                                    style={{ borderColor: theme.node.activeStroke, color: theme.node.text }}
+                                    aria-label="编辑对话标题"
+                                />
+                            ) : (
+                                <button type="button" className="block w-full truncate text-left text-sm font-semibold leading-7" onDoubleClick={() => startRename(session)} title="双击修改标题">
+                                    {session.title}
+                                </button>
+                            )}
                         </div>
-                        <div className="flex shrink-0 items-center gap-1">
-                            <span className="text-[10px] opacity-55">{formatSessionTime(session.updatedAt || session.createdAt)}</span>
-                            <Button size="small" className="!h-6 !px-2" onClick={() => onOpen(session.id)}>
-                                进入
-                            </Button>
+                        <div className="flex shrink-0 items-center gap-0.5">
+                            <Tooltip title="修改标题">
+                                <Button type="text" size="small" className="!h-7 !w-7 !min-w-7" icon={<Pencil className="size-3.5" />} onClick={() => startRename(session)} aria-label={`修改标题：${session.title}`} />
+                            </Tooltip>
+                            <Tooltip title="进入对话">
+                                <Button type="text" size="small" className="!h-7 !w-7 !min-w-7" icon={<ArrowRight className="size-3.5" />} onClick={() => onOpen(session.id)} aria-label={`进入对话：${session.title}`} />
+                            </Tooltip>
                             <Tooltip title="删除记录">
-                                <Button size="small" danger type="text" className="!h-6 !w-6 !min-w-6" icon={<Trash2 className="size-3.5" />} onClick={() => onDelete(session.id)} />
+                                <Button size="small" danger type="text" className="!h-7 !w-7 !min-w-7" icon={<Trash2 className="size-3.5" />} onClick={() => onDelete([session.id])} aria-label={`删除对话：${session.title}`} />
                             </Tooltip>
                         </div>
                     </div>
@@ -153,21 +237,22 @@ export function assistantImageReferenceLabel(references: CanvasAssistantReferenc
 }
 
 export function assistantMessageToChatMessage(message: CanvasAssistantMessage): CanvasAgentChatMessage {
-    const attachments = message.references?.flatMap((item) => (item.dataUrl ? [{ id: item.id, name: item.title, url: item.dataUrl }] : []));
-    return { id: message.id, role: message.role, title: message.title, text: formatAgentMessageText(message.text), meta: message.meta, detail: message.detail, ...(attachments?.length ? { attachments } : {}) };
-}
-
-export function formatSessionTime(value?: string) {
-    return value ? new Date(value).toLocaleString() : "";
-}
-
-export function sessionPreview(session: CanvasAssistantSession) {
-    return session.messages.at(-1)?.text || `${session.messages.length} 条消息`;
+    const attachments = message.references?.flatMap((item) => (item.dataUrl ? [{ id: item.id, name: item.title, url: item.dataUrl, type: item.type === CanvasNodeType.Video ? ("video" as const) : ("image" as const) }] : []));
+    return {
+        id: message.id,
+        role: message.role,
+        title: message.title,
+        text: message.role === "error" ? friendlyAgentError(message.text) : formatAgentMessageText(message.text),
+        meta: message.meta,
+        detail: message.detail,
+        ...(attachments?.length ? { attachments } : {}),
+    };
 }
 
 export function nodeToReference(node: CanvasNodeData): CanvasAssistantReference | null {
-    if (isCanvasImageNodeType(node.type) && node.metadata?.content) {
-        return { id: node.id, type: node.type, title: node.title, dataUrl: node.metadata.content, storageKey: node.metadata.storageKey };
+    const mediaUrl = [node.metadata?.content, node.metadata?.serverUrl, node.metadata?.remoteUrl].find((value): value is string => typeof value === "string" && Boolean(value.trim()));
+    if ((isCanvasImageNodeType(node.type) || node.type === CanvasNodeType.Video) && mediaUrl) {
+        return { id: node.id, type: node.type, title: node.title, dataUrl: mediaUrl, storageKey: node.metadata?.storageKey };
     }
     if (node.type === CanvasNodeType.Text && node.metadata?.content) {
         return { id: node.id, type: node.type, title: node.title, text: node.metadata.content };
@@ -185,21 +270,29 @@ export function buildAssistantReferences(nodes: CanvasNodeData[], selectedNodeId
 }
 
 export function compactSnapshot(snapshot: CanvasAgentSnapshot) {
+    const selected = new Set(snapshot.selectedNodeIds);
+    const connections = selected.size ? snapshot.connections.filter((connection) => selected.has(connection.fromNodeId) || selected.has(connection.toNodeId)) : snapshot.connections;
+    if (selected.size) {
+        connections.forEach((connection) => {
+            selected.add(connection.fromNodeId);
+            selected.add(connection.toNodeId);
+        });
+    }
     return {
         title: snapshot.title,
         imageSize: snapshot.imageSize,
-        viewport: snapshot.viewport,
         selectedNodeIds: snapshot.selectedNodeIds,
-        nodes: snapshot.nodes.map((node) => ({
-            id: node.id,
-            type: node.type,
-            title: node.title,
-            position: node.position,
-            width: node.width,
-            height: node.height,
-            metadata: compactMetadata(node.metadata || {}),
-        })),
-        connections: snapshot.connections,
+        nodes: snapshot.nodes
+            .filter((node) => !selected.size || selected.has(node.id) || node.type === CanvasNodeType.Config)
+            .map((node) => ({
+                id: node.id,
+                type: node.type,
+                title: node.title,
+                width: node.width,
+                height: node.height,
+                metadata: compactMetadata(node.type, node.metadata || {}),
+            })),
+        connections,
     };
 }
 
@@ -208,23 +301,45 @@ export function canvasRunSelectedNodeIds(snapshot: CanvasAgentSnapshot, submitte
     return Array.from(new Set([...snapshot.selectedNodeIds.filter((id) => !mediaNodeIds.has(id)), ...submittedReferenceIds]));
 }
 
-export function compactMetadata(metadata: CanvasNodeData["metadata"]) {
+export function compactMetadata(type: CanvasNodeType, metadata: CanvasNodeData["metadata"]) {
+    const content = compactNodeContent(type, metadata);
     const fallbackUrl = [metadata?.serverUrl, metadata?.content, metadata?.remoteUrl].find((value) => typeof value === "string" && value && !value.startsWith("data:") && !value.startsWith("blob:"));
     const mediaUrl = serverMediaUrl(metadata?.storageKey, fallbackUrl || "");
     return {
-        content: String(metadata?.content || "").slice(0, 500),
-        prompt: String(metadata?.prompt || metadata?.composerContent || "").slice(0, 500),
-        status: metadata?.status,
-        generationMode: metadata?.generationMode,
-        model: metadata?.model,
+        content: content || undefined,
         size: metadata?.size,
         naturalWidth: metadata?.naturalWidth,
         naturalHeight: metadata?.naturalHeight,
-        url: mediaUrl || undefined,
+        url: isStableCanvasMediaUrl(mediaUrl) ? mediaUrl : undefined,
     };
+}
+
+function compactNodeContent(type: CanvasNodeType, metadata: CanvasNodeData["metadata"]) {
+    const values =
+        type === CanvasNodeType.Config
+            ? [metadata?.composerContent, metadata?.prompt, metadata?.content]
+            : isCanvasImageNodeType(type) || type === CanvasNodeType.Video || type === CanvasNodeType.Audio
+              ? [metadata?.prompt, metadata?.composerContent]
+              : [metadata?.content, metadata?.prompt, metadata?.composerContent];
+    return values.find((value): value is string => typeof value === "string" && value.trim().length > 0)?.trim();
+}
+
+function isStableCanvasMediaUrl(value: string) {
+    return value.startsWith("/api/reference-assets/") || value.startsWith("/api/generation-log-assets/");
 }
 
 export function createSession(): CanvasAssistantSession {
     const now = new Date().toISOString();
     return { id: nanoid(), title: "新对话", messages: [], createdAt: now, updatedAt: now };
+}
+
+export function removeCanvasAssistantSessions(sessions: CanvasAssistantSession[], activeSessionId: string | null, removedIds: Iterable<string>) {
+    const removed = new Set(removedIds);
+    const remaining = sessions.filter((session) => !removed.has(session.id));
+    if (!remaining.length) {
+        const session = createSession();
+        return { sessions: [session], activeSessionId: session.id };
+    }
+    const nextActiveId = activeSessionId && !removed.has(activeSessionId) && remaining.some((session) => session.id === activeSessionId) ? activeSessionId : remaining[0].id;
+    return { sessions: remaining, activeSessionId: nextActiveId };
 }

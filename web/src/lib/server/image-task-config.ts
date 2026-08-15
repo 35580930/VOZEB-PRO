@@ -6,7 +6,8 @@ export function resolveImageTaskOptions(config: { quality?: unknown; size?: unkn
 }
 
 export function resolveImageGenerationCount(value: unknown) {
-    return Math.max(1, Math.min(10, Math.floor(Number(value) || 1)));
+    const count = Number(value);
+    return Math.max(1, Number.isSafeInteger(count) && count > 0 ? Math.floor(count) : 1);
 }
 
 function text(value: unknown) {

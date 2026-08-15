@@ -20,6 +20,7 @@ describe("release type-check and build contract", () => {
         const rootGitignore = readFileSync(path.join(repoRoot, ".gitignore"), "utf8");
         const docsNextConfig = readFileSync(path.join(repoRoot, "docs/next.config.mjs"), "utf8");
         const standaloneStart = readFileSync(path.join(webRoot, "scripts/start-standalone.mjs"), "utf8");
+        const developmentStart = readFileSync(path.join(webRoot, "scripts/run-app.mjs"), "utf8");
         const dockerfile = readFileSync(path.join(repoRoot, "Dockerfile"), "utf8");
 
         expect(releaseCheck.indexOf('["run", "typecheck"]')).toBeLessThan(releaseCheck.indexOf('["run", "build"]'));
@@ -46,6 +47,7 @@ describe("release type-check and build contract", () => {
         expect(docsNextConfig).toContain("outputFileTracingRoot: docsRoot");
         expect(docsNextConfig).toContain("turbopack: { root: docsRoot }");
         expect(standaloneStart).toContain('process.env.NEXT_DIST_DIR?.trim() || ".next"');
+        expect(developmentStart).toContain('NEXT_DIST_DIR: runtime.environment.NEXT_DIST_DIR?.trim() || ".next-dev"');
         expect(standaloneStart).toContain("prepareStandaloneAssets");
         expect(dockerfile).toContain("pnpm run typecheck && NEXT_SKIP_BUILD_TYPECHECK=1 pnpm run build");
         expect(dockerfile).not.toContain("ARG NEXT_BUILD_CPUS=1");

@@ -8,11 +8,17 @@ export const dynamic = "force-dynamic";
 
 type Context = { params: Promise<{ id: string }> };
 
-export async function GET(_request: Request, context: Context) {
+export async function GET(request: Request, context: Context) {
     const user = await getCurrentUser();
     if (!user) return unauthorized();
     try {
-        return workPublicationOk({ items: await listWorkCasesForOwner(user.id, (await context.params).id) });
+        const searchParams = new URL(request.url).searchParams;
+        return workPublicationOk(
+            await listWorkCasesForOwner(user.id, (await context.params).id, {
+                page: Number(searchParams.get("page")) || 1,
+                pageSize: Number(searchParams.get("pageSize")) || undefined,
+            }),
+        );
     } catch (error) {
         return workPublicationError(error, "获取作品申诉记录失败", "List owner work cases failed");
     }

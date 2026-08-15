@@ -20,11 +20,20 @@ export async function GET(request: NextRequest) {
             status: parseStatus(params.get("status")),
         };
         const productId = params.get("productId")?.trim();
+        const includeTemplates = params.get("includeTemplates") !== "false";
+        const templatePage = Number(params.get("templatePage")) || 1;
+        const templatePageSize = Number(params.get("templatePageSize")) || input.pageSize;
         const [coupons, templates] = await Promise.all([
             productId ? listUserCouponsForProduct(user.id, { ...input, productId, quantity: params.get("quantity") }) : listUserCoupons(user.id, input),
-            listClaimableCouponTemplates({ userId: user.id, page: 1, pageSize: 50 }),
+            includeTemplates ? listClaimableCouponTemplates({ userId: user.id, page: templatePage, pageSize: templatePageSize }) : null,
         ]);
-        return commerceOk({ coupons: coupons.items, total: coupons.total, page: coupons.page, pageSize: coupons.pageSize, templates: templates.items });
+        return commerceOk({
+            coupons: coupons.items,
+            total: coupons.total,
+            page: coupons.page,
+            pageSize: coupons.pageSize,
+            ...(templates ? { templates: templates.items, templatesTotal: templates.total, templatePage: templates.page, templatePageSize: templates.pageSize } : {}),
+        });
     } catch (error) {
         return commerceError(error, "获取优惠券失败", "List user coupons failed");
     }

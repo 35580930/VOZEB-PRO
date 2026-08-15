@@ -1,3 +1,4 @@
+import { hasAdminPermission } from "@/lib/admin-permissions";
 import { NextResponse } from "next/server";
 
 import { getCurrentUser } from "@/lib/auth/session";
@@ -11,7 +12,7 @@ export const dynamic = "force-dynamic";
 export async function POST(request: Request) {
     const admin = await getCurrentUser();
     if (!admin) return NextResponse.json({ code: 401, data: null, msg: "请先登录" }, { status: 401 });
-    if (admin.role !== "admin") return NextResponse.json({ code: 403, data: null, msg: "需要管理员权限" }, { status: 403 });
+    if (!hasAdminPermission(admin, "commerce.manage")) return NextResponse.json({ code: 403, data: null, msg: "需要管理员权限" }, { status: 403 });
     try {
         const result = await settleDueReferralRewards({ limit: 100 });
         await safeRecordAuditLog({ action: "admin.referrals.rewards.settle", actor: auditActorFromRequest(request, admin), target: { type: "referral_rewards" }, metadata: result });

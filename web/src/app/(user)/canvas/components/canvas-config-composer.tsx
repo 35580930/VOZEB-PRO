@@ -57,6 +57,16 @@ export function CanvasConfigComposer({ value, inputs, onChange, onClose }: Canva
         });
     }, [inputs, referenceById, theme, tokens]);
 
+    useEffect(() => {
+        const frame = requestAnimationFrame(() => {
+            const editor = editorRef.current;
+            if (!editor) return;
+            editor.focus({ preventScroll: true });
+            placeCaretAtEnd(editor);
+        });
+        return () => cancelAnimationFrame(frame);
+    }, []);
+
     const syncFromEditor = () => {
         const editor = editorRef.current;
         if (!editor) return;
@@ -120,7 +130,7 @@ export function CanvasConfigComposer({ value, inputs, onChange, onClose }: Canva
                     <div className="shrink-0 text-xs font-semibold">组装提示词</div>
                     <div className="truncate text-[11px] opacity-55">@ 引用已连接素材，发送前按当前连接重新编号</div>
                 </div>
-                <Button size="small" type="text" className="!h-7 !w-7 !min-w-7 !p-0" icon={<X className="size-3.5" />} onClick={onClose} />
+                <Button aria-label="关闭提示词组装" size="small" type="text" className="!h-7 !w-7 !min-w-7 !p-0" icon={<X className="size-3.5" />} onClick={onClose} />
             </div>
             <div className="relative rounded-xl border" style={{ background: theme.node.fill, borderColor: theme.node.stroke }}>
                 {!value.trim() ? (

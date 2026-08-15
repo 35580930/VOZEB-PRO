@@ -17,6 +17,7 @@ export type ProfileSectionKey = "overview" | "profile" | "billing" | "coupons" |
 
 export const RECORD_PAGE_SIZE = 8;
 export const ORDER_PAGE_SIZE = 8;
+export const COUPON_PAGE_SIZE = 8;
 
 export const profileSections: Array<{ key: ProfileSectionKey; label: string; description: string; shortDescription: string; icon: ReactNode }> = [
     { key: "overview", label: "账户概览", description: "查看当前套餐、积分余额、最近订单和最近积分流水。", shortDescription: "资产摘要", icon: <WalletCards className="size-4" /> },
@@ -27,7 +28,7 @@ export const profileSections: Array<{ key: ProfileSectionKey; label: string; des
     { key: "points", label: "积分记录", description: "查看每日积分、充值赠送、退款退回和管理员调整流水。", shortDescription: "余额流水", icon: <CreditSymbol className="text-sm" /> },
     { key: "consume", label: "消费记录", description: "查看模型调用、生成任务和接口消费扣除。", shortDescription: "积分扣除", icon: <History className="size-4" /> },
     { key: "referrals", label: "邀请有礼", description: "复制邀请码和邀请链接，查看注册、首单与奖励进度。", shortDescription: "拉新与奖励", icon: <UserPlus className="size-4" /> },
-    { key: "security", label: "账户与安全", description: "管理绑定邮箱、登录密码和个人数据。", shortDescription: "邮箱与密码", icon: <ShieldCheck className="size-4" /> },
+    { key: "security", label: "账户与安全", description: "管理绑定邮箱、登录密码和个人数据。", shortDescription: "邮箱、密码与 MFA", icon: <ShieldCheck className="size-4" /> },
 ];
 
 export const profilePrimaryButtonClass = "profile-primary-button";

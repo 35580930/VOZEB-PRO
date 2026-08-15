@@ -121,6 +121,34 @@ describe("generation log task service", () => {
         expect(result.log).toMatchObject({ count: 2, successCount: 2, failCount: 0, status: "success" });
     });
 
+    it("round-trips long public and execution prompts through the file store", async () => {
+        const publicPrompt = "原".repeat(4000);
+        const executionPrompt = "执".repeat(5000);
+        await service.recordGenerationLogDraft({
+            id: "log-long-prompts",
+            userId: "user-one",
+            username: "user",
+            displayName: "User",
+            kind: "image",
+            source: "image-workbench",
+            status: "pending",
+            title: "长提示词记录",
+            prompt: executionPrompt,
+            requestSnapshot: {
+                version: 1,
+                userPrompt: publicPrompt,
+                parameters: {},
+                references: [],
+                slots: [{ id: "slot-long", index: 0, status: "pending", prompt: executionPrompt, clientRequestId: "request-slot-long" }],
+            },
+        });
+
+        const log = await getLog("log-long-prompts");
+        expect(log?.prompt).toBe(executionPrompt);
+        expect(log?.requestSnapshot?.userPrompt).toBe(publicPrompt);
+        expect(log?.requestSnapshot?.slots[0]?.prompt).toBe(executionPrompt);
+    });
+
     it("rejects mutations when the record belongs to another user", async () => {
         await createDraft("log-owned", ["slot-a"]);
 

@@ -3,6 +3,10 @@ import { describe, expect, it } from "vitest";
 import { normalizeSystemChannelAdvancedConfig } from "./store-normalizers";
 
 describe("system channel model capabilities", () => {
+    it("keeps the Yumeng protocol identity", () => {
+        expect(normalizeSystemChannelAdvancedConfig({ protocol: "yumeng" } as never)?.protocol).toBe("yumeng");
+    });
+
     it("normalizes supported capabilities and removes invalid entries", () => {
         const normalized = normalizeSystemChannelAdvancedConfig({
             protocol: "auto",

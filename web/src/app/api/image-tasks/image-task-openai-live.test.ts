@@ -274,6 +274,36 @@ describe("OpenAI image provider over a live compatible fixture", () => {
             await new Promise<void>((resolve, reject) => fixture.server.close((error?: Error) => (error ? reject(error) : resolve())));
         }
     });
+
+    it.each([
+        ["custom", "high"],
+        ["yumeng", "4K"],
+    ] as const)("keeps image quality mapping isolated for the %s protocol", async (protocol, expectedResolution) => {
+        const fixture = createProtocolFixtureServer();
+        await new Promise<void>((resolve) => fixture.server.listen(0, "127.0.0.1", resolve));
+        const address = fixture.server.address();
+        if (!address || typeof address === "string") throw new Error("Protocol fixture did not bind a TCP port");
+        const origin = `http://127.0.0.1:${address.port}`;
+        const task = liveImageTask(origin, {
+            id: `image-${protocol}-quality`,
+            config: {
+                baseUrl: origin,
+                apiKey: "fixture-key",
+                apiFormat: "openai",
+                model: protocol === "yumeng" ? "seedream-5.0" : "fixture-image-model",
+                channelId: `fixture-${protocol}`,
+                quality: "high",
+                advancedConfig: { ...emptyAdvancedConfig(), protocol, createPath: "/custom/images", requestTemplate: '{"model":"{{model}}","prompt":"{{prompt}}","resolution":"{{resolution}}"}', resultField: "data.image_url" },
+            },
+        });
+
+        try {
+            await expect(runCustomImageTask(task, "", "", "", true)).resolves.toMatchObject({ dataUrl: expect.any(String) });
+            expect(JSON.parse(fixture.requests[0]?.body.toString("utf8") || "{}")).toMatchObject({ resolution: expectedResolution });
+        } finally {
+            await new Promise<void>((resolve, reject) => fixture.server.close((error?: Error) => (error ? reject(error) : resolve())));
+        }
+    });
 });
 
 function liveImageTask(origin: string, patch: Partial<ImageTask>): ImageTask {

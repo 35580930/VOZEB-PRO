@@ -30,7 +30,7 @@ describe("DELETE /api/admin/works/[id]", () => {
     });
 
     it("passes the administrator identity to the deletion service and records the audit event", async () => {
-        mocks.currentUser.mockResolvedValue({ id: "admin-one", username: "admin", role: "admin" });
+        mocks.currentUser.mockResolvedValue({ id: "admin-one", username: "admin", role: "admin", status: "active", adminPermissions: ["content.manage"] });
 
         const response = await DELETE(new Request("http://localhost/api/admin/works/work-one", { method: "DELETE" }), context);
 

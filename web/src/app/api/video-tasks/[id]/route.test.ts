@@ -80,6 +80,15 @@ describe("GET /api/video-tasks/[id]", () => {
         expect((await response.json()).task).toMatchObject({ status: "running" });
     });
 
+    it("returns the persisted manual review reason", async () => {
+        mocks.getVideoTask.mockResolvedValue(videoTask({ reviewReason: "视频提交结果无法确认" }));
+        mocks.getSchedule.mockResolvedValue({ executionPhase: "needs_review" });
+
+        const response = await GET(new Request("http://localhost/api/video-tasks/local-video"), context);
+
+        expect((await response.json()).task).toMatchObject({ needsReview: true, reviewReason: "视频提交结果无法确认" });
+    });
+
     it("rejects browser attempts to submit a terminal status or result URL", async () => {
         mocks.getVideoTask.mockResolvedValue(videoTask());
 

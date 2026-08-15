@@ -1,3 +1,4 @@
+import { hasAdminPermission } from "@/lib/admin-permissions";
 import type { NextRequest } from "next/server";
 import { NextResponse } from "next/server";
 
@@ -13,7 +14,7 @@ export const dynamic = "force-dynamic";
 export async function GET(request: NextRequest) {
     const user = await getCurrentUser();
     if (!user) return NextResponse.json({ code: 401, data: null, msg: "请先登录" }, { status: 401 });
-    if (user.role !== "admin") return NextResponse.json({ code: 403, data: null, msg: "需要管理员权限" }, { status: 403 });
+    if (!hasAdminPermission(user, "commerce.manage")) return NextResponse.json({ code: 403, data: null, msg: "需要管理员权限" }, { status: 403 });
     try {
         const params = request.nextUrl.searchParams;
         const result = await listPromotionCampaigns({ page: Number(params.get("page")) || 1, pageSize: Number(params.get("pageSize")) || 20, includeDisabled: true });
@@ -26,7 +27,7 @@ export async function GET(request: NextRequest) {
 export async function POST(request: Request) {
     const user = await getCurrentUser();
     if (!user) return NextResponse.json({ code: 401, data: null, msg: "请先登录" }, { status: 401 });
-    if (user.role !== "admin") return NextResponse.json({ code: 403, data: null, msg: "需要管理员权限" }, { status: 403 });
+    if (!hasAdminPermission(user, "commerce.manage")) return NextResponse.json({ code: 403, data: null, msg: "需要管理员权限" }, { status: 403 });
     try {
         const campaign = await savePromotionCampaign({ ...(await readJsonBody<PromotionCampaignInput>(request)), createdByUserId: user.id });
         if (!campaign) throw new Error("Promotion was not persisted");

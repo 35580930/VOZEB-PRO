@@ -1,3 +1,4 @@
+import { hasAdminPermission } from "@/lib/admin-permissions";
 import { getCurrentUser } from "@/lib/auth/session";
 import { auditActorFromRequest, safeRecordAuditLog } from "@/lib/server/audit-log-store";
 import { deleteWorkPublicationForAdmin } from "@/lib/server/work-publication-service";
@@ -11,7 +12,7 @@ type Context = { params: Promise<{ id: string }> };
 export async function DELETE(request: Request, context: Context) {
     const user = await getCurrentUser();
     if (!user) return unauthorized();
-    if (user.role !== "admin") return forbidden();
+    if (!hasAdminPermission(user, "content.manage")) return forbidden();
     const { id } = await context.params;
     try {
         const deleted = await deleteWorkPublicationForAdmin(user.id, id);

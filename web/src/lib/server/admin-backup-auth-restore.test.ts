@@ -39,6 +39,7 @@ describe("PostgreSQL account-config auth restore", () => {
             displayName: "管理员",
             bio: "",
             role: "admin",
+            adminPermissions: ["system.manage"],
             status: "active",
             planId: "free",
             pointsBalance: 10,

@@ -3,7 +3,7 @@ import type { AgentRun, AgentRunTask } from "./agent-run-store";
 export function agentTaskCompletionMessage(task: AgentRunTask, surface: AgentRun["surface"] = "canvas") {
     if (task.type === "text") {
         const summary = resultSummary(task.result);
-        return summary ? `「${task.title}」已完成：\n${summary.slice(0, 1600)}` : `「${task.title}」已完成。`;
+        return summary ? `「${task.title}」已完成：\n${sliceUnicode(summary, 1600)}` : `「${task.title}」已完成。`;
     }
     return surface === "canvas" ? `「${task.title}」已生成并返回画布。` : `「${task.title}」已生成。`;
 }
@@ -57,27 +57,31 @@ function conciseTextResult(value: string) {
             .split("\n")
             .map((item) => item.trim())
             .find((item) => item && !/^[-*]\s/.test(item)) || "";
-    return line
+    const normalized = line
         .replace(/^#{1,6}\s*/, "")
         .replace(/^「[^」]+」(?:已完成)?[:：]?\s*/, "")
         .replace(/^\*\*(.+)\*\*$/, "$1")
-        .trim()
-        .slice(0, 500);
+        .trim();
+    return sliceUnicode(normalized, 500);
 }
 
 function enforceRequestedLength(value: string, prompt: string) {
     const limit = Number(prompt.match(/(?:不超过|最多|控制在|限|)(\d{1,3})\s*字(?:以内|以下|之内)?/)?.[1] || 0);
     if (!limit || !value) return value;
-    return Array.from(value).slice(0, limit).join("");
+    return sliceUnicode(value, limit);
 }
 
 export function resultSummary(value: unknown) {
     if (!value) return "";
-    if (typeof value === "string") return value.slice(0, 4000);
-    if (typeof value !== "object") return String(value).slice(0, 1000);
+    if (typeof value === "string") return sliceUnicode(value, 4000);
+    if (typeof value !== "object") return sliceUnicode(String(value), 1000);
     const record = value as Record<string, unknown>;
     const content = typeof record.content === "string" ? record.content : "";
-    if (content) return content.slice(0, 4000);
+    if (content) return sliceUnicode(content, 4000);
     const url = [record.remoteUrl, record.serverUrl, record.url, record.dataUrl].find((item) => typeof item === "string" && item);
-    return typeof url === "string" ? (url.startsWith("data:") ? "已生成可用媒体产物" : `媒体地址：${url.slice(0, 2000)}`) : JSON.stringify(value).slice(0, 2000);
+    return typeof url === "string" ? (url.startsWith("data:") ? "已生成可用媒体产物" : `媒体地址：${url.slice(0, 2000)}`) : sliceUnicode(JSON.stringify(value), 2000);
+}
+
+function sliceUnicode(value: string, limit: number) {
+    return Array.from(value).slice(0, limit).join("");
 }

@@ -2,14 +2,14 @@ import { apiError, apiSuccess } from "@/app/api/_shared/api-response";
 import { runBillingRefundReconciliationBatch } from "@/lib/server/billing-refund-orchestration-service";
 import { getDatabaseProvider } from "@/lib/server/database";
 import { getInstallStatus } from "@/lib/server/install-status";
-import { isAuthorizedMaintenanceRequest, isMaintenanceTokenConfigured } from "@/lib/server/maintenance-auth";
+import { isAuthorizedWorkerRequest, isWorkerTokenConfigured } from "@/lib/server/maintenance-auth";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 export async function POST(request: Request) {
-    if (!isMaintenanceTokenConfigured()) return apiError(503, "维护任务令牌未配置");
-    if (!isAuthorizedMaintenanceRequest(request)) return apiError(401, "维护任务认证失败");
+    if (!isWorkerTokenConfigured()) return apiError(503, "Worker 令牌未配置或未与维护令牌分离");
+    if (!isAuthorizedWorkerRequest(request)) return apiError(401, "Worker 认证失败");
     const workerId = request.headers.get("x-vozeb-pro-worker-id")?.trim() || "";
     if (!workerId) return apiError(400, "退款 Worker ID 不能为空");
     try {

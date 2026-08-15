@@ -30,7 +30,7 @@ describe("admin generation task review route", () => {
     });
 
     it("passes a trusted internal origin when resuming an upstream task", async () => {
-        mocks.getCurrentUser.mockResolvedValue({ id: "admin-one", role: "admin" });
+        mocks.getCurrentUser.mockResolvedValue({ id: "admin-one", role: "admin", status: "active", adminPermissions: ["generation.manage"] });
         mocks.review.mockResolvedValue({ action: "resume_upstream", executionPhase: "submitted" });
 
         const response = await POST(request({ action: "resume_upstream", upstreamTaskId: "upstream-one" }), context("video", "task-one"));

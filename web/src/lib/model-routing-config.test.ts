@@ -111,6 +111,24 @@ describe("model routing config", () => {
         expect(channelModelCapability(image, "opaque-image-model")).toBe("image");
     });
 
+    it("does not expose non-creative channel models to generation surfaces", () => {
+        const source = channel("newapi", ["gpt-4.1", "text-embedding-3-small", "bge-reranker-v2-m3", "dots.ocr", "gcp-speech-to-text", "whisper-1", "llama-3.1-nemoguard-8b-topic-control", "tts-1"]);
+        source.advancedConfig = {
+            protocol: "newapi",
+            modelConfigs: {
+                "gcp-speech-to-text": { capability: "audio", source: "provider" },
+                "whisper-1": { capability: "audio", source: "provider" },
+                "tts-1": { capability: "audio", source: "provider" },
+            },
+        } as never;
+
+        const models = deriveLogicalModelsConfig([source]);
+
+        expect(models.map((model) => model.id)).toEqual(["gpt-4.1", "tts-1"]);
+        expect(Array.from(channelDetectedCapabilities(source))).toEqual(["text", "audio"]);
+        expect(normalizeDefaultModelsConfig({ textModel: "gpt-4.1", imageModel: "", videoModel: "", audioModel: "gcp-speech-to-text" }, models, [source]).audioModel).toBe("tts-1");
+    });
+
     it("merges the same upstream model from multiple channels into one logical model", () => {
         const channels = [channel("one", ["models/GPT-IMAGE-2"]), channel("two", ["gpt-image-2"])];
         const existing: LogicalModel[] = [{ id: "gpt-image-2", name: "GPT Image 2", capability: "image", enabled: true, bindings: [{ id: "one:gpt-image-2", channelId: "one", upstreamModel: "gpt-image-2", enabled: true, priority: 1 }] }];
@@ -139,13 +157,27 @@ describe("model routing config", () => {
         const models = synchronizeLogicalModelsWithChannels(existing, channels);
 
         expect(models).toHaveLength(2);
-        expect(models[0]).toMatchObject({ id: "custom-writer", name: "writer", enabled: false });
+        expect(models[0]).toMatchObject({ id: "custom-writer", name: "旧名称", enabled: false });
         expect(models[0].bindings).toEqual([
             expect.objectContaining({ channelId: "two", upstreamModel: "models/WRITER", priority: 2 }),
             expect.objectContaining({ id: "keep", channelId: "one", upstreamModel: "writer", enabled: false, priority: 9, weight: 25 }),
         ]);
         expect(models[1]).toMatchObject({ id: "writer-mini", name: "writer-mini", bindings: [{ channelId: "one", upstreamModel: "writer-mini" }] });
         expect(models.flatMap((model) => model.bindings).some((binding) => binding.channelId === "gone")).toBe(false);
+    });
+
+    it("preserves an administrator model nickname when the channel catalog is synchronized", () => {
+        const existing: LogicalModel[] = [
+            {
+                id: "image-pro",
+                name: "商业图片 Pro",
+                capability: "image",
+                enabled: true,
+                bindings: [{ id: "binding", channelId: "one", upstreamModel: "vendor/image-v2", enabled: true, priority: 1 }],
+            },
+        ];
+
+        expect(synchronizeLogicalModelsWithChannels(existing, [channel("one", ["vendor/image-v2"])])[0]?.name).toBe("商业图片 Pro");
     });
 
     it("keeps the upstream auto model classified as text", () => {

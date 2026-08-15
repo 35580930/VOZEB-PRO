@@ -84,6 +84,7 @@ export function settings(imageModel: string, channelId: string) {
         ],
         agentSkills: [],
         generationDefaults: {},
+        generationConcurrency: { agent: 2, image: 2, video: 1, audio: 2, text: 2, render: 1 },
     } as never;
 }
 

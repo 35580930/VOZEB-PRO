@@ -4,7 +4,7 @@ export function buildSubtitleCues(shots: DramaShot[]) {
     let cursor = 0;
     return shots
         .flatMap((shot) => {
-            const duration = Math.max(1, Math.min(20, Number(shot.duration) || 5)) * 1000;
+            const duration = Math.max(1, Number(shot.duration) || 5) * 1000;
             const startMs = cursor;
             cursor += duration;
             const text = (shot.subtitle || shot.dialogue).trim();

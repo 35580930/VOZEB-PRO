@@ -1,8 +1,8 @@
 "use client";
 
-import { useRef, useState, type DragEvent as ReactDragEvent, type ReactNode } from "react";
-import { Button, Tooltip } from "antd";
-import { ArrowUp, Check, CheckCircle2, Circle, CircleAlert, Crosshair, ImagePlus, LoaderCircle, Pause, RotateCcw, Wrench, X, XCircle } from "lucide-react";
+import { useMemo, useRef, useState, type DragEvent as ReactDragEvent, type ReactNode } from "react";
+import { Button, Popover, Tooltip } from "antd";
+import { ArrowUp, Check, CheckCircle2, Circle, CircleAlert, Crosshair, LoaderCircle, Pause, Play, Plus, RotateCcw, Wrench, X, XCircle } from "lucide-react";
 
 import { AgentMessageActions } from "@/components/agent/agent-message-actions";
 import { AgentMarkdown } from "@/components/agent/agent-markdown";
@@ -13,14 +13,27 @@ import { clipboardImageFiles } from "@/lib/clipboard-image-files";
 import { droppedFiles, leftDropTarget, preventFileDragEvent } from "@/lib/file-drop";
 import { imagePreviewUrl } from "@/lib/media-image-url";
 import { userAvatarFallback } from "@/lib/user-avatar";
+import { DEFAULT_SITE_TITLE, resolveSiteTitle } from "@/lib/site-brand";
 import { usePublicSessionStore } from "@/stores/use-public-session-store";
 import type { LocalUser } from "@/stores/use-user-store";
+import {
+    canvasAgentMentionAtCursor,
+    canvasAgentMentionCandidates,
+    canvasAgentMentionDeletionAtKey,
+    canvasAgentMentionSegments,
+    canvasAgentReferenceAliases,
+    remapCanvasAgentReferences,
+    replaceCanvasAgentMention,
+    type CanvasAgentMentionAsset,
+} from "./canvas-agent-mention";
+import { CanvasAgentMentionPicker, CanvasAgentMentionPreview } from "./canvas-agent-mention-picker";
 import { canvasAgentProgressSteps, type CanvasAgentRunStage } from "./canvas-agent-progress";
 
 export type CanvasAgentChatAttachment = {
     id: string;
     name: string;
     url: string;
+    type?: "image" | "video";
     label?: string;
     status?: "uploading" | "ready" | "failed";
     error?: string;
@@ -102,7 +115,7 @@ export function AgentChatMessage({
         <div className="canvas-agent-message group/message flex min-w-0 items-start justify-start gap-3">
             <AgentAvatar theme={theme} />
             <div className="min-w-0 max-w-[82%] text-left text-sm leading-6" style={{ color }}>
-                <div className="flex min-w-0 items-center gap-1">
+                <div className="flex min-w-0 items-start gap-1">
                     <AgentMarkdown className="min-w-0 flex-1 text-left">{item.text}</AgentMarkdown>
                     {resultNodeIds.length ? (
                         <div className="flex shrink-0 items-center gap-0.5">
@@ -110,7 +123,7 @@ export function AgentChatMessage({
                                 const locateLabel = nodeIds.length > 1 ? `定位结果 ${index + 1}` : "定位到画布结果";
                                 return (
                                     <Tooltip key={nodeId} title={locateLabel} placement="top" mouseEnterDelay={0.2}>
-                                        <button type="button" className="grid size-7 place-items-center opacity-55 transition hover:opacity-100 focus-visible:opacity-100" onClick={() => onLocateNode?.(nodeId)} aria-label={locateLabel}>
+                                        <button type="button" className="mt-0.5 grid size-7 place-items-center opacity-55 transition hover:opacity-100 focus-visible:opacity-100" onClick={() => onLocateNode?.(nodeId)} aria-label={locateLabel}>
                                             <Crosshair className="size-4" />
                                         </button>
                                     </Tooltip>
@@ -131,7 +144,13 @@ export function AgentChatMessage({
                 ) : null}
                 {item.attachments?.length ? <AgentMessageAttachments attachments={item.attachments} /> : null}
                 {item.meta ? <div className="mt-1 text-[11px] opacity-45">{item.meta}</div> : null}
-                <AgentMessageActions text={item.text} downloads={item.attachments?.map((attachment) => ({ type: "image", url: attachment.url, title: attachment.name }))} align="start" className="text-current" style={{ color: theme.node.muted }} />
+                <AgentMessageActions
+                    text={item.text}
+                    downloads={item.attachments?.map((attachment) => ({ type: attachment.type || "image", url: attachment.url, title: attachment.name }))}
+                    align="start"
+                    className="text-current"
+                    style={{ color: theme.node.muted }}
+                />
             </div>
         </div>
     );
@@ -238,9 +257,14 @@ export function AgentWorkingMessage({ theme, stage }: { theme: (typeof canvasThe
     );
 }
 
+const EMPTY_MENTION_ASSETS: CanvasAgentMentionAsset[] = [];
+const EMPTY_REFERENCE_IDS: string[] = [];
+
 export function AgentChatComposer({
     prompt,
     attachments = [],
+    mentionAssets = EMPTY_MENTION_ASSETS,
+    selectedReferenceIds = EMPTY_REFERENCE_IDS,
     disabled,
     sending,
     placeholder,
@@ -250,11 +274,15 @@ export function AgentChatComposer({
     onAddFiles,
     onRemoveAttachment,
     onRetryAttachment,
+    onSelectReference,
+    onRemoveReference,
     beforeInput,
     left,
 }: {
     prompt: string;
     attachments?: CanvasAgentChatAttachment[];
+    mentionAssets?: CanvasAgentMentionAsset[];
+    selectedReferenceIds?: string[];
     disabled?: boolean;
     sending?: boolean;
     placeholder: string;
@@ -264,14 +292,58 @@ export function AgentChatComposer({
     onAddFiles?: (files: FileList | File[] | null) => void | Promise<void>;
     onRemoveAttachment?: (id: string) => void;
     onRetryAttachment?: (id: string) => void;
+    onSelectReference?: (id: string) => void;
+    onRemoveReference?: (id: string) => void;
     beforeInput?: ReactNode;
     left?: ReactNode;
 }) {
     const fileInputRef = useRef<HTMLInputElement>(null);
+    const textareaRef = useRef<HTMLTextAreaElement>(null);
+    const caretRef = useRef(0);
+    const mentionHighlightRef = useRef<HTMLDivElement>(null);
     const [isDragActive, setIsDragActive] = useState(false);
+    const [mentionQuery, setMentionQuery] = useState<string | null>(null);
     const uploading = attachments.some((item) => item.status === "uploading");
     const hasFailedUpload = attachments.some((item) => item.status === "failed");
     const canSubmit = !disabled && !sending && !uploading && !hasFailedUpload && Boolean(prompt.trim() || attachments.length);
+    const mentionCandidates = useMemo(() => canvasAgentMentionCandidates(mentionAssets, mentionQuery || ""), [mentionAssets, mentionQuery]);
+    const mentionAssetsById = useMemo(() => new Map(mentionAssets.map((asset) => [asset.id, asset])), [mentionAssets]);
+    const referenceAliases = useMemo(() => canvasAgentReferenceAliases(mentionAssets, selectedReferenceIds), [mentionAssets, selectedReferenceIds]);
+    const mentionSegments = useMemo(() => canvasAgentMentionSegments(prompt, referenceAliases), [prompt, referenceAliases]);
+    const hasMentionReferences = mentionSegments.some((segment) => segment.referenced);
+    const updateComposerValue = (value: string, cursor: number) => {
+        caretRef.current = cursor;
+        onPromptChange(value);
+        setMentionQuery(canvasAgentMentionAtCursor(value, cursor)?.query ?? null);
+    };
+    const updateMentionCursor = (value: string, cursor: number) => {
+        caretRef.current = cursor;
+        setMentionQuery(canvasAgentMentionAtCursor(value, cursor)?.query ?? null);
+    };
+    const focusComposerAt = (cursor: number) => {
+        window.requestAnimationFrame(() => {
+            textareaRef.current?.focus();
+            textareaRef.current?.setSelectionRange(cursor, cursor);
+        });
+    };
+    const selectMentionAsset = (asset: CanvasAgentMentionAsset) => {
+        const nextReferenceIds = selectedReferenceIds.includes(asset.id) ? selectedReferenceIds : [...selectedReferenceIds, asset.id];
+        const alias = canvasAgentReferenceAliases(mentionAssets, nextReferenceIds).get(asset.id);
+        if (!alias) return;
+        const result = replaceCanvasAgentMention(prompt, caretRef.current, alias);
+        onSelectReference?.(asset.id);
+        onPromptChange(result.value);
+        setMentionQuery(null);
+        focusComposerAt(result.cursor);
+    };
+    const removeMentionReference = (nodeId: string, cursor: number) => {
+        const nextReferenceIds = selectedReferenceIds.filter((id) => id !== nodeId);
+        const nextPrompt = remapCanvasAgentReferences(prompt, mentionAssets, selectedReferenceIds, nextReferenceIds);
+        onPromptChange(nextPrompt);
+        onRemoveReference?.(nodeId);
+        setMentionQuery(null);
+        focusComposerAt(Math.min(cursor, nextPrompt.length));
+    };
     const handleDragOver = (event: ReactDragEvent<HTMLDivElement>) => {
         if (!onAddFiles || sending || !preventFileDragEvent(event)) return;
         setIsDragActive(true);
@@ -288,101 +360,174 @@ export function AgentChatComposer({
         void onAddFiles(images);
     };
     return (
-        <div className="px-2 pb-2 pt-2" onWheelCapture={(event) => event.stopPropagation()}>
+        <div data-canvas-agent-composer className="px-3 pb-3 pt-2" onWheelCapture={(event) => event.stopPropagation()}>
             <div
-                className="rounded-[24px] border px-3 pb-3 pt-3 shadow-lg transition"
+                className="rounded-2xl border px-3.5 pb-3.5 pt-3.5 shadow-sm transition"
                 style={{ background: theme.toolbar.panel, borderColor: isDragActive ? "#22d3ee" : theme.node.stroke }}
                 onDragEnter={handleDragOver}
                 onDragOver={handleDragOver}
                 onDragLeave={handleDragLeave}
                 onDrop={handleDrop}
             >
-                {attachments.length ? (
-                    <div className="thin-scrollbar mb-2 flex gap-2 overflow-x-auto pb-1" aria-label="本轮参考图片" aria-live="polite">
-                        {attachments.map((item) => (
-                            <div key={item.id} className="group relative size-14 shrink-0 overflow-hidden rounded-xl border" style={{ borderColor: item.status === "failed" ? "#ef4444" : theme.node.stroke }} title={item.error || item.name}>
-                                <img src={imagePreviewUrl(item.url, 256)} alt={item.name} className="size-full object-cover" />
-                                {item.label ? <span className="absolute left-1 top-1 rounded bg-black/65 px-1 py-0.5 text-[9px] font-medium leading-none text-white">{item.label}</span> : null}
-                                {item.status === "uploading" ? (
-                                    <span className="absolute inset-0 grid place-items-center bg-black/50 text-white" role="status" aria-label={`${item.name} 上传中`}>
-                                        <LoaderCircle className="size-5 animate-spin" />
-                                    </span>
-                                ) : null}
-                                {item.status === "failed" && onRetryAttachment ? (
-                                    <button type="button" className="absolute inset-0 grid place-items-center bg-red-950/55 text-white transition hover:bg-red-950/65" onClick={() => onRetryAttachment(item.id)} aria-label={`重试上传图片：${item.name}`}>
-                                        <RotateCcw className="size-5" />
-                                    </button>
-                                ) : null}
-                                {onRemoveAttachment && item.status !== "uploading" ? (
-                                    <button
-                                        type="button"
-                                        className="absolute right-1 top-1 z-10 grid size-5 place-items-center rounded-full border opacity-100 shadow-sm transition sm:opacity-0 sm:group-hover:opacity-100"
-                                        style={{ background: theme.toolbar.panel, borderColor: theme.node.stroke, color: theme.node.text }}
-                                        onClick={() => onRemoveAttachment(item.id)}
-                                        aria-label="移除图片"
-                                    >
-                                        <X className="size-3" />
-                                    </button>
-                                ) : null}
-                            </div>
-                        ))}
-                    </div>
-                ) : null}
                 {beforeInput}
-                <textarea
-                    value={prompt}
-                    onChange={(event) => onPromptChange(event.target.value)}
-                    onPaste={(event) => {
-                        if (!onAddFiles) return;
-                        const images = clipboardImageFiles(event.clipboardData);
-                        if (!images.length) return;
-                        event.preventDefault();
-                        void onAddFiles(images);
-                    }}
-                    onKeyDown={(event) => {
-                        if (event.key !== "Enter" || event.shiftKey || event.ctrlKey || event.metaKey) return;
-                        event.preventDefault();
-                        void onSubmit();
-                    }}
-                    className="thin-scrollbar max-h-32 min-h-20 w-full resize-none border-0 bg-transparent px-1 py-1 text-sm leading-5 outline-none placeholder:opacity-45"
-                    style={{ color: theme.node.text }}
-                    placeholder={placeholder}
-                />
-                <div className="mt-2 flex items-center justify-between gap-2">
-                    <div className="flex min-w-0 items-center gap-1">
-                        {onAddFiles ? (
-                            <>
-                                <input
-                                    ref={fileInputRef}
-                                    hidden
-                                    type="file"
-                                    accept="image/*"
-                                    multiple
-                                    onChange={(event) => {
-                                        void onAddFiles(event.target.files);
-                                        event.target.value = "";
-                                    }}
-                                />
-                                <Tooltip title={uploading ? "正在上传图片" : "上传图片"}>
+                {onAddFiles ? (
+                    <input
+                        ref={fileInputRef}
+                        hidden
+                        type="file"
+                        accept="image/*"
+                        multiple
+                        onChange={(event) => {
+                            void onAddFiles(event.target.files);
+                            event.target.value = "";
+                        }}
+                    />
+                ) : null}
+                <div className="flex min-w-0 items-start gap-2" data-canvas-agent-input-row>
+                    {onAddFiles || attachments.length ? (
+                        <div className="hide-scrollbar flex max-w-[44%] shrink-0 items-start gap-1 overflow-x-auto overflow-y-hidden px-0.5 py-1" aria-label="本轮参考素材" aria-live="polite">
+                            {attachments.map((item) => (
+                                <div
+                                    key={item.id}
+                                    className="group relative size-10 shrink-0 overflow-visible rounded-md border"
+                                    style={{ borderColor: item.status === "failed" ? theme.node.danger : theme.node.stroke, background: theme.node.fill }}
+                                    title={item.error || item.name}
+                                >
+                                    <div className="size-full overflow-hidden rounded-[5px]">
+                                        {item.type === "video" ? (
+                                            <>
+                                                <video src={item.url} muted playsInline preload="metadata" aria-label={item.name} className="pointer-events-none size-full object-cover" />
+                                                <span className="pointer-events-none absolute inset-0 grid place-items-center bg-black/10 text-white">
+                                                    <Play className="size-3.5 fill-current" />
+                                                </span>
+                                            </>
+                                        ) : (
+                                            <img src={imagePreviewUrl(item.url, 256)} alt={item.name} className="size-full object-cover" />
+                                        )}
+                                    </div>
+                                    {item.label ? <span className="absolute bottom-1 left-1 rounded bg-black/65 px-1 py-0.5 text-[9px] font-medium leading-none text-white">{item.label}</span> : null}
+                                    {item.status === "uploading" ? (
+                                        <span className="absolute inset-0 grid place-items-center rounded-[5px] bg-black/50 text-white" role="status" aria-label={`${item.name} 上传中`}>
+                                            <LoaderCircle className="size-4 animate-spin" />
+                                        </span>
+                                    ) : null}
+                                    {item.status === "failed" && onRetryAttachment ? (
+                                        <button
+                                            type="button"
+                                            className="absolute inset-0 grid place-items-center rounded-[5px] bg-black/55 text-white transition hover:bg-black/65"
+                                            onClick={() => onRetryAttachment(item.id)}
+                                            aria-label={`重试上传图片：${item.name}`}
+                                        >
+                                            <RotateCcw className="size-4" />
+                                        </button>
+                                    ) : null}
+                                    {onRemoveAttachment && item.status !== "uploading" ? (
+                                        <button
+                                            type="button"
+                                            className="group/remove absolute right-0 top-0 z-10 flex size-7 items-start justify-end rounded-full bg-transparent p-0.5 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-1"
+                                            style={
+                                                {
+                                                    "--remove-surface": theme.node.removeSurface,
+                                                    "--remove-border": theme.node.removeBorder,
+                                                    "--remove-text": theme.node.removeText,
+                                                    "--remove-hover-surface": theme.node.dangerSurface,
+                                                    "--remove-hover-border": theme.node.dangerBorder,
+                                                    "--remove-hover-text": theme.node.danger,
+                                                    outlineColor: theme.node.dangerBorder,
+                                                } as React.CSSProperties
+                                            }
+                                            onClick={() => onRemoveAttachment(item.id)}
+                                            aria-label={`移除参考素材：${item.name}`}
+                                        >
+                                            <span className="grid size-4 place-items-center rounded-full border border-[var(--remove-border)] bg-[var(--remove-surface)] text-[var(--remove-text)] opacity-90 shadow-[0_1px_5px_rgba(15,23,42,.14)] backdrop-blur-md transition-[background-color,border-color,color,box-shadow,opacity,transform] duration-150 group-hover/remove:scale-105 group-hover/remove:border-[var(--remove-hover-border)] group-hover/remove:bg-[var(--remove-hover-surface)] group-hover/remove:text-[var(--remove-hover-text)] group-hover/remove:opacity-100 group-focus-visible/remove:border-[var(--remove-hover-border)] group-focus-visible/remove:bg-[var(--remove-hover-surface)] group-focus-visible/remove:text-[var(--remove-hover-text)] group-focus-visible/remove:opacity-100">
+                                                <X className="size-2" strokeWidth={2.25} aria-hidden="true" />
+                                            </span>
+                                        </button>
+                                    ) : null}
+                                </div>
+                            ))}
+                            {onAddFiles ? (
+                                <Tooltip title={uploading ? "正在上传图片" : attachments.length ? "继续添加参考素材" : "添加参考素材"}>
                                     <Button
                                         type="text"
-                                        shape="circle"
-                                        className="!h-9 !w-9 !min-w-9"
+                                        className="!size-10 !min-w-10 !shrink-0 !rounded-lg !border !p-0"
                                         disabled={sending}
-                                        style={{ color: theme.node.muted }}
-                                        icon={uploading ? <LoaderCircle className="size-4 animate-spin" /> : <ImagePlus className="size-4" />}
+                                        style={{ color: theme.node.muted, background: theme.node.fill, borderColor: theme.node.stroke }}
+                                        icon={uploading ? <LoaderCircle className="size-4 animate-spin" /> : <Plus className="size-4" />}
                                         onClick={() => fileInputRef.current?.click()}
-                                        aria-label={uploading ? "正在上传图片" : "上传图片"}
+                                        aria-label={uploading ? "正在上传图片" : attachments.length ? "继续添加参考素材" : "添加参考素材"}
                                     />
                                 </Tooltip>
-                            </>
-                        ) : null}
-                        {left}
-                    </div>
+                            ) : null}
+                        </div>
+                    ) : null}
+                    <Popover
+                        trigger={[]}
+                        placement="topLeft"
+                        arrow={false}
+                        open={mentionQuery !== null}
+                        onOpenChange={(open) => {
+                            if (!open) setMentionQuery(null);
+                        }}
+                        styles={{ container: { padding: 0, borderRadius: 12, overflow: "hidden", background: theme.node.panel, border: `1px solid ${theme.toolbar.border}` } }}
+                        content={<CanvasAgentMentionPicker assets={mentionCandidates} selectedNodeIds={selectedReferenceIds} theme={theme} onSelect={selectMentionAsset} />}
+                    >
+                        <div className="relative min-w-0 flex-1">
+                            {hasMentionReferences ? <CanvasAgentMentionPreview segments={mentionSegments} assetsById={mentionAssetsById} previewRef={mentionHighlightRef} theme={theme} /> : null}
+                            <textarea
+                                ref={textareaRef}
+                                value={prompt}
+                                onChange={(event) => updateComposerValue(event.target.value, event.target.selectionStart)}
+                                onClick={(event) => updateMentionCursor(event.currentTarget.value, event.currentTarget.selectionStart)}
+                                onKeyUp={(event) => {
+                                    if (["ArrowUp", "ArrowDown", "Enter", "Escape"].includes(event.key)) return;
+                                    updateMentionCursor(event.currentTarget.value, event.currentTarget.selectionStart);
+                                }}
+                                onScroll={(event) => {
+                                    if (mentionHighlightRef.current) mentionHighlightRef.current.style.transform = `translate3d(0, -${event.currentTarget.scrollTop}px, 0)`;
+                                }}
+                                onPaste={(event) => {
+                                    if (!onAddFiles) return;
+                                    const images = clipboardImageFiles(event.clipboardData);
+                                    if (!images.length) return;
+                                    event.preventDefault();
+                                    void onAddFiles(images);
+                                }}
+                                onKeyDown={(event) => {
+                                    if ((event.key === "Backspace" || event.key === "Delete") && onRemoveReference) {
+                                        const deletion = canvasAgentMentionDeletionAtKey(prompt, event.currentTarget.selectionStart, event.currentTarget.selectionEnd, event.key, referenceAliases);
+                                        if (deletion) {
+                                            event.preventDefault();
+                                            removeMentionReference(deletion.nodeId, deletion.cursor);
+                                            return;
+                                        }
+                                    }
+                                    if (event.key === "Escape" && mentionQuery !== null) {
+                                        event.preventDefault();
+                                        setMentionQuery(null);
+                                        return;
+                                    }
+                                    if (event.key !== "Enter" || event.shiftKey || event.ctrlKey || event.metaKey) return;
+                                    event.preventDefault();
+                                    if (mentionQuery !== null && mentionCandidates.length) {
+                                        selectMentionAsset(mentionCandidates[0]);
+                                        return;
+                                    }
+                                    void onSubmit();
+                                }}
+                                className="thin-scrollbar relative z-[1] max-h-32 min-h-20 w-full resize-none border-0 bg-transparent px-1 py-1 text-sm leading-5 outline-none placeholder:opacity-45"
+                                style={{ color: hasMentionReferences ? "transparent" : theme.node.text, caretColor: theme.node.text }}
+                                placeholder={placeholder}
+                            />
+                        </div>
+                    </Popover>
+                </div>
+                <div className="mt-2 flex min-w-0 items-center gap-2.5" data-canvas-agent-toolbar>
+                    <div className="min-w-0 flex-1 overflow-hidden py-0.5">{left}</div>
                     <Button
                         type="primary"
                         shape="circle"
-                        className="!h-10 !w-10 !min-w-10"
+                        className="!h-10 !w-10 !min-w-10 !shrink-0"
                         disabled={!canSubmit}
                         icon={sending ? <LoaderCircle className="size-4 animate-spin" /> : <ArrowUp className="size-4" />}
                         onClick={() => void onSubmit()}
@@ -442,9 +587,9 @@ function AgentDetailBlock({ detail, theme }: { detail: unknown; theme: (typeof c
 }
 
 function AgentAvatar({ theme }: { theme: (typeof canvasThemes)[keyof typeof canvasThemes] }) {
-    const site = usePublicSessionStore((state) => state.payload?.settings?.site) || { title: "MOCREAI", logoUrl: "/logo.svg" };
+    const site = usePublicSessionStore((state) => state.payload?.settings?.site) || { title: DEFAULT_SITE_TITLE, logoUrl: "/logo.svg" };
     return (
-        <span className="grid size-8 shrink-0 place-items-center" role="img" aria-label={`${site.title || "MOCREAI"} Agent`} style={{ color: theme.node.text }}>
+        <span className="grid size-8 shrink-0 place-items-center" role="img" aria-label={`${resolveSiteTitle(site.title)} Agent`} style={{ color: theme.node.text }}>
             <SiteLogo logoUrl={site.logoUrl} className="size-5" />
         </span>
     );
@@ -470,7 +615,7 @@ function AgentMessageAttachments({ attachments, align = "start" }: { attachments
     return (
         <div className={`mb-2 flex flex-wrap gap-1.5 ${align === "end" ? "justify-end" : "justify-start"}`}>
             {attachments.map((item) => (
-                <AgentMediaPreview key={item.id} type="image" url={item.url} title={item.name} className="size-12 rounded-lg" />
+                <AgentMediaPreview key={item.id} type={item.type || "image"} url={item.url} title={item.name} className="size-12 rounded-lg" />
             ))}
         </div>
     );

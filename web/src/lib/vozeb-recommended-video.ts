@@ -20,11 +20,13 @@ export function assertVozebRecommendedVideoReferences(model: string, references:
 
 export function buildVozebRecommendedVideoRequest(input: VozebRecommendedVideoInput) {
     const seedanceFast720p = normalizeModel(input.model) === SEEDANCE_FAST_720P;
+    const resolution = seedanceFast720p ? "720p" : input.resolution;
     const payload: Record<string, unknown> = {
         model: input.model,
         prompt: input.prompt,
         duration: Math.min(15, Math.max(5, Math.trunc(input.duration) || 5)),
-        resolution: seedanceFast720p ? "720p" : input.resolution,
+        resolution,
+        metadata: { resolution },
         generate_audio: seedanceFast720p ? false : input.generateAudio,
         aspect_ratio: input.aspectRatio,
     };

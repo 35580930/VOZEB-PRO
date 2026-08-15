@@ -350,10 +350,10 @@ function WorkListItem({
     const shareable = active && Boolean(work.publishedVersionId) && work.publishedVersion?.visibility !== "private";
     const sourceIcon = work.sourceType === "media" ? <ImageIcon className="size-4" /> : work.sourceType === "canvas" ? <GalleryVerticalEnd className="size-4" /> : <Film className="size-4" />;
     return (
-        <article className="min-w-0 rounded-lg border border-border bg-card p-3 text-card-foreground transition hover:border-foreground/20">
-            <div className="flex min-w-0 flex-col gap-2.5 md:flex-row md:items-start md:justify-between">
+        <article className="min-w-0 rounded-lg border border-border bg-card p-3.5 text-card-foreground transition hover:border-foreground/20 sm:p-4">
+            <div className="grid min-w-0 gap-3 md:grid-cols-[minmax(0,1fr)_auto] md:items-start">
                 <div className="flex min-w-0 flex-1 items-start gap-3">
-                    <span className="grid size-9 shrink-0 place-items-center rounded-md bg-foreground text-background">{sourceIcon}</span>
+                    <span className="grid size-9 shrink-0 place-items-center rounded-md border border-border bg-muted text-muted-foreground">{sourceIcon}</span>
                     <div className="min-w-0 flex-1">
                         <div className="flex min-w-0 flex-wrap items-center gap-1.5">
                             <h2 className="min-w-0 max-w-full truncate text-sm font-semibold">{version.title}</h2>
@@ -371,18 +371,9 @@ function WorkListItem({
                             <span>更新于 {formatWorkTime(work.updatedAt)}</span>
                         </div>
                         {version.rejectionReason ? <div className="mt-1.5 border-l-2 border-rose-400 pl-2 text-xs leading-5 text-rose-700 dark:text-rose-300">驳回原因：{version.rejectionReason}</div> : null}
-                        {version.tags.length ? (
-                            <div className="mt-1.5 flex min-w-0 flex-wrap gap-1">
-                                {version.tags.slice(0, 4).map((tag) => (
-                                    <Tag key={tag} className="m-0 max-w-32 truncate text-[11px]">
-                                        {tag}
-                                    </Tag>
-                                ))}
-                            </div>
-                        ) : null}
                     </div>
                 </div>
-                <div className="flex min-w-0 flex-wrap justify-end gap-1.5 md:max-w-[52%] md:shrink-0">
+                <div className="flex min-w-0 flex-wrap gap-1.5 border-t border-border pt-3 md:max-w-md md:shrink-0 md:justify-end md:border-t-0 md:pt-0">
                     {shareable ? (
                         <>
                             <Button size="small" icon={<Eye className="size-3.5" />} onClick={onPreview}>

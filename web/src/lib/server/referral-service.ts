@@ -1,4 +1,4 @@
-import { createHmac, randomBytes, randomUUID } from "node:crypto";
+import { createHmac, randomUUID } from "node:crypto";
 
 import { lockAuthMutation } from "@/lib/server/auth-mutation-lock";
 import { BillingInputError } from "@/lib/server/billing-errors";
@@ -18,8 +18,6 @@ import {
 } from "@/lib/server/database";
 import { adjustPermanentPointsInPostgresTransaction } from "@/lib/server/points-wallet-service";
 
-const REFERRAL_CODE_CHARACTERS = "23456789ABCDEFGHJKLMNPQRSTUVWXYZ";
-const REFERRAL_CODE_LENGTH = 8;
 const REGISTRATION_NETWORK_WINDOW_MS = 30 * 24 * 60 * 60_000;
 const REGISTRATION_NETWORK_REVIEW_COUNT = 3;
 export const REFERRAL_COOKIE_NAME = "vozeb_referral";
@@ -98,13 +96,11 @@ export async function getOrCreateReferralCode(userId: string, db?: QueryExecutor
         if (!user || user.status !== "active") throw new BillingInputError("用户不可用", 403);
         const existing = await repos.referrals.getCodeByUserId(userId);
         if (existing) return existing;
-        for (let attempt = 0; attempt < 6; attempt += 1) {
-            const now = new Date().toISOString();
-            const created = await repos.referrals.createCode({ id: randomUUID(), userId, code: generateReferralCode(), enabled: true, clickCount: 0, createdAt: now, updatedAt: now });
-            if (created) return created;
-            const concurrent = await repos.referrals.getCodeByUserId(userId);
-            if (concurrent) return concurrent;
-        }
+        const now = new Date().toISOString();
+        const created = await repos.referrals.createCode({ id: randomUUID(), userId, code: referralCodeForAccountId(user.accountId), enabled: true, clickCount: 0, createdAt: now, updatedAt: now });
+        if (created) return created;
+        const concurrent = await repos.referrals.getCodeByUserId(userId);
+        if (concurrent) return concurrent;
         throw new BillingInputError("生成邀请码失败，请稍后重试", 409);
     };
     return db ? run(db) : withPostgresTransaction(run);
@@ -313,15 +309,18 @@ async function reverseReferralRewardSet(client: QueryExecutor, rewards: Referral
     return updated;
 }
 
-export async function getReferralCenter(userId: string, origin: string) {
+export async function getReferralCenter(userId: string, origin: string, input: { referralsPage?: unknown; rewardsPage?: unknown; pageSize?: unknown } = {}) {
     await assertBillingDatabaseReady();
     const repos = createPostgresRepositories();
+    const referralsPage = normalizeInteger(input.referralsPage, 1, 100_000, 1);
+    const rewardsPage = normalizeInteger(input.rewardsPage, 1, 100_000, 1);
+    const pageSize = normalizeInteger(input.pageSize, 1, 50, 8);
     const [program, code, stats, relationships, rewards] = await Promise.all([
         repos.referrals.getProgram(),
         getOrCreateReferralCode(userId),
         repos.referrals.getUserStats(userId),
-        repos.referrals.listRelationships({ inviterUserId: userId, page: 1, pageSize: 50 }),
-        repos.referrals.listRewards({ beneficiaryUserId: userId, page: 1, pageSize: 50 }),
+        repos.referrals.listRelationships({ inviterUserId: userId, page: referralsPage, pageSize }),
+        repos.referrals.listRewards({ beneficiaryUserId: userId, page: rewardsPage, pageSize }),
     ]);
     if (!program) throw new BillingInputError("邀请奖励设置不存在", 500);
     return {
@@ -335,7 +334,13 @@ export async function getReferralCenter(userId: string, origin: string) {
             riskStatus: relationship.riskStatus,
             registeredAt: relationship.registeredAt,
         })),
+        referralsTotal: relationships.total,
+        referralsPage: relationships.page,
+        referralsPageSize: relationships.pageSize,
         rewards: rewards.items,
+        rewardsTotal: rewards.total,
+        rewardsPage: rewards.page,
+        rewardsPageSize: rewards.pageSize,
     };
 }
 
@@ -493,12 +498,13 @@ function publicReferralProgram(program: ReferralProgramRecord) {
 export function normalizeReferralCode(value: unknown) {
     return normalizeText(value, "", 24)
         .toUpperCase()
-        .replace(/[^2-9A-HJ-NP-Z]/g, "");
+        .replace(/[^0-9A-Z]/g, "");
 }
 
-function generateReferralCode() {
-    const bytes = randomBytes(REFERRAL_CODE_LENGTH);
-    return Array.from(bytes, (byte) => REFERRAL_CODE_CHARACTERS[byte % REFERRAL_CODE_CHARACTERS.length]).join("");
+function referralCodeForAccountId(accountId: string) {
+    const normalized = accountId.trim();
+    if (!/^\d+$/.test(normalized)) throw new BillingInputError("用户公开账号 ID 无效", 500);
+    return `VZ${normalized}`;
 }
 
 function hashReferralRiskValue(kind: string, value: unknown) {

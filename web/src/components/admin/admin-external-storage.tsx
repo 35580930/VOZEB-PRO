@@ -114,13 +114,13 @@ export function AdminExternalStorage() {
         setSyncing(true);
         const total: ObjectStorageMigrationResult = { migrated: 0, skipped: 0, failed: 0, remaining: 0, errors: [] };
         try {
-            for (let batch = 0; batch < 200; batch += 1) {
+            for (;;) {
                 const result = await migrateLocalMedia(PAGE_SIZE);
                 total.migrated += result.migrated;
                 total.skipped = Math.max(total.skipped, result.skipped);
                 total.failed += result.failed;
                 total.remaining = result.remaining;
-                total.errors.push(...result.errors.slice(0, 5));
+                total.errors.push(...result.errors);
                 setSyncResult({ ...total, errors: [...total.errors] });
                 if (!result.remaining || !result.migrated) break;
             }

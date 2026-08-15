@@ -7,7 +7,8 @@ import { getCurrentUser } from "@/lib/auth/session";
 import { getAuthSettings, isAuthInputError } from "@/lib/auth/store";
 import { readJsonBody } from "@/lib/auth/request";
 import { createDramaRenderTask, getDramaRenderTask, touchDramaRenderTask, transitionDramaRenderTask, type DramaRenderTask } from "@/lib/server/drama-render-store";
-import { normalizeDramaShotAudioMode, resolveDramaRenderAudioPlan } from "@/lib/server/drama-render-audio";
+import { resolveDramaRenderAudioPlan } from "@/lib/server/drama-render-audio";
+import { normalizeDramaRenderShots, type NormalizedDramaRenderShot } from "@/lib/server/drama-render-input";
 import { ffmpegAvailable, runFfmpeg, runFfprobe } from "@/lib/server/ffmpeg";
 import { fetchInternalApi, resolveInternalOrigin } from "@/lib/server/internal-origin";
 import { writeReferenceMediaFile } from "@/lib/server/reference-asset-store";
@@ -20,8 +21,6 @@ import { dramaOutputDimensions, normalizeDramaImageSize } from "@/lib/drama-imag
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-type RenderShot = { videoUrl?: unknown; audioMode?: unknown; audioUrl?: unknown; subtitle?: unknown; duration?: unknown };
-
 export async function POST(request: Request) {
     const user = await getCurrentUser();
     if (!user) return NextResponse.json({ code: 401, data: null, msg: "请先登录" }, { status: 401 });
@@ -30,28 +29,28 @@ export async function POST(request: Request) {
     const renderLimit = (await getAuthSettings()).generationConcurrency.render;
     const response = await withGenerationConcurrencyLimit(user.id, "render", 60 * 60_000, renderLimit, async () => {
         if (!(await ffmpegAvailable())) return NextResponse.json({ code: 503, data: null, msg: "当前服务器未安装 FFmpeg" }, { status: 503 });
-        let body: { projectId?: unknown; conversationId?: unknown; title?: unknown; ratio?: unknown; shots?: RenderShot[] };
+        let body: { projectId?: unknown; conversationId?: unknown; title?: unknown; ratio?: unknown; shots?: unknown[] };
         try {
             body = await readJsonBody(request);
         } catch (error) {
             if (isAuthInputError(error)) return NextResponse.json({ code: error.status, data: null, msg: error.message }, { status: error.status });
             throw error;
         }
-        const projectId = text(body.projectId, 120);
-        const title = text(body.title, 120) || "短剧成片";
-        const shots = normalizeShots(body.shots);
+        const projectId = text(body.projectId);
+        const title = text(body.title) || "短剧成片";
+        const shots = normalizeDramaRenderShots(body.shots);
         if (!projectId || !shots.length || shots.some((shot) => !shot.videoUrl)) return NextResponse.json({ code: 400, data: null, msg: "请先完成全部镜头视频" }, { status: 400 });
         if (shots.some((shot) => shot.audioMode === "voiceover" && !shot.audioUrl)) return NextResponse.json({ code: 400, data: null, msg: "部分镜头选择了 AI 配音，但配音尚未完成" }, { status: 400 });
         const size = normalizeDramaImageSize(body.ratio);
         if (!size) return NextResponse.json({ code: 400, data: null, msg: "短剧尺寸无效" }, { status: 400 });
-        const task = await createDramaRenderTask({ userId: user.id, projectId, conversationId: text(body.conversationId, 160) || undefined, title });
+        const task = await createDramaRenderTask({ userId: user.id, projectId, conversationId: text(body.conversationId) || undefined, title });
         after(() => renderDrama(task, shots, size, resolveInternalOrigin(new URL(request.url).origin), request.headers.get("cookie") || ""));
         return NextResponse.json({ code: 0, data: publicTask(task), msg: "合成任务已创建" });
     });
     return response || NextResponse.json({ code: 429, data: null, msg: `当前最多同时运行 ${renderLimit} 个整集合成任务` }, { status: 429 });
 }
 
-async function renderDrama(task: DramaRenderTask, shots: NormalizedShot[], sizeValue: string, origin: string, cookie: string) {
+async function renderDrama(task: DramaRenderTask, shots: NormalizedDramaRenderShot[], sizeValue: string, origin: string, cookie: string) {
     const running = await transitionDramaRenderTask(task, ["pending"], { status: "running" });
     if (!running) return;
     const workdir = await mkdtemp(join(tmpdir(), "vozeb-pro-drama-"));
@@ -172,7 +171,7 @@ async function renderDrama(task: DramaRenderTask, shots: NormalizedShot[], sizeV
                 assets: [{ type: "video", url: completed.result.url, mimeType: completed.result.mimeType }],
             }).catch((error) => console.error("Creative render asset registration failed", error));
     } catch (error) {
-        await transitionDramaRenderTask(task, ["running"], { status: "error", error: error instanceof Error ? error.message.slice(0, 2000) : "整集合成失败" });
+        await transitionDramaRenderTask(task, ["running"], { status: "error", error: error instanceof Error ? error.message : "整集合成失败" });
     } finally {
         clearInterval(heartbeat);
         clearInterval(cancellationMonitor);
@@ -180,13 +179,6 @@ async function renderDrama(task: DramaRenderTask, shots: NormalizedShot[], sizeV
     }
 }
 
-type NormalizedShot = { videoUrl: string; audioMode: ReturnType<typeof normalizeDramaShotAudioMode>; audioUrl: string; subtitle: string; duration: number };
-function normalizeShots(value: unknown): NormalizedShot[] {
-    return (Array.isArray(value) ? value : []).slice(0, 60).map((shot) => {
-        const item = shot && typeof shot === "object" ? (shot as RenderShot) : {};
-        return { videoUrl: text(item.videoUrl, 4000), audioMode: normalizeDramaShotAudioMode(item.audioMode), audioUrl: text(item.audioUrl, 4000), subtitle: text(item.subtitle, 2000), duration: Math.max(1, Math.min(20, Number(item.duration) || 5)) };
-    });
-}
 async function hasAudioStream(videoPath: string, cwd: string, signal: AbortSignal) {
     const result = await runFfprobe(["-v", "error", "-select_streams", "a:0", "-show_entries", "stream=codec_type", "-of", "default=noprint_wrappers=1:nokey=1", videoPath], { cwd, signal, timeoutMs: 30_000 });
     return result.stdout.trim() === "audio";
@@ -229,7 +221,7 @@ async function fetchExternalMedia(initialUrl: string) {
     }
     throw new Error("媒体重定向次数过多");
 }
-function buildServerSrt(shots: NormalizedShot[]) {
+function buildServerSrt(shots: NormalizedDramaRenderShot[]) {
     let cursor = 0;
     let index = 0;
     return shots
@@ -248,8 +240,8 @@ function srtTime(ms: number) {
     const seconds = Math.floor((ms % 60_000) / 1000);
     return `${String(hours).padStart(2, "0")}:${String(minutes).padStart(2, "0")}:${String(seconds).padStart(2, "0")},${String(ms % 1000).padStart(3, "0")}`;
 }
-function text(value: unknown, max: number) {
-    return typeof value === "string" ? value.trim().slice(0, max) : "";
+function text(value: unknown) {
+    return typeof value === "string" ? value.trim() : "";
 }
 function publicTask(task: DramaRenderTask) {
     return { id: task.id, status: task.status, result: task.result, error: task.error };

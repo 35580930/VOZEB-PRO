@@ -24,6 +24,29 @@ export type CanvasProjectSummary = Pick<CanvasProject, "id" | "sourceHandoffId" 
 
 export type CanvasProjectSummaryPage = { projects: CanvasProjectSummary[]; total: number; page: number; pageSize: number };
 
+export type CanvasProjectMutation = {
+    mutationId: string;
+    baseUpdatedAt: string;
+    title?: string;
+    creativeConversationId?: string;
+    activeChatId?: string | null;
+    backgroundMode?: CanvasBackgroundMode;
+    showImageInfo?: boolean;
+    viewport?: ViewportTransform;
+    nodeUpserts?: CanvasNodeData[];
+    nodeDeletes?: string[];
+    connectionUpserts?: CanvasConnection[];
+    connectionDeletes?: string[];
+    chatSessionUpserts?: CanvasAssistantSession[];
+    chatSessionDeletes?: string[];
+};
+
+export type CanvasProjectSaveAck = {
+    projectId: string;
+    updatedAt: string;
+    mutationId: string;
+};
+
 export type CreateCanvasProjectInput = {
     title?: string;
     sourceHandoffId?: string;

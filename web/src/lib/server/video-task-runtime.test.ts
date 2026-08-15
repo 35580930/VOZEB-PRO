@@ -50,7 +50,8 @@ describe("video task upstream reconciliation", () => {
     it("forwards the maintenance worker identity when polling the internal system proxy", async () => {
         const token = "maintenance-token-used-by-generation-worker";
         const task = videoTask();
-        vi.stubEnv("VOZEB_PRO_MAINTENANCE_TOKEN", token);
+        vi.stubEnv("VOZEB_PRO_MAINTENANCE_TOKEN", `${token}-maintenance`);
+        vi.stubEnv("VOZEB_PRO_WORKER_TOKEN", token);
         mocks.fetchInternalApi.mockResolvedValue(json({ id: task.upstream.id, status: "processing" }));
 
         await expect(queryVideoTaskUpstream(task, "http://localhost", "", task.userId)).resolves.toMatchObject({ state: "pending" });
@@ -110,6 +111,51 @@ describe("video task upstream reconciliation", () => {
             expect(mocks.normalize).toHaveBeenCalledWith(expect.objectContaining({ url: expect.stringContaining(`${origin}/_media?url=`), requestedDurationSeconds: 5 }));
             expect(mocks.complete).toHaveBeenCalledOnce();
             expect(mocks.refund).not.toHaveBeenCalled();
+        } finally {
+            await new Promise<void>((resolve, reject) => fixture.server.close((error) => (error ? reject(error) : resolve())));
+        }
+    });
+
+    it("polls a Gemini Veo operation and reads generateVideoResponse", async () => {
+        const fixture = createProtocolFixtureServer();
+        await new Promise<void>((resolve) => fixture.server.listen(0, "127.0.0.1", resolve));
+        const address = fixture.server.address();
+        if (!address || typeof address === "string") throw new Error("Protocol fixture did not bind a TCP port");
+        const origin = `http://127.0.0.1:${address.port}`;
+
+        try {
+            const created = (await fetch(`${origin}/v1beta/models/veo-3.1-generate-preview:predictLongRunning`, { method: "POST", body: "{}" }).then((response) => response.json())) as { name: string };
+            const operationId = created.name.split("/").at(-1) || "";
+            const task = videoTask({
+                config: {
+                    channelId: "fixture-gemini",
+                    apiSource: "system",
+                    baseUrl: origin,
+                    apiKey: "system",
+                    apiFormat: "gemini",
+                    model: "veo-3.1-generate-preview",
+                    advancedConfig: { protocol: "gemini", queryPath: `/v1beta/models/veo-3.1-generate-preview/operations/${operationId}` } as NonNullable<VideoTask["config"]["advancedConfig"]>,
+                },
+                upstream: {
+                    id: operationId,
+                    provider: "generation",
+                    model: "veo-3.1-generate-preview",
+                    pollPath: "/v1beta/models/veo-3.1-generate-preview:predictLongRunning",
+                    queryPath: `/v1beta/models/veo-3.1-generate-preview/operations/${operationId}`,
+                    pointsCost: 1,
+                    pointsUnits: 1,
+                    pointsRecordId: "points-gemini",
+                },
+            });
+            const completed = { ...task, status: "success" as const, result: { url: "/api/reference-assets/result.mp4", mimeType: "video/mp4", durationMs: 5_000 } };
+            mocks.claim.mockResolvedValue(task);
+            mocks.get.mockResolvedValue(task);
+            mocks.fetchInternalApi.mockImplementation((url: string | URL | Request, init?: RequestInit) => fetch(url, init));
+            mocks.complete.mockResolvedValue(completed);
+
+            await expect(refreshVideoTaskFromUpstream(task, "", "")).resolves.toEqual(completed);
+            expect(fixture.requests.map((request) => request.path)).toEqual(["/v1beta/models/veo-3.1-generate-preview:predictLongRunning", `/v1beta/models/veo-3.1-generate-preview/operations/${operationId}`]);
+            expect(mocks.complete).toHaveBeenCalledWith(task.id, expect.objectContaining({ url: "/api/reference-assets/result.mp4" }));
         } finally {
             await new Promise<void>((resolve, reject) => fixture.server.close((error) => (error ? reject(error) : resolve())));
         }

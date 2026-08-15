@@ -63,8 +63,6 @@ export type CreativeRunBundleResult<T extends AgentRunBase> = {
 };
 
 const RUNTIME_FILE = "creative-runtime.json";
-const RECENT_CONTEXT_MESSAGES = 12;
-const MAX_CONTEXT_SUMMARY_LENGTH = 8000;
 const CREATIVE_RUN_NOTIFY_CHANNEL = "vozeb_pro_run_events";
 
 export async function createPostgresRunBundle<T extends AgentRunBase>(userId: string, input: CreateRunBundleInput<T>) {
@@ -84,8 +82,9 @@ export async function createPostgresRunBundle<T extends AgentRunBase>(userId: st
         await client.query(
             `INSERT INTO generation_tasks (
                 id, user_id, task_type, status, payload, created_at, updated_at, expires_at,
-                conversation_id, run_id, surface, project_id, client_request_id
-             ) VALUES ($1, $2, 'agent', 'pending', $3::jsonb, $4, $4, $5, $6, $1, $7, $8, $9)`,
+                conversation_id, run_id, surface, project_id, client_request_id,
+                execution_phase, next_poll_at, last_upstream_status
+             ) VALUES ($1, $2, 'agent', 'pending', $3::jsonb, $4, $4, $5, $6, $1, $7, $8, $9, 'created', $4, 'created')`,
             [input.run.id, userId, JSON.stringify(input.run), new Date(now), new Date(now + input.ttlMs), conversation.id, input.run.surface, input.run.projectId || null, input.run.clientRequestId],
         );
         const eventResult = await client.query("INSERT INTO creative_run_events (run_id, type, data, created_at) VALUES ($1, 'run.created', NULL, $2) RETURNING *", [input.run.id, new Date(now)]);
@@ -293,6 +292,9 @@ export function taskRecord<T extends AgentRunBase>(run: T, ttlMs: number): Store
         surface: run.surface,
         projectId: run.projectId,
         clientRequestId: run.clientRequestId,
+        executionPhase: "created",
+        nextPollAt: run.createdAt,
+        lastUpstreamStatus: "created",
     };
 }
 
@@ -413,7 +415,7 @@ export function normalizeRuntimeDb(value: RuntimeFileDatabase): RuntimeFileDatab
             ? value.conversations.map((item) => ({
                   ...item,
                   source: normalizeCreativeConversationSource(item.source) || creativeConversationSourceForSurface(item.surface),
-                  contextSummary: cleanText(item.contextSummary, MAX_CONTEXT_SUMMARY_LENGTH),
+                  contextSummary: typeof item.contextSummary === "string" ? item.contextSummary.trim() : "",
                   contextSummaryThroughSequence: Math.max(0, Number(item.contextSummaryThroughSequence) || 0),
               }))
             : [],
@@ -429,30 +431,25 @@ export function emptyRuntimeDb(): RuntimeFileDatabase {
 
 export function prepareConversationContext(conversation: CreativeConversation, messages: CreativeMessage[]) {
     const ordered = messages.filter((item) => item.content.trim()).sort((a, b) => a.sequence - b.sequence);
-    const recentMessages = ordered.slice(-RECENT_CONTEXT_MESSAGES);
-    const summaryCutoff = recentMessages.length ? recentMessages[0].sequence - 1 : ordered.at(-1)?.sequence || 0;
-    const additions = ordered.filter((item) => item.sequence > conversation.contextSummaryThroughSequence && item.sequence <= summaryCutoff);
-    if (!additions.length)
-        return {
-            conversation,
-            context: { summary: conversation.contextSummary, summaryThroughSequence: conversation.contextSummaryThroughSequence, recentMessages },
-        };
-    const summary = trimContextSummary([conversation.contextSummary, ...additions.map(conversationSummaryLine)].filter(Boolean).join("\n"));
-    const nextConversation = { ...conversation, contextSummary: summary, contextSummaryThroughSequence: additions.at(-1)!.sequence };
-    return { conversation: nextConversation, context: { summary, summaryThroughSequence: nextConversation.contextSummaryThroughSequence, recentMessages } };
+    return {
+        conversation,
+        context: {
+            summary: conversation.contextSummary,
+            summaryThroughSequence: conversation.contextSummaryThroughSequence,
+            recentMessages: ordered,
+        },
+    };
 }
 
 export function conversationSummaryLine(message: CreativeMessage) {
     const role = message.role === "user" ? "用户" : "助手";
-    const content = cleanText(message.content.replace(/\s+/g, " "), 600);
-    const assetIds = Array.isArray(message.metadata.assetIds) ? message.metadata.assetIds.filter((item): item is string => typeof item === "string" && Boolean(item.trim())).slice(0, 10) : [];
+    const content = message.content.replace(/\s+/g, " ").trim();
+    const assetIds = Array.isArray(message.metadata.assetIds) ? message.metadata.assetIds.filter((item): item is string => typeof item === "string" && Boolean(item.trim())) : [];
     return `${role}：${content}${assetIds.length ? `；产物：${assetIds.join("、")}` : ""}`;
 }
 
 export function trimContextSummary(value: string) {
-    const text = value.trim();
-    if (text.length <= MAX_CONTEXT_SUMMARY_LENGTH) return text;
-    return `较早内容已压缩。\n${text.slice(-MAX_CONTEXT_SUMMARY_LENGTH)}`;
+    return value.trim();
 }
 
 export function cleanText(value: unknown, max: number) {

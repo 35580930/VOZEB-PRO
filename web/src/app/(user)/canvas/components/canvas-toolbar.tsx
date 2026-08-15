@@ -1,11 +1,12 @@
 import type { CSSProperties, MouseEvent as ReactMouseEvent, ReactNode, RefObject } from "react";
 import { useEffect, useRef, useState } from "react";
 import { Button, Segmented, Switch } from "antd";
-import { CircleDot, Eraser, FolderOpen, Globe2, Grid2x2, Hand, Image as ImageIcon, Info, Moon, Music2, Palette, Redo2, Settings2, Square, Sun, Trash2, Type, Undo2, Upload, Video } from "lucide-react";
+import { CircleDot, Eraser, FolderOpen, Globe2, Grid2x2, Hand, Image as ImageIcon, Info, Moon, MousePointer2, Music2, Palette, Redo2, Settings2, Square, Sun, Trash2, Type, Undo2, Upload, Video } from "lucide-react";
 
 import { canvasThemes, type CanvasBackgroundMode, type CanvasColorTheme, type CanvasTheme } from "@/lib/canvas-theme";
 import { useThemeStore } from "@/stores/use-theme-store";
 import { AnimatedThemeToggler } from "@/components/ui/animated-theme-toggler";
+import type { CanvasInteractionMode } from "./canvas-surface";
 
 export function CanvasToolbar({
     selectedCount,
@@ -13,6 +14,7 @@ export function CanvasToolbar({
     canRedo,
     agentOpen,
     backgroundMode,
+    interactionMode,
     showImageInfo,
     onAddImage,
     onAddPanorama,
@@ -25,16 +27,17 @@ export function CanvasToolbar({
     onUpload,
     onDelete,
     onClear,
-    onDeselect,
+    onInteractionModeChange,
     onBackgroundModeChange,
     onShowImageInfoChange,
-    onOpenMyAssets,
+    onOpenAssets,
 }: {
     selectedCount: number;
     canUndo: boolean;
     canRedo: boolean;
     agentOpen?: boolean;
     backgroundMode: CanvasBackgroundMode;
+    interactionMode: CanvasInteractionMode;
     showImageInfo: boolean;
     onAddImage: () => void;
     onAddPanorama: () => void;
@@ -47,10 +50,10 @@ export function CanvasToolbar({
     onUpload: () => void;
     onDelete: () => void;
     onClear: () => void;
-    onDeselect: () => void;
+    onInteractionModeChange: (mode: CanvasInteractionMode) => void;
     onBackgroundModeChange: (mode: CanvasBackgroundMode) => void;
     onShowImageInfoChange: (show: boolean) => void;
-    onOpenMyAssets: () => void;
+    onOpenAssets: () => void;
 }) {
     const wrapRef = useRef<HTMLDivElement>(null);
     const colorTheme = useThemeStore((state) => state.theme);
@@ -60,7 +63,7 @@ export function CanvasToolbar({
     const [tipX, setTipX] = useState(0);
     const [appearanceOpen, setAppearanceOpen] = useState(false);
     const [panelX, setPanelX] = useState(0);
-    const dockStyle = { background: theme.toolbar.panel, borderColor: theme.toolbar.border, color: theme.toolbar.item, boxShadow: colorTheme === "dark" ? "0 18px 45px rgba(0,0,0,.32)" : "0 16px 40px rgba(28,25,23,.12)" };
+    const dockStyle = { background: theme.toolbar.panel, borderColor: theme.toolbar.border, color: theme.toolbar.item, boxShadow: colorTheme === "dark" ? "0 10px 30px rgba(0,0,0,.24)" : "0 10px 28px rgba(15,23,42,.08)" };
     const hoverStyle = { background: theme.toolbar.itemHover, color: theme.toolbar.activeText };
     const activeStyle = { background: theme.toolbar.activeBg, color: theme.toolbar.activeText };
     const tip = hovered ? toolLabel(hovered) : "";
@@ -81,11 +84,22 @@ export function CanvasToolbar({
             {tip ? <DockTip label={tip} x={tipX} theme={theme} /> : null}
             <div
                 ref={wrapRef}
-                className={`canvas-toolbar-dock thin-scrollbar pointer-events-auto flex h-14 max-w-full items-center gap-1 overflow-x-auto rounded-xl border px-2 shadow-lg backdrop-blur [&>*]:shrink-0 ${agentOpen ? "is-agent-open" : ""}`}
+                className={`canvas-toolbar-dock thin-scrollbar pointer-events-auto flex h-[52px] max-w-full items-center gap-1 overflow-x-auto rounded-lg border px-2 backdrop-blur [&>*]:shrink-0 ${agentOpen ? "is-agent-open" : ""}`}
                 style={dockStyle}
             >
-                <ToolbarButton id="tool-hand" label="移动/选择" active={!selectedCount} hovered={hovered} activeStyle={activeStyle} hoverStyle={hoverStyle} wrapRef={wrapRef} onTipX={setTipX} onHover={setHovered} onClick={onDeselect}>
-                    <Hand className="size-4.5" />
+                <ToolbarButton
+                    id={interactionMode === "pan" ? "tool-pan-mode" : "tool-select-mode"}
+                    label={interactionMode === "pan" ? "切换到框选模式" : "切换到小手模式"}
+                    active
+                    hovered={hovered}
+                    activeStyle={activeStyle}
+                    hoverStyle={hoverStyle}
+                    wrapRef={wrapRef}
+                    onTipX={setTipX}
+                    onHover={setHovered}
+                    onClick={() => onInteractionModeChange(interactionMode === "pan" ? "select" : "pan")}
+                >
+                    {interactionMode === "pan" ? <Hand className="size-4.5" /> : <MousePointer2 className="size-4.5" />}
                 </ToolbarButton>
                 <ToolbarButton id="tool-undo" label="撤销" disabled={!canUndo} hovered={hovered} hoverStyle={hoverStyle} wrapRef={wrapRef} onTipX={setTipX} onHover={setHovered} onClick={onUndo}>
                     <Undo2 className="size-4.5" />
@@ -116,7 +130,7 @@ export function CanvasToolbar({
                     <Upload className="size-4.5" />
                 </ToolbarButton>
                 <Divider theme={theme} />
-                <ToolbarButton id="tool-assets" label="我的素材" hovered={hovered} hoverStyle={hoverStyle} wrapRef={wrapRef} onTipX={setTipX} onHover={setHovered} onClick={onOpenMyAssets}>
+                <ToolbarButton id="tool-assets" label="资产" hovered={hovered} hoverStyle={hoverStyle} wrapRef={wrapRef} onTipX={setTipX} onHover={setHovered} onClick={onOpenAssets}>
                     <FolderOpen className="size-4.5" />
                 </ToolbarButton>
                 <ToolbarButton
@@ -269,7 +283,7 @@ function Divider({ theme }: { theme: CanvasTheme }) {
 function CanvasThemeButton({ colorTheme, targetTheme, onThemeChange, children }: { colorTheme: CanvasColorTheme; targetTheme: CanvasColorTheme; onThemeChange: (theme: CanvasColorTheme) => void; children: ReactNode }) {
     const theme = canvasThemes[colorTheme];
     const active = colorTheme === targetTheme;
-    const activeStyle = colorTheme === "light" ? { background: "#111111", color: "#ffffff" } : { background: theme.toolbar.activeBg, color: theme.toolbar.activeText };
+    const activeStyle = { background: theme.node.action, color: theme.node.actionText };
 
     return (
         <AnimatedThemeToggler
@@ -295,7 +309,8 @@ function DockTip({ label, x, theme }: { label: string; x: number; theme: CanvasT
 }
 
 function toolLabel(id: string) {
-    if (id === "tool-hand") return "移动/选择";
+    if (id === "tool-pan-mode") return "小手模式 · 拖动画布";
+    if (id === "tool-select-mode") return "框选模式 · 拖框选择";
     if (id === "tool-undo") return "撤销";
     if (id === "tool-redo") return "重做";
     if (id === "tool-text") return "文本";
@@ -305,7 +320,7 @@ function toolLabel(id: string) {
     if (id === "tool-audio") return "音频";
     if (id === "tool-config") return "生成配置";
     if (id === "tool-upload") return "上传素材";
-    if (id === "tool-assets") return "我的素材";
+    if (id === "tool-assets") return "资产";
     if (id === "tool-style") return "画布外观";
     if (id === "tool-delete") return "删除选中";
     if (id === "tool-clear") return "清空画布";

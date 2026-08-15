@@ -26,16 +26,14 @@ export async function finalizeBillingOrderRefund(input: BillingRefundFinalizatio
         if (order.status !== "refunding") throw new BillingInputError("退款状态已变化，请刷新后重试", 409);
         if (!order.userId) throw new BillingInputError("订单没有绑定用户", 409);
 
-        const payments = await repos.billing.listPayments({ orderId: order.id, page: 1, pageSize: 100 });
-        const payment = payments.items.find((item) => item.id === input.paymentId) || payments.items.find((item) => item.status === "succeeded" || item.status === "refunded");
+        const payment = await repos.billing.findOrderPayment({ orderId: order.id, preferredPaymentId: input.paymentId, statuses: ["succeeded", "refunded"] });
         const user = await repos.users.getById(order.userId);
         if (!user) throw new BillingInputError("订单用户不存在", 404);
         const now = new Date().toISOString();
         await refundBillingOrderCoupon(client, order, now);
 
         const refundedPayment = payment ? await markPaymentRefunded(payment, input, now, repos.billing.updatePaymentState) : undefined;
-        const assignments = order.productKind === "plan" ? await repos.billing.listPlanAssignments({ userId: order.userId, source: "order", page: 1, pageSize: 100 }) : undefined;
-        const assignment = assignments?.items.find((item) => item.sourceId === order.id);
+        const assignment = order.productKind === "plan" ? await repos.billing.getPlanAssignmentBySource("order", order.id) : null;
         const canceledAssignment = assignment
             ? await repos.billing.updatePlanAssignment(assignment.id, {
                   status: "canceled",

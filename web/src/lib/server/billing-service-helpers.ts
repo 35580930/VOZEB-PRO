@@ -29,13 +29,13 @@ export function isAutomaticallyExpiredOrder(order: BillingOrderRecord) {
 
 export async function buildPaidOrderResult(order: BillingOrderRecord, db?: QueryExecutor) {
     const repos = createPostgresRepositories(db);
-    const payments = await repos.billing.listPayments({ orderId: order.id, page: 1, pageSize: 1, status: "succeeded" });
-    const assignments = order.productKind === "plan" ? await repos.billing.listPlanAssignments({ source: "order", userId: order.userId, page: 1, pageSize: 1 }) : { items: [] };
+    const payment = await repos.billing.findOrderPayment({ orderId: order.id, statuses: ["succeeded"] });
+    const assignment = order.productKind === "plan" ? await repos.billing.getPlanAssignmentBySource("order", order.id) : null;
     const user = order.userId ? await repos.users.getById(order.userId) : null;
     return {
         order,
-        payment: payments.items[0],
-        assignment: assignments.items.find((item) => item.sourceId === order.id),
+        payment: payment || undefined,
+        assignment: assignment || undefined,
         user,
         pointsGranted: 0,
     };
@@ -43,13 +43,13 @@ export async function buildPaidOrderResult(order: BillingOrderRecord, db?: Query
 
 export async function buildRefundedOrderResult(order: BillingOrderRecord, db?: QueryExecutor) {
     const repos = createPostgresRepositories(db);
-    const payments = await repos.billing.listPayments({ orderId: order.id, page: 1, pageSize: 1, status: "refunded" });
-    const assignments = order.productKind === "plan" ? await repos.billing.listPlanAssignments({ source: "order", userId: order.userId, page: 1, pageSize: 1 }) : { items: [] };
+    const payment = await repos.billing.findOrderPayment({ orderId: order.id, statuses: ["refunded"] });
+    const assignment = order.productKind === "plan" ? await repos.billing.getPlanAssignmentBySource("order", order.id) : null;
     const user = order.userId ? await repos.users.getById(order.userId) : null;
     return {
         order,
-        payment: payments.items[0],
-        assignment: assignments.items.find((item) => item.sourceId === order.id),
+        payment: payment || undefined,
+        assignment: assignment || undefined,
         user,
         pointsReversed: 0,
     };

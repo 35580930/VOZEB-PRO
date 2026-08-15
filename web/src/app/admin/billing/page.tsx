@@ -5,8 +5,10 @@ import { ArrowLeft, ReceiptText } from "lucide-react";
 
 import { AuthUserHydrator } from "@/components/auth/auth-user-hydrator";
 import { UserStatusActions } from "@/components/layout/user-status-actions";
+import { ADMIN_BILLING_TABS, resolveAdminBillingTab, type AdminBillingTab } from "@/lib/admin-permissions";
 import { getAuthenticatedPageAccess } from "@/lib/server/page-access";
 import { getPaymentConfigSummary } from "@/lib/server/payment-config-status";
+import { getTrustedProxyHops } from "@/lib/server/trusted-proxy";
 
 import { BillingOperations } from "./components/billing-operations";
 
@@ -14,22 +16,19 @@ type AdminBillingPageProps = {
     searchParams?: Promise<Record<string, string | string[] | undefined>>;
 };
 
-type BillingTab = "orders" | "products" | "promotions" | "coupons" | "payments";
-
-const billingTabs = new Set<BillingTab>(["orders", "products", "promotions", "coupons", "payments"]);
-
 export default async function AdminBillingPage({ searchParams }: AdminBillingPageProps) {
     const params = searchParams ? await searchParams : {};
-    const initialTab = parseBillingTab(params.tab);
+    const requestedTab = parseBillingTab(params.tab);
     const access = await getAuthenticatedPageAccess();
     if (!access.user) {
         if (!access.install.database.healthy || access.install.firstAdminRequired) redirect("/install");
         redirect("/login?next=/admin/billing");
     }
     const currentUser = access.user;
-    if (currentUser.role !== "admin") redirect("/");
+    const initialTab = resolveAdminBillingTab(currentUser, requestedTab);
+    if (!initialTab) redirect("/");
 
-    const paymentConfig = await getPaymentConfigSummary(await resolveRequestOrigin());
+    const paymentConfig = initialTab === "payments" ? await getPaymentConfigSummary(await resolveRequestOrigin()) : undefined;
 
     return (
         <AuthUserHydrator
@@ -41,11 +40,13 @@ export default async function AdminBillingPage({ searchParams }: AdminBillingPag
                 displayName: currentUser.displayName,
                 bio: currentUser.bio,
                 role: currentUser.role,
+                adminPermissions: currentUser.adminPermissions,
                 status: currentUser.status,
                 planId: currentUser.planId,
                 planName: currentUser.planName,
                 hasActivePlan: currentUser.hasActivePlan,
                 pointsBalance: currentUser.pointsBalance,
+                mfaEnabled: currentUser.mfaEnabled,
             }}
         >
             <main className="admin-console-page app-scroll-page bg-white text-stone-950 dark:bg-stone-950 dark:text-stone-100">
@@ -88,14 +89,15 @@ export default async function AdminBillingPage({ searchParams }: AdminBillingPag
     );
 }
 
-function parseBillingTab(value: string | string[] | undefined): BillingTab {
+function parseBillingTab(value: string | string[] | undefined): AdminBillingTab {
     const tab = Array.isArray(value) ? value[0] : value;
-    return billingTabs.has(tab as BillingTab) ? (tab as BillingTab) : "orders";
+    return ADMIN_BILLING_TABS.includes(tab as AdminBillingTab) ? (tab as AdminBillingTab) : "orders";
 }
 
 async function resolveRequestOrigin() {
     const requestHeaders = await headers();
-    const host = requestHeaders.get("x-forwarded-host") || requestHeaders.get("host") || "localhost:3000";
-    const protocol = requestHeaders.get("x-forwarded-proto") || (host.startsWith("localhost") || host.startsWith("127.0.0.1") ? "http" : "https");
+    const trustForwarded = getTrustedProxyHops() > 0;
+    const host = (trustForwarded ? requestHeaders.get("x-forwarded-host")?.split(",")[0]?.trim() : "") || requestHeaders.get("host") || "localhost:3000";
+    const protocol = (trustForwarded ? requestHeaders.get("x-forwarded-proto")?.split(",")[0]?.trim() : "") || (host.startsWith("localhost") || host.startsWith("127.0.0.1") ? "http" : "https");
     return `${protocol}://${host}`;
 }

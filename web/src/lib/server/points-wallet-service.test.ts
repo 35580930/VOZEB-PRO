@@ -244,6 +244,48 @@ describe("points wallet service", () => {
         expect((await readAuthDb()).quotaUsage).toEqual([expect.objectContaining({ usageKind: "text", units: 1, pointsSpent: 0 })]);
     });
 
+    it("enforces the configured per-task cost guard while entitlements are disabled", async () => {
+        await seedWallet({ permanentPoints: 100, dailyPoints: 0, entitlementsEnabled: false, generationCostControl: { maxPointsPerTask: 6 } });
+
+        await expect(consume("cost-task-rejected", 7, "2026-07-22T08:00:00+08:00")).rejects.toThrow("当前任务成本超过平台保护上限");
+        expect((await readAuthDb()).pointRecords).toHaveLength(0);
+    });
+
+    it("aggregates the configured daily user cost across generation capabilities", async () => {
+        await seedWallet({ permanentPoints: 100, dailyPoints: 0, entitlementsEnabled: false, generationCostControl: { dailyUserPointSpend: 6 } });
+        await consume("cost-user-image", 4, "2026-07-22T08:00:00+08:00");
+
+        await expect(consumePoints({ userId: "user-one", amount: 3, units: 1, usageKind: "text", model: "test-text-model", description: "文本调用", idempotencyKey: "cost-user-text", now: at("2026-07-22T09:00:00+08:00") })).rejects.toThrow(
+            "今日个人生成成本保护已触发",
+        );
+        expect((await readAuthDb()).quotaUsage).toEqual([expect.objectContaining({ usageKind: "image", pointsSpent: 4 })]);
+    });
+
+    it("shares the configured daily total cost across users and releases refunded cost", async () => {
+        await seedWallet({ permanentPoints: 100, dailyPoints: 0, entitlementsEnabled: false, generationCostControl: { dailyTotalPointSpend: 6 } });
+        const db = await readAuthDb();
+        db.users.push({ ...user(100, "pro"), id: "user-two", accountId: "0002", username: "wallet-user-two" });
+        await writeAuthDb(db);
+        const first = await consume("cost-total-first", 4, "2026-07-22T08:00:00+08:00");
+        const secondInput = { userId: "user-two", amount: 3, units: 1, usageKind: "video" as const, model: "test-video-model", description: "视频调用", now: at("2026-07-22T09:00:00+08:00") };
+
+        await expect(consumePoints({ ...secondInput, idempotencyKey: "cost-total-rejected" })).rejects.toThrow("平台今日生成成本保护已触发");
+        await refundPoints({ userId: "user-one", sourceRecordId: first.record.id, idempotencyKey: "cost-total-refund", usageKind: "image", units: 1, description: "图片失败退款", now: at("2026-07-22T09:30:00+08:00") });
+        await expect(consumePoints({ ...secondInput, idempotencyKey: "cost-total-after-refund" })).resolves.toMatchObject({ applied: true });
+    });
+
+    it("applies the plan daily point limit across all generation capabilities", async () => {
+        await seedWallet({ permanentPoints: 100, dailyPoints: 0 });
+        const db = await readAuthDb();
+        db.settings.entitlements.plans.find((item) => item.id === "pro")!.limits.dailyPointSpend = 6;
+        await writeAuthDb(db);
+        await consume("plan-total-image", 4, "2026-07-22T08:00:00+08:00");
+
+        await expect(consumePoints({ userId: "user-one", amount: 3, units: 1, usageKind: "text", model: "test-text-model", description: "文本调用", idempotencyKey: "plan-total-text", now: at("2026-07-22T09:00:00+08:00") })).rejects.toThrow(
+            "今日积分消费额度不足",
+        );
+    });
+
     it("rejects a credit idempotency key owned by another record type", async () => {
         await seedWallet({ permanentPoints: 50, dailyPoints: 0 });
         await consume("shared-key", 5, "2026-07-22T08:00:00+08:00");
@@ -268,6 +310,8 @@ async function seedWallet({
     dailyImages = 0,
     dailyText = 0,
     planId = "pro",
+    entitlementsEnabled = true,
+    generationCostControl = {},
 }: {
     permanentPoints: number;
     dailyPoints: number;
@@ -276,15 +320,18 @@ async function seedWallet({
     dailyImages?: number;
     dailyText?: number;
     planId?: "free" | "pro";
+    entitlementsEnabled?: boolean;
+    generationCostControl?: Partial<AuthDatabase["settings"]["generationCostControl"]>;
 }) {
     const db = structuredClone(emptyDb());
     db.settings.freeDailyPointsEnabled = freeDailyPointsEnabled;
     db.settings.freeDailyPoints = freeDailyPoints;
     db.settings.entitlements = {
-        enabled: true,
+        enabled: entitlementsEnabled,
         defaultPlanId: "free",
         plans: [plan({ id: "free", dailyPoints: 0, dailyImages: 0, dailyText: 0 }), plan({ id: "pro", dailyPoints, dailyImages, dailyText })],
     };
+    db.settings.generationCostControl = { ...db.settings.generationCostControl, ...generationCostControl };
     db.users.push(user(permanentPoints, planId));
     await writeAuthDb(db);
 }
@@ -297,6 +344,7 @@ function user(pointsBalance: number, planId: "free" | "pro"): StoredUser {
         displayName: "钱包用户",
         bio: "",
         role: "user",
+        adminPermissions: [],
         status: "active",
         planId,
         pointsBalance,

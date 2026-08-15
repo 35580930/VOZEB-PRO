@@ -34,7 +34,7 @@ describe("normalizePointAmount allows negative values", () => {
 
     it("creates new users without permanent signup points", async () => {
         await createAdmin();
-        const user = await createUser({ username: "new-user", password: "password123" });
+        const user = await createUser({ username: "new-user", password: "password123", policyAccepted: true });
 
         expect(user.permanentPointsBalance).toBe(0);
         expect(user.pointsBalance).toBe(0);
@@ -42,7 +42,7 @@ describe("normalizePointAmount allows negative values", () => {
 
     it("persists a negative balance set by admin", async () => {
         const admin = await createAdmin();
-        const user = await createUser({ username: "tester", password: "password123" });
+        const user = await createUser({ username: "tester", password: "password123", policyAccepted: true });
 
         await updateUserByAdmin(admin.id, user.id, { pointsBalance: -50 });
 
@@ -53,14 +53,14 @@ describe("normalizePointAmount allows negative values", () => {
 
     it("rejects refunds without an original consumption record", async () => {
         await createAdmin();
-        const user = await createUser({ username: "tester", password: "password123" });
+        const user = await createUser({ username: "tester", password: "password123", policyAccepted: true });
 
         await expect(refundUserPoints(user.id, "test-model", 10, "api", 1)).rejects.toThrow("退款缺少原消费流水");
     });
 
     it("keeps a manually adjusted balance at 0", async () => {
         const admin = await createAdmin();
-        const user = await createUser({ username: "tester", password: "password123" });
+        const user = await createUser({ username: "tester", password: "password123", policyAccepted: true });
 
         await updateUserByAdmin(admin.id, user.id, { pointsBalance: 0 });
 
@@ -70,7 +70,7 @@ describe("normalizePointAmount allows negative values", () => {
 
     it("correctly adds refund to zero balance", async () => {
         const admin = await createAdmin();
-        const user = await createUser({ username: "tester", password: "password123" });
+        const user = await createUser({ username: "tester", password: "password123", policyAccepted: true });
 
         await updateUserByAdmin(admin.id, user.id, { pointsBalance: 50 });
         const consumption = await consumeUserPoints(user.id, "test-model", 50, "api", "zero-balance:consume");
@@ -82,7 +82,7 @@ describe("normalizePointAmount allows negative values", () => {
 
     it("charges a logical text model using its configured upstream alias price", async () => {
         const admin = await createAdmin();
-        const user = await createUser({ username: "tester", password: "password123" });
+        const user = await createUser({ username: "tester", password: "password123", policyAccepted: true });
         await updateUserByAdmin(admin.id, user.id, { pointsBalance: 10 });
         await setAuthSettings({
             systemChannels: [{ id: "text-channel", name: "文本渠道", baseUrl: "https://api.example.com/v1", apiKey: "", apiFormat: "openai", models: ["vendor-text"], enabled: true }],
@@ -97,7 +97,7 @@ describe("normalizePointAmount allows negative values", () => {
 
     it("allows a text model configured with zero points", async () => {
         await createAdmin();
-        const user = await createUser({ username: "tester", password: "password123" });
+        const user = await createUser({ username: "tester", password: "password123", policyAccepted: true });
         await setAuthSettings({ modelPointCosts: { "free-text": 0 } });
 
         const consumption = await consumeUserPoints(user.id, "free-text", 1, "text", "free-text-call");

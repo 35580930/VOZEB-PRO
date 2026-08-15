@@ -2,15 +2,18 @@ import { generationModelId } from "@/lib/server/generation-channel";
 import { recordGenerationTaskLogResult } from "@/lib/server/generation-log-task-service";
 import type { ImageTask } from "@/lib/server/image-task-store";
 
+import { resolveResultSize } from "./image-task-size";
+
 export function stableMediaUrl(value?: string) {
     return value && !value.startsWith("data:") && !value.startsWith("blob:") ? value : "";
 }
 
 export async function writeImageGenerationLog(task: ImageTask, status: "success" | "failed", result: Array<{ dataUrl?: string; remoteUrl?: string }> | { dataUrl?: string; remoteUrl?: string } | string, durationMs: number, error?: string) {
     const results = Array.isArray(result) ? result : [result];
+    const targetSize = resolveResultSize(task.config.quality, task.config.size || "auto");
     const assets = results.flatMap((item) => {
         const resultUrl = typeof item === "string" ? item : item.remoteUrl || item.dataUrl || "";
-        return resultUrl ? [{ type: "image" as const, url: resultUrl, remoteUrl: typeof item === "string" ? undefined : item.remoteUrl, targetSize: task.config.size }] : [];
+        return resultUrl ? [{ type: "image" as const, url: resultUrl, remoteUrl: typeof item === "string" ? undefined : item.remoteUrl, targetSize }] : [];
     });
     return recordGenerationTaskLogResult({
         logId: task.generationLogId,

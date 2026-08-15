@@ -5,6 +5,7 @@ import { ArrowLeft, ArrowRight, Check, ChevronRight, Circle, Database, KeyRound,
 
 import { AuthUserHydrator } from "@/components/auth/auth-user-hydrator";
 import { UserStatusActions } from "@/components/layout/user-status-actions";
+import { hasAnyAdminPermission } from "@/lib/admin-permissions";
 import { getAdminSetupSummary, type AdminSetupAccent, type AdminSetupStepStatus } from "@/lib/server/admin-setup-status";
 import { getAuthenticatedPageAccess } from "@/lib/server/page-access";
 
@@ -26,7 +27,7 @@ export default async function AdminSetupPage() {
         redirect("/login?next=/admin/setup");
     }
     const currentUser = access.user;
-    if (currentUser.role !== "admin") redirect("/");
+    if (!hasAnyAdminPermission(currentUser, ["system.manage", "upstream.manage", "commerce.manage", "billing.manage"])) redirect("/");
 
     const setup = await getAdminSetupSummary();
     const nextStep = setup.steps.find((step) => step.status !== "done") || setup.steps[setup.steps.length - 1];
@@ -41,11 +42,13 @@ export default async function AdminSetupPage() {
                 displayName: currentUser.displayName,
                 bio: currentUser.bio,
                 role: currentUser.role,
+                adminPermissions: currentUser.adminPermissions,
                 status: currentUser.status,
                 planId: currentUser.planId,
                 planName: currentUser.planName,
                 hasActivePlan: currentUser.hasActivePlan,
                 pointsBalance: currentUser.pointsBalance,
+                mfaEnabled: currentUser.mfaEnabled,
             }}
         >
             <main className="admin-console-page app-scroll-page bg-white text-zinc-950 dark:bg-zinc-950 dark:text-zinc-100">
@@ -67,7 +70,7 @@ export default async function AdminSetupPage() {
                             <div className="flex flex-wrap items-center gap-2">
                                 <span className="inline-flex items-center gap-2 rounded-md border border-zinc-200 bg-zinc-50 px-3 py-1.5 text-sm font-medium text-zinc-700 dark:border-zinc-800 dark:bg-zinc-900 dark:text-zinc-300">
                                     <Sparkles className="size-4" />
-                                    MOCREAI
+                                    {setup.siteTitle}
                                 </span>
                                 <span className="rounded-md border border-zinc-200 bg-white px-3 py-1.5 text-sm font-medium text-zinc-500 dark:border-zinc-800 dark:bg-zinc-950 dark:text-zinc-400">安装后初始化中心</span>
                             </div>

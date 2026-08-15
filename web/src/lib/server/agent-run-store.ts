@@ -1,20 +1,25 @@
 import { nanoid } from "nanoid";
 import type { CreativeFoundation, CreativeReview } from "@/lib/creative-agent-contract";
-import type { CreativeProjectHandoffPlan, CreativeRunRequest, CreativeSurface } from "@/lib/creative-runtime-contract";
+import { CreativeRuntimeInputError, type CreativeGenerationPreferences, type CreativeProjectHandoffPlan, type CreativeRunRequest, type CreativeSurface } from "@/lib/creative-runtime-contract";
 import { extractImageSizeFromPrompt } from "@/lib/image-size";
-import { createCreativeRunBundle, getCreativeRunByClientRequestId, mutateCreativeRun } from "./creative-runtime-store";
-import { getStoredGenerationTask, listStoredGenerationTasks } from "./generation-task-store";
+import { videoFrameAssetIds, type VideoReferenceRole } from "@/lib/video-reference-contract";
+import { createCreativeRunBundle, getCreativeAssetsByIds, getCreativeRunByClientRequestId, mutateCreativeRun } from "./creative-runtime-store";
+import { getStoredGenerationTask, queryStoredGenerationTasks } from "./generation-task-store";
 import { cancelledRunCanvasOps, taskCanvasEventOps } from "./agent-run-canvas-ops";
 import { agentRequirementAcknowledgement } from "@/lib/agent-requirement-acknowledgement";
 import { agentTaskCompletionMessage } from "./agent-run-messages";
+import type { AgentRunPlannerAudit } from "./agent-run-audit";
+import { normalizeAgentRunCanvasSnapshot, selectedCanvasNodeIds } from "./agent-run-canvas-snapshot";
 
 export type AgentRunStatus = "planning" | "running" | "paused" | "completed" | "failed" | "cancelled";
 export type AgentRunReviewStatus = "review_pending" | "reviewing" | "review_completed" | "review_unavailable";
 export type AgentRunReference = {
     assetId?: string;
+    nodeId?: string;
     sourceTaskId?: string;
     url: string;
     type: "image" | "video" | "audio";
+    role?: VideoReferenceRole;
 };
 export type AgentRunChildTask = {
     id: string;
@@ -33,6 +38,7 @@ export type AgentRunTask = {
     title: string;
     type: "text" | "image" | "video" | "audio";
     model?: string;
+    optimizedPrompt?: string;
     prompt: string;
     count: number;
     ratio?: string;
@@ -40,6 +46,9 @@ export type AgentRunTask = {
     seconds?: number;
     voice?: string;
     format?: string;
+    generateAudio?: boolean;
+    watermark?: boolean;
+    speed?: number;
     dependencies: string[];
     status: "ready" | "running" | "completed" | "failed" | "cancelled";
     attempts: number;
@@ -60,11 +69,13 @@ export type AgentRun = {
     inputMessageId: string;
     assistantMessageId: string;
     prompt: string;
+    publicPrompt?: string;
     snapshot?: unknown;
     referencedAssetIds: string[];
     selectedSkillIds?: string[];
     requestedModelIds?: string[];
     requestedImageSize?: string;
+    generationPreferences?: CreativeGenerationPreferences;
     assetIds: string[];
     status: AgentRunStatus;
     executionId?: string;
@@ -76,9 +87,22 @@ export type AgentRun = {
     reviewed: boolean;
     reviewStatus?: AgentRunReviewStatus;
     reviewAttempts?: number;
+    plannerContext?: AgentRunPlannerContextSummary;
+    plannerAudit?: AgentRunPlannerAudit;
+    cancellation?: AgentRunCancellation;
     timings?: AgentRunTimings;
     createdAt: number;
     updatedAt: number;
+};
+export type AgentRunCancellation = {
+    requestedAt: number;
+    pendingChildTaskIds: string[];
+    lastError?: string;
+};
+export type AgentRunPlannerContextSummary = {
+    serializedChars: number;
+    kept: { modelIds: string[]; skillIds: string[]; assetIds: string[]; recentMessageSequences: number[] };
+    omitted: { modelIds: string[]; skillIds: string[]; assetIds: string[]; recentMessageSequences: number[] };
 };
 export type AgentRunTimings = {
     requestAcceptedAt: number;
@@ -93,8 +117,10 @@ export type AgentRunTimings = {
 const TTL = 365 * 24 * 60 * 60 * 1000;
 
 export async function createAgentRun(userId: string, input: CreativeRunRequest) {
+    await assertVideoFrameAssets(userId, input);
     const now = Date.now();
     const conversationId = input.conversationId || `conversation-${nanoid()}`;
+    const snapshot = input.surface === "canvas" ? normalizeAgentRunCanvasSnapshot(input.snapshot, input.projectId) : input.snapshot;
     const run: AgentRun = {
         id: `agent-${nanoid()}`,
         userId,
@@ -105,11 +131,13 @@ export async function createAgentRun(userId: string, input: CreativeRunRequest) 
         inputMessageId: `message-${nanoid()}`,
         assistantMessageId: `message-${nanoid()}`,
         prompt: input.prompt,
-        snapshot: input.snapshot,
+        ...(input.publicPrompt ? { publicPrompt: input.publicPrompt } : {}),
+        snapshot,
         referencedAssetIds: input.assetIds,
         selectedSkillIds: input.skillIds,
         ...(input.modelIds.length ? { requestedModelIds: input.modelIds } : {}),
         requestedImageSize: extractImageSizeFromPrompt(input.prompt) || undefined,
+        ...(input.preferences ? { generationPreferences: input.preferences } : {}),
         assetIds: [],
         status: "planning",
         tasks: [],
@@ -118,24 +146,32 @@ export async function createAgentRun(userId: string, input: CreativeRunRequest) 
         createdAt: now,
         updatedAt: now,
     };
+    const publicPrompt = input.publicPrompt || input.prompt;
     return createCreativeRunBundle(userId, {
         run,
         conversationId: input.conversationId,
-        prompt: input.prompt,
-        title: input.prompt.slice(0, 48),
+        prompt: publicPrompt,
+        title: publicPrompt.slice(0, 48),
         assetIds: input.assetIds,
-        acknowledgement: agentRequirementAcknowledgement(input.prompt, input.surface, input.assetIds.length > 0 || selectedCanvasNodeIds(input.snapshot).length > 0),
+        acknowledgement: agentRequirementAcknowledgement(publicPrompt, input.surface, input.assetIds.length > 0 || (input.surface === "canvas" && selectedCanvasNodeIds(snapshot).length > 0)),
         ttlMs: TTL,
     });
 }
 
-function selectedCanvasNodeIds(snapshot: unknown) {
-    const ids = snapshot && typeof snapshot === "object" ? (snapshot as { selectedNodeIds?: unknown }).selectedNodeIds : undefined;
-    return Array.isArray(ids) ? ids.filter((id) => typeof id === "string" && id.trim()) : [];
+async function assertVideoFrameAssets(userId: string, input: CreativeRunRequest) {
+    const frameIds = videoFrameAssetIds(input.preferences?.video);
+    if (!frameIds.length) return;
+    const assets = await getCreativeAssetsByIds(frameIds, userId);
+    const byId = new Map(assets.map((asset) => [asset.id, asset]));
+    for (const id of frameIds) {
+        const asset = byId.get(id);
+        if (!asset || asset.userId !== userId || asset.status !== "ready") throw new CreativeRuntimeInputError("视频首尾帧图片不存在或已失效");
+        if (asset.type !== "image") throw new CreativeRuntimeInputError("视频首尾帧只能使用图片素材");
+    }
 }
 
 export const getAgentRun = (id: string) => getStoredGenerationTask<AgentRun>("agent", id);
-export const listAgentRuns = (userId: string, limit?: number) => listStoredGenerationTasks<AgentRun>("agent", userId, limit);
+export const listAgentRuns = (options: { userId: string; conversationId?: string; projectId?: string; surface?: CreativeSurface; statuses?: AgentRunStatus[]; limit?: number }) => queryStoredGenerationTasks<AgentRun>("agent", options);
 export async function getAgentRunByClientRequestId(userId: string, clientRequestId: string) {
     return getCreativeRunByClientRequestId<AgentRun>(userId, clientRequestId);
 }
@@ -149,7 +185,7 @@ export async function setAgentRunStatus(run: AgentRun, status: AgentRunStatus) {
             const tasks = status === "cancelled" ? cancelActiveTasks(current.tasks) : current.tasks;
             const ops = status === "cancelled" && current.surface === "canvas" ? cancelledRunCanvasOps(current.id, tasks) : [];
             return {
-                run: { ...current, status, tasks, executionId: undefined },
+                run: { ...current, status, tasks, executionId: undefined, ...(status === "cancelled" ? { cancellation: undefined } : {}) },
                 event: { type: `run.${status}`, ...(ops.length ? { data: { ops } } : {}) },
                 assistant: terminalAssistant(status),
             };
@@ -173,7 +209,12 @@ function cancelActiveTasks(tasks: AgentRunTask[]) {
 
 export async function updateAgentRunById(
     id: string,
-    patch: Partial<Pick<AgentRun, "status" | "executionId" | "tasks" | "foundation" | "projectHandoff" | "projectHandoffEmitted" | "review" | "reviewed" | "reviewStatus" | "reviewAttempts" | "assetIds" | "timings">>,
+    patch: Partial<
+        Pick<
+            AgentRun,
+            "status" | "executionId" | "tasks" | "foundation" | "projectHandoff" | "projectHandoffEmitted" | "review" | "reviewed" | "reviewStatus" | "reviewAttempts" | "plannerContext" | "plannerAudit" | "cancellation" | "assetIds" | "timings"
+        >
+    >,
     event?: { type: string; data?: unknown },
     allowedStatuses?: AgentRunStatus[],
     expectedExecutionId?: string,
@@ -242,7 +283,7 @@ export async function updateAgentRunTaskById(id: string, taskId: string, patch: 
 
 function resolveAgentTaskCountForEvent(task: AgentRunTask) {
     const count = Number(task.count);
-    return Number.isFinite(count) && count > 0 ? Math.min(10, Math.floor(count)) : 1;
+    return Number.isSafeInteger(count) && count > 0 ? Math.floor(count) : 1;
 }
 
 function mergeAgentTaskPatch(task: AgentRunTask, patch: Partial<AgentRunTask>): AgentRunTask {
@@ -262,7 +303,7 @@ function mergeChildTasks(current: AgentRunChildTask[], incoming: AgentRunChildTa
         const existing = merged.get(child.id);
         if (!existing || existing.status === "pending" || child.status !== "pending") merged.set(child.id, child);
     }
-    return Array.from(merged.values()).slice(0, 10);
+    return Array.from(merged.values());
 }
 
 function assistantUpdate(run: AgentRun, event?: { type: string; data?: unknown }) {

@@ -155,6 +155,22 @@ export async function getBillingOrder(orderId: string) {
     return requestBilling<{ order: BillingOrder }>(`/api/billing/orders/${encodeURIComponent(orderId)}`);
 }
 
+export function subscribeBillingOrder(orderId: string, onOrder: (order: BillingOrder) => void, onError: () => void) {
+    const source = new EventSource(`/api/billing/orders/${encodeURIComponent(orderId)}/events`);
+    source.onmessage = (event) => {
+        try {
+            const payload = JSON.parse(event.data) as { code?: number; data?: { order?: BillingOrder } | null };
+            if (payload.code !== 0 || !payload.data?.order) throw new Error("订单状态响应无效");
+            onOrder(payload.data.order);
+            if (payload.data.order.status !== "pending") source.close();
+        } catch {
+            onError();
+        }
+    };
+    source.onerror = onError;
+    return () => source.close();
+}
+
 export async function cancelBillingOrder(orderId: string) {
     return requestBilling<{ order: BillingOrder }>(`/api/billing/orders/${encodeURIComponent(orderId)}/cancel`, { method: "POST" });
 }
@@ -167,15 +183,20 @@ export async function createBillingOrder(input: { productId: string; provider: s
     });
 }
 
-export async function listBillingCoupons(input: { page?: number; pageSize?: number; status?: UserCouponStatus; productId?: string; quantity?: number } = {}) {
+export async function listBillingCoupons(input: { page?: number; pageSize?: number; status?: UserCouponStatus; productId?: string; quantity?: number; includeTemplates?: boolean; templatePage?: number; templatePageSize?: number } = {}) {
     const params = new URLSearchParams();
     if (input.page) params.set("page", String(input.page));
     if (input.pageSize) params.set("pageSize", String(input.pageSize));
     if (input.status) params.set("status", input.status);
     if (input.productId) params.set("productId", input.productId);
     if (input.quantity) params.set("quantity", String(input.quantity));
+    if (input.includeTemplates !== undefined) params.set("includeTemplates", String(input.includeTemplates));
+    if (input.templatePage) params.set("templatePage", String(input.templatePage));
+    if (input.templatePageSize) params.set("templatePageSize", String(input.templatePageSize));
     const query = params.toString();
-    return requestCommerce<{ coupons: UserCoupon[]; templates: CouponTemplate[]; total: number; page: number; pageSize: number }>(`/api/billing/coupons${query ? `?${query}` : ""}`);
+    return requestCommerce<{ coupons: UserCoupon[]; templates?: CouponTemplate[]; templatesTotal?: number; templatePage?: number; templatePageSize?: number; total: number; page: number; pageSize: number }>(
+        `/api/billing/coupons${query ? `?${query}` : ""}`,
+    );
 }
 
 export async function claimBillingCoupon(input: { templateId?: string; code?: string }) {

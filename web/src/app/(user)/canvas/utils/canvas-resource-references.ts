@@ -11,6 +11,14 @@ export type CanvasResourceReference = {
     label: string;
     title: string;
     previewUrl?: string;
+    storageKey?: string;
+    remoteUrl?: string;
+    serverUrl?: string;
+    mimeType?: string;
+    width?: number;
+    height?: number;
+    bytes?: number;
+    durationMs?: number;
     text?: string;
     active: boolean;
 };
@@ -71,6 +79,14 @@ function labelResourceNodes(nodes: CanvasNodeData[], active: boolean) {
                 label,
                 title: node.title || label,
                 previewUrl: node.metadata?.content,
+                storageKey: node.metadata?.storageKey,
+                remoteUrl: node.metadata?.remoteUrl,
+                serverUrl: node.metadata?.serverUrl,
+                mimeType: node.metadata?.mimeType,
+                width: node.metadata?.naturalWidth || node.width,
+                height: node.metadata?.naturalHeight || node.height,
+                bytes: node.metadata?.bytes,
+                durationMs: node.metadata?.durationMs,
                 text: node.type === CanvasNodeType.Text ? node.metadata?.content || node.metadata?.prompt : undefined,
                 active,
             },

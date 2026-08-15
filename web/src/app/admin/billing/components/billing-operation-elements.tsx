@@ -133,147 +133,149 @@ export function PaymentConfigPanel({ paymentConfig, loading, embedded, onRefresh
     const requiredReady = requiredFields.filter((field) => field.configured).length;
 
     return (
-        <section
-            className={
-                embedded
-                    ? "overflow-hidden rounded-3xl border border-stone-200 bg-white dark:border-stone-800 dark:bg-stone-950"
-                    : "overflow-hidden rounded-3xl border border-stone-200 bg-white shadow-sm shadow-stone-200/40 dark:border-stone-800 dark:bg-stone-950 dark:shadow-black/20"
-            }
-        >
-            <div className="grid grid-cols-[minmax(0,1fr)_auto] items-start gap-x-3 gap-y-1.5 border-b border-stone-200 px-3 py-3 sm:flex sm:flex-row sm:items-center sm:justify-between sm:gap-3 sm:px-5 sm:py-5 dark:border-stone-800">
-                <div className="contents sm:block sm:min-w-0">
-                    <h2 className="min-w-0 truncate text-base font-semibold tracking-normal text-stone-950 sm:text-xl dark:text-stone-100">支付渠道配置</h2>
-                    <div className="col-span-2 line-clamp-2 text-xs leading-5 text-stone-500 sm:mt-1 sm:block sm:text-sm sm:leading-6 dark:text-stone-400">每个渠道独立保存。下单接口、密钥、回调验签、返回地址和字段映射都可以在这里配置。</div>
-                </div>
-                <div className="col-start-2 row-start-1 flex flex-wrap items-center justify-end gap-1.5 sm:gap-2">
-                    <Tag className="m-0 hidden sm:inline-flex">{paymentConfig?.readyProviders || 0} 个真实支付可用</Tag>
-                    <Button aria-label="刷新支付状态" title="刷新支付状态" icon={<RefreshCw className="size-4" />} loading={loading} onClick={() => void onRefresh()}>
-                        <span className="hidden sm:inline">刷新状态</span>
-                    </Button>
-                </div>
-            </div>
-            <div className="grid gap-3 bg-stone-50/70 p-3 sm:gap-5 sm:p-5 xl:grid-cols-[300px_minmax(0,1fr)] dark:bg-stone-950/45">
-                <aside className="space-y-3">
-                    <div className="rounded-xl border border-stone-200/80 bg-white p-2.5 sm:rounded-3xl sm:p-3 dark:border-stone-800 dark:bg-stone-900/60">
-                        <div className="px-2 pb-2 text-xs font-semibold uppercase tracking-[0.14em] text-stone-400">支付渠道</div>
-                        <div className="grid grid-cols-2 gap-1.5 sm:block sm:space-y-2">
-                            {providers.map((provider) => (
-                                <PaymentProviderCard key={provider.id} provider={provider} active={provider.id === activeProvider?.id} onSelect={() => setActiveProviderId(provider.id)} />
-                            ))}
-                            {!providers.length ? <div className="rounded-xl border border-dashed border-stone-200 px-3 py-10 text-center text-sm text-stone-500 dark:border-stone-800 dark:text-stone-400">支付配置状态加载中</div> : null}
-                        </div>
+        <>
+            <section
+                className={
+                    embedded
+                        ? "overflow-hidden rounded-3xl border border-stone-200 bg-white dark:border-stone-800 dark:bg-stone-950"
+                        : "overflow-hidden rounded-3xl border border-stone-200 bg-white shadow-sm shadow-stone-200/40 dark:border-stone-800 dark:bg-stone-950 dark:shadow-black/20"
+                }
+            >
+                <div className="grid grid-cols-[minmax(0,1fr)_auto] items-start gap-x-3 gap-y-1.5 border-b border-stone-200 px-3 py-3 sm:flex sm:flex-row sm:items-center sm:justify-between sm:gap-3 sm:px-5 sm:py-5 dark:border-stone-800">
+                    <div className="contents sm:block sm:min-w-0">
+                        <h2 className="min-w-0 truncate text-base font-semibold tracking-normal text-stone-950 sm:text-xl dark:text-stone-100">支付渠道配置</h2>
+                        <div className="col-span-2 line-clamp-2 text-xs leading-5 text-stone-500 sm:mt-1 sm:block sm:text-sm sm:leading-6 dark:text-stone-400">每个渠道独立保存。下单接口、密钥、回调验签、返回地址和字段映射都可以在这里配置。</div>
                     </div>
-                </aside>
-                {activeProvider ? (
-                    <Form form={form} layout="vertical" onFinish={() => void saveProviderConfig()} className="min-w-0">
-                        <Form.Item name="enabled" valuePropName="checked" hidden>
-                            <Switch />
-                        </Form.Item>
-                        <div className="min-w-0 overflow-hidden rounded-3xl border border-stone-200/80 bg-white dark:border-stone-800 dark:bg-stone-950">
-                            <div className="border-b border-stone-200/80 px-3 py-3 sm:px-5 sm:py-5 dark:border-stone-800">
-                                <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
-                                    <div className="min-w-0">
-                                        <div className="flex flex-wrap items-center gap-2">
-                                            <h3 className="text-xl font-semibold tracking-normal text-stone-950 sm:text-2xl dark:text-stone-100">{activeProvider.name}</h3>
-                                            <Tag className="m-0" color={activeProvider.ready ? "green" : activeProvider.checkoutReady ? "gold" : "default"}>
-                                                {activeProvider.ready ? "可用" : activeProvider.checkoutReady ? "待回调" : "待配置"}
-                                            </Tag>
-                                            <Tag className="m-0">{activeProvider.sourceLabel}</Tag>
+                    <div className="col-start-2 row-start-1 flex flex-wrap items-center justify-end gap-1.5 sm:gap-2">
+                        <Tag className="m-0 hidden sm:inline-flex">{paymentConfig?.readyProviders || 0} 个真实支付可用</Tag>
+                        <Button aria-label="刷新支付状态" title="刷新支付状态" icon={<RefreshCw className="size-4" />} loading={loading} onClick={() => void onRefresh()}>
+                            <span className="hidden sm:inline">刷新状态</span>
+                        </Button>
+                    </div>
+                </div>
+                <div className="grid gap-3 bg-stone-50/70 p-3 sm:gap-5 sm:p-5 xl:grid-cols-[300px_minmax(0,1fr)] dark:bg-stone-950/45">
+                    <aside className="space-y-3">
+                        <div className="rounded-xl border border-stone-200/80 bg-white p-2.5 sm:rounded-3xl sm:p-3 dark:border-stone-800 dark:bg-stone-900/60">
+                            <div className="px-2 pb-2 text-xs font-semibold uppercase tracking-[0.14em] text-stone-400">支付渠道</div>
+                            <div className="grid grid-cols-2 gap-1.5 sm:block sm:space-y-2">
+                                {providers.map((provider) => (
+                                    <PaymentProviderCard key={provider.id} provider={provider} active={provider.id === activeProvider?.id} onSelect={() => setActiveProviderId(provider.id)} />
+                                ))}
+                                {!providers.length ? <div className="rounded-xl border border-dashed border-stone-200 px-3 py-10 text-center text-sm text-stone-500 dark:border-stone-800 dark:text-stone-400">支付配置状态加载中</div> : null}
+                            </div>
+                        </div>
+                    </aside>
+                    {activeProvider ? (
+                        <Form form={form} layout="vertical" onFinish={() => void saveProviderConfig()} className="min-w-0">
+                            <Form.Item name="enabled" valuePropName="checked" hidden>
+                                <Switch />
+                            </Form.Item>
+                            <div className="min-w-0 overflow-hidden rounded-3xl border border-stone-200/80 bg-white dark:border-stone-800 dark:bg-stone-950">
+                                <div className="border-b border-stone-200/80 px-3 py-3 sm:px-5 sm:py-5 dark:border-stone-800">
+                                    <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+                                        <div className="min-w-0">
+                                            <div className="flex flex-wrap items-center gap-2">
+                                                <h3 className="text-xl font-semibold tracking-normal text-stone-950 sm:text-2xl dark:text-stone-100">{activeProvider.name}</h3>
+                                                <Tag className="m-0" color={activeProvider.ready ? "green" : activeProvider.checkoutReady ? "gold" : "default"}>
+                                                    {activeProvider.ready ? "可用" : activeProvider.checkoutReady ? "待回调" : "待配置"}
+                                                </Tag>
+                                                <Tag className="m-0">{activeProvider.sourceLabel}</Tag>
+                                            </div>
+                                            <div className="mt-1 line-clamp-2 max-w-3xl text-xs leading-5 text-stone-500 sm:mt-2 sm:line-clamp-none sm:text-sm sm:leading-6 dark:text-stone-400">
+                                                {activeProvider.id === "alipay" ? alipayPresentation?.description || activeProvider.description : activeProvider.description}
+                                            </div>
+                                            <div className="mt-3 flex flex-wrap gap-2 text-xs text-stone-500 dark:text-stone-400">
+                                                <span className="rounded-full bg-stone-100 px-2.5 py-1 ring-1 ring-stone-200 dark:bg-stone-900 dark:ring-stone-800">
+                                                    必填 {requiredReady}/{requiredFields.length}
+                                                </span>
+                                                <span className="rounded-full bg-stone-100 px-2.5 py-1 ring-1 ring-stone-200 dark:bg-stone-900 dark:ring-stone-800">下单：{activeProvider.checkoutReady ? "已配置" : "待配置"}</span>
+                                                <span className="rounded-full bg-stone-100 px-2.5 py-1 ring-1 ring-stone-200 dark:bg-stone-900 dark:ring-stone-800">
+                                                    回调：{activeProvider.webhookOptional ? "可选" : activeProvider.webhookReady ? "已配置" : "待配置"}
+                                                </span>
+                                            </div>
                                         </div>
-                                        <div className="mt-1 line-clamp-2 max-w-3xl text-xs leading-5 text-stone-500 sm:mt-2 sm:line-clamp-none sm:text-sm sm:leading-6 dark:text-stone-400">
-                                            {activeProvider.id === "alipay" ? alipayPresentation?.description || activeProvider.description : activeProvider.description}
+                                        <div className="flex shrink-0 flex-wrap items-center gap-3">
+                                            <Switch disabled={activeProvider.id === "manual"} checked={formEnabled} checkedChildren="启用" unCheckedChildren="关闭" onChange={(checked) => form.setFieldValue("enabled", checked)} />
+                                            <Button type="primary" htmlType="submit" icon={<Save className="size-4" />} loading={saving} className="!text-white">
+                                                保存
+                                            </Button>
                                         </div>
-                                        <div className="mt-3 flex flex-wrap gap-2 text-xs text-stone-500 dark:text-stone-400">
-                                            <span className="rounded-full bg-stone-100 px-2.5 py-1 ring-1 ring-stone-200 dark:bg-stone-900 dark:ring-stone-800">
-                                                必填 {requiredReady}/{requiredFields.length}
-                                            </span>
-                                            <span className="rounded-full bg-stone-100 px-2.5 py-1 ring-1 ring-stone-200 dark:bg-stone-900 dark:ring-stone-800">下单：{activeProvider.checkoutReady ? "已配置" : "待配置"}</span>
-                                            <span className="rounded-full bg-stone-100 px-2.5 py-1 ring-1 ring-stone-200 dark:bg-stone-900 dark:ring-stone-800">
-                                                回调：{activeProvider.webhookOptional ? "可选" : activeProvider.webhookReady ? "已配置" : "待配置"}
-                                            </span>
-                                        </div>
-                                    </div>
-                                    <div className="flex shrink-0 flex-wrap items-center gap-3">
-                                        <Switch disabled={activeProvider.id === "manual"} checked={formEnabled} checkedChildren="启用" unCheckedChildren="关闭" onChange={(checked) => form.setFieldValue("enabled", checked)} />
-                                        <Button type="primary" htmlType="submit" icon={<Save className="size-4" />} loading={saving} className="!text-white">
-                                            保存
-                                        </Button>
                                     </div>
                                 </div>
-                            </div>
-                            <div className="border-b border-stone-200/80 bg-stone-50/65 px-3 py-3 sm:px-5 sm:py-4 dark:border-stone-800 dark:bg-stone-900/35">
-                                <div className="rounded-xl border border-stone-200/80 bg-white p-3 sm:rounded-2xl sm:p-4 dark:border-stone-800 dark:bg-stone-950">
-                                    <div className="flex min-w-0 flex-col gap-3 lg:flex-row lg:items-center">
-                                        <div className="flex shrink-0 items-center gap-2 text-sm font-semibold text-stone-950 dark:text-stone-100">
-                                            <Copy className="size-4 text-stone-500 dark:text-stone-400" />
-                                            系统回调地址
+                                <div className="border-b border-stone-200/80 bg-stone-50/65 px-3 py-3 sm:px-5 sm:py-4 dark:border-stone-800 dark:bg-stone-900/35">
+                                    <div className="rounded-xl border border-stone-200/80 bg-white p-3 sm:rounded-2xl sm:p-4 dark:border-stone-800 dark:bg-stone-950">
+                                        <div className="flex min-w-0 flex-col gap-3 lg:flex-row lg:items-center">
+                                            <div className="flex shrink-0 items-center gap-2 text-sm font-semibold text-stone-950 dark:text-stone-100">
+                                                <Copy className="size-4 text-stone-500 dark:text-stone-400" />
+                                                系统回调地址
+                                            </div>
+                                            <div className="min-w-0 flex-1 truncate rounded-xl bg-stone-50 px-3 py-2 font-mono text-xs leading-5 text-stone-700 ring-1 ring-stone-200 dark:bg-stone-900 dark:text-stone-200 dark:ring-stone-800">
+                                                {activeProvider.webhookUrl}
+                                            </div>
+                                            <Button className="!h-9 shrink-0 justify-center" size="small" icon={<Copy className="size-3.5" />} onClick={() => onCopy(activeProvider.webhookUrl)}>
+                                                复制
+                                            </Button>
                                         </div>
-                                        <div className="min-w-0 flex-1 truncate rounded-xl bg-stone-50 px-3 py-2 font-mono text-xs leading-5 text-stone-700 ring-1 ring-stone-200 dark:bg-stone-900 dark:text-stone-200 dark:ring-stone-800">
-                                            {activeProvider.webhookUrl}
+                                        <div className="mt-4 border-t border-stone-200/80 pt-4 dark:border-stone-800">
+                                            <div className="mb-3 flex items-center gap-2 text-sm font-semibold text-stone-950 dark:text-stone-100">
+                                                <Settings2 className="size-4" />
+                                                必填检查
+                                            </div>
+                                            <RequirementGrid checkout={activeProvider.checkoutRequirements} webhook={activeProvider.webhookRequirements} webhookOptional={activeProvider.webhookOptional} />
                                         </div>
-                                        <Button className="!h-9 shrink-0 justify-center" size="small" icon={<Copy className="size-3.5" />} onClick={() => onCopy(activeProvider.webhookUrl)}>
-                                            复制
-                                        </Button>
-                                    </div>
-                                    <div className="mt-4 border-t border-stone-200/80 pt-4 dark:border-stone-800">
-                                        <div className="mb-3 flex items-center gap-2 text-sm font-semibold text-stone-950 dark:text-stone-100">
-                                            <Settings2 className="size-4" />
-                                            必填检查
-                                        </div>
-                                        <RequirementGrid checkout={activeProvider.checkoutRequirements} webhook={activeProvider.webhookRequirements} webhookOptional={activeProvider.webhookOptional} />
                                     </div>
                                 </div>
-                            </div>
-                            <div className="space-y-3 p-3 sm:space-y-5 sm:p-5">
-                                <PaymentFieldSection title="基础配置" description="这里是启用该渠道最常用的字段，包含下单地址、商户号、接口密钥和请求方式。">
-                                    {sortedMainFields.map((field) => (
-                                        <PaymentConfigFieldControl key={field.key} field={field} providerEnabled={formEnabled} />
-                                    ))}
-                                </PaymentFieldSection>
-                                {routeFields.length ? (
-                                    <PaymentFieldSection
-                                        title={isAlipayFaceToFace ? "异步回调" : "回调与返回"}
-                                        description={isAlipayFaceToFace ? "当面付自动使用本站异步通知地址，不需要同步返回地址；只有需要自定义通知域名时才填写。" : "这些地址默认使用当前网站的系统地址，无需填写；只有需要改成其他域名或页面时才覆盖。"}
-                                    >
-                                        {sortedRouteFields.map((field) => (
+                                <div className="space-y-3 p-3 sm:space-y-5 sm:p-5">
+                                    <PaymentFieldSection title="基础配置" description="这里是启用该渠道最常用的字段，包含下单地址、商户号、接口密钥和请求方式。">
+                                        {sortedMainFields.map((field) => (
                                             <PaymentConfigFieldControl key={field.key} field={field} providerEnabled={formEnabled} />
                                         ))}
                                     </PaymentFieldSection>
-                                ) : null}
-                                {advancedFields.length ? (
-                                    <div className="rounded-3xl border border-stone-200/80 bg-stone-50/70 p-4 dark:border-stone-800 dark:bg-stone-900/45">
-                                        <button
-                                            type="button"
-                                            className="flex w-full items-center justify-between gap-3 rounded-2xl px-1 py-1 text-left transition hover:text-stone-950 dark:hover:text-stone-100"
-                                            onClick={() => setAdvancedOpen((value) => !value)}
+                                    {routeFields.length ? (
+                                        <PaymentFieldSection
+                                            title={isAlipayFaceToFace ? "异步回调" : "回调与返回"}
+                                            description={isAlipayFaceToFace ? "当面付自动使用本站异步通知地址，不需要同步返回地址；只有需要自定义通知域名时才填写。" : "这些地址默认使用当前网站的系统地址，无需填写；只有需要改成其他域名或页面时才覆盖。"}
                                         >
-                                            <span>
-                                                <span className="block text-base font-semibold text-stone-950 dark:text-stone-100">高级字段映射</span>
-                                                <span className="mt-1 block text-xs leading-5 text-stone-500 dark:text-stone-400">支付商字段映射、额外请求头、请求体模板和高级回调设置，不确定时可以先保持为空。</span>
-                                            </span>
-                                            <Tag className="m-0">{advancedOpen ? "收起" : `${advancedFields.length} 项`}</Tag>
-                                        </button>
-                                        {advancedOpen ? (
-                                            <div className="mt-4 grid grid-cols-[repeat(auto-fit,minmax(min(100%,220px),1fr))] gap-3">
-                                                {sortedAdvancedFields.map((field) => (
-                                                    <PaymentConfigFieldControl key={field.key} field={field} providerEnabled={formEnabled} />
-                                                ))}
-                                            </div>
-                                        ) : null}
-                                    </div>
-                                ) : null}
+                                            {sortedRouteFields.map((field) => (
+                                                <PaymentConfigFieldControl key={field.key} field={field} providerEnabled={formEnabled} />
+                                            ))}
+                                        </PaymentFieldSection>
+                                    ) : null}
+                                    {advancedFields.length ? (
+                                        <div className="rounded-3xl border border-stone-200/80 bg-stone-50/70 p-4 dark:border-stone-800 dark:bg-stone-900/45">
+                                            <button
+                                                type="button"
+                                                className="flex w-full items-center justify-between gap-3 rounded-2xl px-1 py-1 text-left transition hover:text-stone-950 dark:hover:text-stone-100"
+                                                onClick={() => setAdvancedOpen((value) => !value)}
+                                            >
+                                                <span>
+                                                    <span className="block text-base font-semibold text-stone-950 dark:text-stone-100">高级字段映射</span>
+                                                    <span className="mt-1 block text-xs leading-5 text-stone-500 dark:text-stone-400">支付商字段映射、额外请求头、请求体模板和高级回调设置，不确定时可以先保持为空。</span>
+                                                </span>
+                                                <Tag className="m-0">{advancedOpen ? "收起" : `${advancedFields.length} 项`}</Tag>
+                                            </button>
+                                            {advancedOpen ? (
+                                                <div className="mt-4 grid grid-cols-[repeat(auto-fit,minmax(min(100%,220px),1fr))] gap-3">
+                                                    {sortedAdvancedFields.map((field) => (
+                                                        <PaymentConfigFieldControl key={field.key} field={field} providerEnabled={formEnabled} />
+                                                    ))}
+                                                </div>
+                                            ) : null}
+                                        </div>
+                                    ) : null}
+                                </div>
+                                <div className="mx-5 mb-5 flex flex-col-reverse gap-3 border-t border-stone-200/80 pt-4 sm:flex-row sm:items-center sm:justify-between dark:border-stone-800">
+                                    <div className="text-xs leading-5 text-stone-500 dark:text-stone-400">密钥留空表示保留原值；需要清空密钥时请关闭该渠道或覆盖保存新的值。</div>
+                                    <Button type="primary" htmlType="submit" icon={<Save className="size-4" />} loading={saving} className="!text-white">
+                                        保存支付配置
+                                    </Button>
+                                </div>
                             </div>
-                            <div className="mx-5 mb-5 flex flex-col-reverse gap-3 border-t border-stone-200/80 pt-4 sm:flex-row sm:items-center sm:justify-between dark:border-stone-800">
-                                <div className="text-xs leading-5 text-stone-500 dark:text-stone-400">密钥留空表示保留原值；需要清空密钥时请关闭该渠道或覆盖保存新的值。</div>
-                                <Button type="primary" htmlType="submit" icon={<Save className="size-4" />} loading={saving} className="!text-white">
-                                    保存支付配置
-                                </Button>
-                            </div>
-                        </div>
-                    </Form>
-                ) : null}
-            </div>
-        </section>
+                        </Form>
+                    ) : null}
+                </div>
+            </section>
+        </>
     );
 }
 

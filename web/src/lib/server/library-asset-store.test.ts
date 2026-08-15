@@ -53,8 +53,17 @@ describe("library asset file provider", () => {
         expect(mocks.postgresQuery).toHaveBeenCalledTimes(1);
         const [statement, params] = mocks.postgresQuery.mock.calls[0] as [string, unknown[]];
         expect(statement).toContain("WITH filtered AS");
+        expect(statement).toContain("WHERE user_id = $1");
+        expect(statement).toContain("ORDER BY updated_at DESC, id ASC");
         expect(statement).toContain("LIMIT $5 OFFSET $6");
         expect(params).toEqual(["user-one", "text", "品牌", "%品牌%", 5, 5]);
+    });
+
+    it("prevents the unbounded asset reader from querying PostgreSQL", async () => {
+        mocks.provider = "postgres";
+
+        await expect(listLibraryAssets("user-one")).rejects.toThrow("paginated asset query");
+        expect(mocks.postgresQuery).not.toHaveBeenCalled();
     });
 });
 

@@ -1,13 +1,12 @@
 "use client";
 
 import { saveAs } from "file-saver";
-import dynamic from "next/dynamic";
-import type { MouseEvent as ReactMouseEvent, PointerEvent as ReactPointerEvent } from "react";
 import { useCallback } from "react";
 
 import { getDataUrlByteSize } from "@/lib/image-utils";
 import { mediaDownloadFileName } from "@/lib/media-file";
 import { originalImageDownloadUrl, originalMediaDownloadUrl } from "@/lib/media-image-url";
+import { isGenerationTaskNeedsReviewError } from "@/services/api/generation-task-state";
 import { type UploadedImage } from "@/services/image-storage";
 import { defaultConfig } from "@/stores/use-config-store";
 import { nanoid } from "nanoid";
@@ -17,15 +16,12 @@ import { type CanvasImageMaskEditPayload } from "../components/canvas-node-mask-
 import { type CanvasImageSplitParams } from "../components/canvas-node-split-dialog";
 import { type CanvasImageUpscaleParams } from "../components/canvas-node-upscale-dialog";
 import { NODE_DEFAULT_SIZE } from "../constants";
-import { CanvasNodeType, isCanvasImageNodeType, type CanvasNodeData, type Position } from "../types";
+import { CanvasNodeType, isCanvasImageNodeType, type CanvasNodeData } from "../types";
 import { cropDataUrl, splitDataUrl, upscaleDataUrl } from "../utils/canvas-image-data";
 import { fitNodeSize } from "../utils/canvas-node-size";
 
-const CanvasAssistantPanel = dynamic(() => import("../components/canvas-assistant-panel").then((mod) => mod.CanvasAssistantPanel), { ssr: false });
-const loadAssetPickerModal = () => import("../components/asset-picker-modal").then((mod) => mod.AssetPickerModal);
-const AssetPickerModal = dynamic(loadAssetPickerModal, { ssr: false, loading: () => null });
-
 import { IMAGE_PROMPT_REVERSE_PRESET, NODE_STATUS_ERROR, NODE_STATUS_LOADING, NODE_STATUS_SUCCESS, createCanvasNode } from "./canvas-page-elements";
+import { pauseCanvasGenerationReview } from "./canvas-generation-review";
 import { applyNodeConfigPatch, buildAngleLabel, buildAnglePrompt, buildGenerationConfig, buildImageGenerationMetadata, canvasNodeReferenceImage, imageMetadata, isGenerationCanceled, uploadCanvasImage } from "./canvas-page-utils";
 
 import type { CanvasInteractions } from "./use-canvas-interactions";
@@ -45,8 +41,6 @@ export function useCanvasNodeMediaActions({ state, tasks, interactions }: { stat
         size,
         setSelectedNodeIds,
         setSelectedConnectionId,
-        setConnectionTargetNodeId,
-        setMouseWorld,
         setContextMenu,
         setRunningNodeId,
         setDialogNodeId,
@@ -60,30 +54,8 @@ export function useCanvasNodeMediaActions({ state, tasks, interactions }: { stat
         setCollapsingBatchIds,
         setOpeningBatchIds,
         nodesRef,
-        connectionTargetNodeIdRef,
     } = state;
     const { startGenerationRequest, finishGenerationRequest, startAndCompleteImageTask } = tasks;
-    const { screenToCanvas, setConnecting } = interactions;
-
-    const handleConnectStart = useCallback(
-        (event: ReactMouseEvent | ReactPointerEvent, nodeId: string, handleType: "source" | "target") => {
-            event.preventDefault();
-            event.stopPropagation();
-            if ("pointerId" in event && event.currentTarget instanceof Element) {
-                event.currentTarget.setPointerCapture(event.pointerId);
-            }
-            setMouseWorld(screenToCanvas(event.clientX, event.clientY));
-            setConnecting({ nodeId, handleType });
-            connectionTargetNodeIdRef.current = null;
-            setConnectionTargetNodeId(null);
-            setSelectedConnectionId(null);
-        },
-        [screenToCanvas, setConnecting],
-    );
-
-    const handleNodeResize = useCallback((nodeId: string, width: number, height: number, position?: Position) => {
-        setNodes((prev) => prev.map((node) => (node.id === nodeId ? { ...node, width, height, position: position || node.position } : node)));
-    }, []);
 
     const toggleNodeFreeResize = useCallback((nodeId: string) => {
         setNodes((prev) =>
@@ -201,10 +173,32 @@ export function useCanvasNodeMediaActions({ state, tasks, interactions }: { stat
                         storageKey: node.metadata.storageKey,
                         remoteUrl: node.metadata.remoteUrl,
                         serverUrl: node.metadata.serverUrl,
-                        width: node.width,
-                        height: node.height,
+                        width: node.metadata.naturalWidth || node.width,
+                        height: node.metadata.naturalHeight || node.height,
                         bytes: node.metadata.bytes || 0,
                         mimeType: node.metadata.mimeType || "video/mp4",
+                    },
+                    metadata: { source: "canvas", nodeId: node.id, prompt: node.metadata?.prompt },
+                });
+                message.success("已加入我的素材");
+                return;
+            }
+            if (node.type === CanvasNodeType.Audio) {
+                if (!node.metadata?.content) return message.error("没有可保存的音频");
+                await addAsset({
+                    kind: "audio",
+                    title: node.metadata?.prompt?.slice(0, 24) || "画布音频",
+                    coverUrl: "",
+                    tags: [],
+                    source: "Canvas",
+                    data: {
+                        url: node.metadata.content,
+                        storageKey: node.metadata.storageKey,
+                        remoteUrl: node.metadata.remoteUrl,
+                        serverUrl: node.metadata.serverUrl,
+                        durationMs: node.metadata.durationMs,
+                        bytes: node.metadata.bytes || 0,
+                        mimeType: node.metadata.mimeType || "audio/mpeg",
                     },
                     metadata: { source: "canvas", nodeId: node.id, prompt: node.metadata?.prompt },
                 });
@@ -306,14 +300,13 @@ export function useCanvasNodeMediaActions({ state, tasks, interactions }: { stat
     const splitImageNode = useCallback(
         async (node: CanvasNodeData, params: CanvasImageSplitParams) => {
             if (!node.metadata?.content) return;
-            setSplitNodeId(null);
             const pieces = await splitDataUrl(node.metadata.content, params);
             const gap = 16;
             const cellWidth = node.width / params.columns;
             const cellHeight = node.height / params.rows;
             const startX = node.position.x + node.width + 96;
             const startY = node.position.y;
-            const childNodes = await Promise.all(
+            const uploads = await Promise.allSettled(
                 pieces.map(async (piece) => {
                     const image = await uploadCanvasImage(piece.dataUrl);
                     const id = nanoid();
@@ -331,12 +324,17 @@ export function useCanvasNodeMediaActions({ state, tasks, interactions }: { stat
                     } satisfies CanvasNodeData;
                 }),
             );
+            const childNodes = uploads.flatMap((result) => (result.status === "fulfilled" ? [result.value] : []));
+            const failedCount = uploads.length - childNodes.length;
+            if (!childNodes.length) throw uploads.find((result): result is PromiseRejectedResult => result.status === "rejected")?.reason || new Error("图片切分结果保存失败");
             setNodes((prev) => [...prev, ...childNodes]);
             setConnections((prev) => [...prev, ...childNodes.map((child) => ({ id: nanoid(), fromNodeId: node.id, toNodeId: child.id }))]);
             setSelectedNodeIds(new Set(childNodes.map((child) => child.id)));
             setSelectedConnectionId(null);
             setDialogNodeId(null);
-            message.success(`已切分为 ${childNodes.length} 个子节点`);
+            setSplitNodeId(null);
+            if (failedCount) message.warning(`已保留 ${childNodes.length} 个切分结果，${failedCount} 个保存失败`);
+            else message.success(`已切分为 ${childNodes.length} 个子节点`);
         },
         [message],
     );
@@ -378,8 +376,22 @@ export function useCanvasNodeMediaActions({ state, tasks, interactions }: { stat
             } catch (error) {
                 if (isGenerationCanceled(error)) return;
                 const errorDetails = error instanceof Error ? error.message : "局部修改失败";
+                const needsReview = isGenerationTaskNeedsReviewError(error);
                 message.error(errorDetails);
-                setNodes((prev) => prev.map((item) => (item.id === childId ? { ...item, metadata: { ...item.metadata, status: NODE_STATUS_ERROR, errorDetails, imageTask: undefined } } : item)));
+                if (needsReview) {
+                    setNodes((prev) => pauseCanvasGenerationReview(prev, [childId], errorDetails));
+                    return;
+                }
+                setNodes((prev) =>
+                    prev.map((item) =>
+                        item.id === childId
+                            ? {
+                                  ...item,
+                                  metadata: { ...item.metadata, status: NODE_STATUS_ERROR, errorDetails, imageTask: undefined },
+                              }
+                            : item,
+                    ),
+                );
             } finally {
                 finishGenerationRequest(childId, controller);
                 setRunningNodeId(null);
@@ -391,11 +403,11 @@ export function useCanvasNodeMediaActions({ state, tasks, interactions }: { stat
     const upscaleImageNode = useCallback(
         async (node: CanvasNodeData, params: CanvasImageUpscaleParams) => {
             if (!node.metadata?.content) return;
-            setUpscaleNodeId(null);
             const upscaled = await upscaleDataUrl(node.metadata.content, params);
             const image = await uploadCanvasImage(upscaled);
             const size = fitNodeSize(image.width, image.height);
             appendDerivedImageNode(node, image, "Upscaled Image", size);
+            setUpscaleNodeId(null);
         },
         [appendDerivedImageNode],
     );
@@ -436,21 +448,34 @@ export function useCanvasNodeMediaActions({ state, tasks, interactions }: { stat
             } catch (error) {
                 if (isGenerationCanceled(error)) return;
                 const errorDetails = error instanceof Error ? error.message : "生成失败";
-                setNodes((prev) => prev.map((item) => (item.id === childId ? { ...item, metadata: { ...item.metadata, status: NODE_STATUS_ERROR, errorDetails, imageTask: undefined } } : item)));
+                const needsReview = isGenerationTaskNeedsReviewError(error);
+                if (needsReview) {
+                    setNodes((prev) => pauseCanvasGenerationReview(prev, [childId], errorDetails));
+                    return;
+                }
+                message.error(errorDetails);
+                setNodes((prev) =>
+                    prev.map((item) =>
+                        item.id === childId
+                            ? {
+                                  ...item,
+                                  metadata: { ...item.metadata, status: NODE_STATUS_ERROR, errorDetails, imageTask: undefined },
+                              }
+                            : item,
+                    ),
+                );
             } finally {
                 finishGenerationRequest(childId, controller);
                 setRunningNodeId(null);
             }
         },
-        [effectiveConfig, finishGenerationRequest, isAiConfigReady, openConfigDialog, startAndCompleteImageTask, startGenerationRequest],
+        [effectiveConfig, finishGenerationRequest, isAiConfigReady, message, openConfigDialog, startAndCompleteImageTask, startGenerationRequest],
     );
 
     const handleFontSizeChange = useCallback((nodeId: string, fontSize: number) => {
         setNodes((prev) => prev.map((node) => (node.id === nodeId ? { ...node, metadata: { ...node.metadata, fontSize } } : node)));
     }, []);
     return {
-        handleConnectStart,
-        handleNodeResize,
         toggleNodeFreeResize,
         handleNodeContentChange,
         toggleBatchExpanded,

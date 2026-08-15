@@ -52,4 +52,4 @@ docker compose -f docker-compose.lowmem.yml up -d
 
 建议保留 512MB 到 1GB swap。PostgreSQL 和模型服务可以放在外部，但应用服务器仍需挂载 `VOZEB_PRO_DATA_DIR` 以保存图片、视频和音频。
 
-如果已启用 S3/OSS，新媒体不会保留本地持久副本，但 FFmpeg、视频下载和格式规范化仍可能使用临时磁盘。需要稳定使用图片/视频工作台时建议升级到 2 vCPU / 2GB；需要短剧合成时建议至少 4 vCPU / 8GB。
+如果已启用 S3/OSS，新媒体不会保留本地持久副本，但 FFmpeg、视频下载和格式规范化仍可能使用临时磁盘。需要稳定使用 `/create` 的图片、视频多结果生成时建议升级到 2 vCPU / 2GB；需要短剧合成时建议至少 4 vCPU / 8GB。

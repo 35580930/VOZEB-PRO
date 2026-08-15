@@ -1,6 +1,6 @@
 services:
   app:
-    image: ${VOZEB_PRO_IMAGE:-ghcr.io/csyqlz/vozeb-pro:v0.0.5}
+    image: ${VOZEB_PRO_IMAGE:-ghcr.io/csyqlz/vozeb-pro:v0.0.6}
     container_name: vozeb-pro
     network_mode: host
     env_file:
@@ -18,6 +18,7 @@ services:
       VOZEB_PRO_ENCRYPTION_KEY: ${VOZEB_PRO_ENCRYPTION_KEY:?请在 .env 中配置 VOZEB_PRO_ENCRYPTION_KEY}
       VOZEB_PRO_INSTALL_TOKEN: ${VOZEB_PRO_INSTALL_TOKEN:?请在 .env 中配置至少 32 位一次性安装令牌}
       VOZEB_PRO_MAINTENANCE_TOKEN: ${VOZEB_PRO_MAINTENANCE_TOKEN:?请在 .env 中配置至少 32 位维护令牌}
+      VOZEB_PRO_WORKER_TOKEN: ${VOZEB_PRO_WORKER_TOKEN:?请在 .env 中配置独立的至少 32 位 Worker 令牌}
       VOZEB_PRO_TRUSTED_PROXY_HOPS: ${VOZEB_PRO_TRUSTED_PROXY_HOPS:-1}
     healthcheck:
       test:
@@ -34,13 +35,13 @@ services:
     restart: unless-stopped
 
   generation-worker:
-    image: ${VOZEB_PRO_IMAGE:-ghcr.io/csyqlz/vozeb-pro:v0.0.5}
+    image: ${VOZEB_PRO_IMAGE:-ghcr.io/csyqlz/vozeb-pro:v0.0.6}
     container_name: vozeb-pro-generation-worker
     network_mode: host
     command: ["node", "/app/web/scripts/generation-worker.mjs"]
     environment:
       VOZEB_PRO_WORKER_API_ORIGIN: http://127.0.0.1:3000
-      VOZEB_PRO_MAINTENANCE_TOKEN: ${VOZEB_PRO_MAINTENANCE_TOKEN:?请在 .env 中配置至少 32 位维护令牌}
+      VOZEB_PRO_WORKER_TOKEN: ${VOZEB_PRO_WORKER_TOKEN:?请在 .env 中配置独立的至少 32 位 Worker 令牌}
     depends_on:
       app:
         condition: service_healthy

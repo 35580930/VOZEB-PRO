@@ -85,9 +85,9 @@ export async function submitWorkAppeal(userIdValue: unknown, workIdValue: unknow
     }
 }
 
-export async function listWorkCasesForOwner(userIdValue: unknown, workIdValue: unknown) {
+export async function listWorkCasesForOwner(userIdValue: unknown, workIdValue: unknown, input: { page?: number; pageSize?: number } = {}) {
     await assertReady();
-    return createPostgresRepositories().workGovernance.listCasesForOwner(requiredId(workIdValue, "作品"), requiredId(userIdValue, "用户"));
+    return createPostgresRepositories().workGovernance.listCasesForOwner(requiredId(workIdValue, "作品"), requiredId(userIdValue, "用户"), input);
 }
 
 export async function listWorkGovernanceCasesForAdmin(input: { page?: number; pageSize?: number; caseType?: unknown; status?: unknown; keyword?: unknown } = {}) {

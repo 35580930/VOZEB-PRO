@@ -15,19 +15,27 @@ vi.mock("@/lib/server/database", () => ({
 }));
 vi.mock("@/lib/server/data-adapter", () => ({ readJsonDataFile: mocks.readJsonDataFile, writeJsonDataFile: mocks.writeJsonDataFile }));
 
-import { getLocalMediaRegistrationSummary, listExpiredLocalMediaRegistrations, listFileLocalMediaRegistrations, listLocalMediaMigrationRegistrations, listLocalMediaRegistrationPage, listLocalMediaRegistrationsForUser } from "./local-media-registry";
+import {
+    getLocalMediaRegistrationSummary,
+    listExpiredLocalMediaRegistrations,
+    listFileLocalMediaRegistrations,
+    listLocalMediaMigrationRegistrations,
+    listLocalMediaRegistrationPage,
+    listLocalMediaRegistrationsForDeletion,
+    listLocalMediaRegistrationsForUser,
+    listLocalMediaRegistrationsForUserPage,
+} from "./local-media-registry";
 
 describe("listLocalMediaRegistrationsForUser", () => {
     beforeEach(() => vi.clearAllMocks());
 
-    it("uses an owner-scoped PostgreSQL query", async () => {
+    it("prevents the unbounded user reader from querying PostgreSQL", async () => {
         mocks.getDatabaseProvider.mockReturnValue("postgres");
-        mocks.postgresQuery.mockResolvedValue({ rows: [] });
 
-        await listLocalMediaRegistrationsForUser("user-one");
+        await expect(listLocalMediaRegistrationsForUser("user-one")).rejects.toThrow("paginated registration query");
 
-        expect(mocks.ensurePostgresSchema).toHaveBeenCalledTimes(1);
-        expect(mocks.postgresQuery).toHaveBeenCalledWith(expect.stringContaining("WHERE owner_user_id = $1"), ["user-one"]);
+        expect(mocks.ensurePostgresSchema).not.toHaveBeenCalled();
+        expect(mocks.postgresQuery).not.toHaveBeenCalled();
     });
 
     it("filters the file provider before returning registrations", async () => {
@@ -43,6 +51,53 @@ describe("listLocalMediaRegistrationsForUser", () => {
         const registrations = await listLocalMediaRegistrationsForUser("user-one");
 
         expect(registrations).toEqual([expect.objectContaining({ storageKey: "one.png", ownerUserId: "user-one" })]);
+    });
+
+    it("paginates all PostgreSQL media providers for one user with stable ordering", async () => {
+        mocks.getDatabaseProvider.mockReturnValue("postgres");
+        mocks.postgresQuery.mockResolvedValue({
+            rows: [
+                {
+                    storage_key: "permanent/image.png",
+                    scope: "reference",
+                    storage_class: "permanent",
+                    type: "image",
+                    owner_user_id: "user-one",
+                    source: "agent",
+                    mime_type: "image/png",
+                    bytes: 12,
+                    storage_provider: "object",
+                    created_at: new Date("2026-01-02"),
+                    total_count: 31,
+                },
+            ],
+        });
+
+        await expect(listLocalMediaRegistrationsForUserPage("user-one", { page: 2, pageSize: 20 })).resolves.toMatchObject({ items: [{ storageKey: "permanent/image.png", storageProvider: "object" }], total: 31, page: 2, pageSize: 20 });
+
+        const [statement, params] = mocks.postgresQuery.mock.calls[0] as [string, unknown[]];
+        expect(statement).toContain("WHERE owner_user_id = $1");
+        expect(statement).toContain("ORDER BY created_at DESC, storage_key ASC");
+        expect(statement).toContain("LIMIT $2 OFFSET $3");
+        expect(statement).not.toContain("storage_provider = 'local'");
+        expect(params).toEqual(["user-one", 20, 20]);
+    });
+
+    it("collects user media snapshots through bounded transaction pages", async () => {
+        mocks.getDatabaseProvider.mockReturnValue("postgres");
+        const query = vi
+            .fn()
+            .mockResolvedValueOnce({ rows: [{ storage_key: "one.png", scope: "reference", storage_class: "permanent", type: "image", owner_user_id: "user-one", source: "agent", mime_type: "image/png", bytes: 10, created_at: new Date("2026-01-02") }] })
+            .mockResolvedValueOnce({ rows: [] });
+
+        const registrations = await listLocalMediaRegistrationsForDeletion(" user-one ", { batchSize: 1, executor: { query } as never, forUpdate: true });
+
+        expect(registrations).toMatchObject([{ storageKey: "one.png", ownerUserId: "user-one" }]);
+        expect(query).toHaveBeenCalledTimes(2);
+        expect(query).toHaveBeenNthCalledWith(1, expect.stringContaining("LIMIT $2::integer OFFSET $3"), ["user-one", 1, 0]);
+        expect(String(query.mock.calls[0]?.[0])).toContain("ORDER BY created_at DESC, storage_key ASC");
+        expect(String(query.mock.calls[0]?.[0])).toContain("FOR UPDATE");
+        expect(query).toHaveBeenNthCalledWith(2, expect.stringContaining("LIMIT $2::integer OFFSET $3"), ["user-one", 1, 1]);
     });
 
     it("paginates local PostgreSQL media and calculates totals without loading all registrations", async () => {

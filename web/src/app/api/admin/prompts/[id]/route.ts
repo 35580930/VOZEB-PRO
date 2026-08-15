@@ -1,3 +1,4 @@
+import { hasAdminPermission } from "@/lib/admin-permissions";
 import { NextResponse } from "next/server";
 
 import { getCurrentUser } from "@/lib/auth/session";
@@ -14,7 +15,7 @@ type RouteContext = {
 export async function PATCH(request: Request, context: RouteContext) {
     const currentUser = await getCurrentUser();
     if (!currentUser) return NextResponse.json({ error: "请先登录" }, { status: 401 });
-    if (currentUser.role !== "admin") return NextResponse.json({ error: "需要管理员权限" }, { status: 403 });
+    if (!hasAdminPermission(currentUser, "content.manage")) return NextResponse.json({ error: "需要管理员权限" }, { status: 403 });
     try {
         const { id } = await context.params;
         const body = await readJsonBody<PromptInput>(request);
@@ -30,7 +31,7 @@ export async function PATCH(request: Request, context: RouteContext) {
 export async function DELETE(_request: Request, context: RouteContext) {
     const currentUser = await getCurrentUser();
     if (!currentUser) return NextResponse.json({ error: "请先登录" }, { status: 401 });
-    if (currentUser.role !== "admin") return NextResponse.json({ error: "需要管理员权限" }, { status: 403 });
+    if (!hasAdminPermission(currentUser, "content.manage")) return NextResponse.json({ error: "需要管理员权限" }, { status: 403 });
     try {
         const { id } = await context.params;
         await deletePrompt(id, { scope: "library" });

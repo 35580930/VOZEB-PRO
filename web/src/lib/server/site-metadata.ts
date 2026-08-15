@@ -46,6 +46,7 @@ export function absoluteSiteUrl(value: string, base = siteMetadataBase()) {
 export function browserIconHref(site: Pick<SiteSettings, "iconUrl" | "logoUrl">) {
     const iconUrl = site.iconUrl.trim();
     const logoUrl = site.logoUrl.trim();
-    if (iconUrl && (iconUrl !== DEFAULT_SITE_SETTINGS.iconUrl || logoUrl === DEFAULT_SITE_SETTINGS.logoUrl)) return iconUrl;
-    return logoUrl || iconUrl || DEFAULT_SITE_SETTINGS.iconUrl;
+    const directIconUrl = iconUrl === "/favicon.ico" || iconUrl === "/api/site-icon" ? "" : iconUrl;
+    if (directIconUrl && (directIconUrl !== DEFAULT_SITE_SETTINGS.iconUrl || logoUrl === DEFAULT_SITE_SETTINGS.logoUrl)) return directIconUrl;
+    return logoUrl || directIconUrl || DEFAULT_SITE_SETTINGS.iconUrl;
 }

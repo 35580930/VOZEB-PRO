@@ -33,11 +33,12 @@ export async function POST(request: Request) {
         });
         if (issued.deliverEmail) {
             const settings = await getAuthSettings();
+            const siteTitle = settings.site.title;
             await sendSmtpMail({
                 mail: settings.mail,
                 to: issued.email,
-                subject: `MOCREAI ${purposeText[purpose]}验证码`,
-                text: [`你的 MOCREAI ${purposeText[purpose]}验证码是：${issued.code}`, "", "验证码 10 分钟内有效，请勿转发给他人。"].join("\r\n"),
+                subject: `${siteTitle} ${purposeText[purpose]}验证码`,
+                text: [`你的 ${siteTitle} ${purposeText[purpose]}验证码是：${issued.code}`, "", "验证码 10 分钟内有效，请勿转发给他人。"].join("\r\n"),
             });
         }
         return NextResponse.json({ ok: true });

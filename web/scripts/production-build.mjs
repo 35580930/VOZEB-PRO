@@ -46,11 +46,21 @@ function readBuildFile(fileName) {
 function restoreBuildFiles() {
     for (const file of trackedBuildFiles) {
         if (file.content === undefined) continue;
-        try {
-            writeFileSync(file.path, file.content);
-        } catch (error) {
-            console.error(`恢复 ${file.fileName} 失败：${error instanceof Error ? error.message : String(error)}`);
-            exitCode ||= 1;
+        let restored = false;
+        for (let attempt = 0; attempt < 8; attempt += 1) {
+            try {
+                writeFileSync(file.path, file.content);
+                restored = true;
+                break;
+            } catch (error) {
+                if (attempt === 7) {
+                    console.error(`恢复 ${file.fileName} 失败：${error instanceof Error ? error.message : String(error)}`);
+                    exitCode ||= 1;
+                    break;
+                }
+                Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 100);
+            }
         }
+        if (!restored) exitCode ||= 1;
     }
 }

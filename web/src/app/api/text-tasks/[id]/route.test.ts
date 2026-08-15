@@ -40,4 +40,14 @@ describe("GET /api/text-tasks/[id]", () => {
 
         expect(after).not.toHaveBeenCalled();
     });
+
+    it("returns the manual review reason without waking the task", async () => {
+        mocks.getTextTask.mockResolvedValue({ id: "text-one", userId: "user", status: "running", reviewReason: "文本提交结果无法确认", config: { model: "text-model" } });
+        mocks.getSchedule.mockResolvedValue({ executionPhase: "needs_review" });
+
+        const response = await GET(new Request("http://localhost/api/text-tasks/text-one"), { params: Promise.resolve({ id: "text-one" }) });
+
+        expect(after).not.toHaveBeenCalled();
+        expect((await response.json()).task).toMatchObject({ needsReview: true, reviewReason: "文本提交结果无法确认" });
+    });
 });

@@ -296,12 +296,11 @@ export function readHeader(headers: unknown, key: string) {
 export function assertVideoConfig(config: AiConfig, model: string) {
     if (!model) throw new Error("请先配置视频模型");
     if (!config.baseUrl.startsWith("/api/ai/system/")) throw new Error("请管理员先配置可用的视频系统渠道");
-    if (config.apiFormat === "gemini") throw new Error("Gemini 暂不支持视频生成，请使用 OpenAI 兼容渠道");
 }
 
 export function normalizeVideoSeconds(value: string) {
-    const seconds = Math.floor(Number(value) || 5);
-    return String(Math.max(1, Math.min(20, seconds)));
+    const seconds = Number(value);
+    return String(Number.isSafeInteger(seconds) && (seconds > 0 || seconds === -1) ? seconds : 5);
 }
 
 export function normalizeVideoSize(value: string) {

@@ -5,12 +5,14 @@ const mocks = vi.hoisted(() => ({
     readAdminBackupData: vi.fn(),
     restoreAdminBackupData: vi.fn(),
     listDataDirectory: vi.fn(async () => []),
+    audit: vi.fn(),
 }));
 
-vi.mock("@/lib/auth/session", () => ({ getCurrentUser: vi.fn(async () => ({ id: "admin-one", role: "admin" })) }));
+vi.mock("@/lib/auth/session", () => ({ getCurrentUser: vi.fn(async () => ({ id: "admin-one", role: "admin", status: "active", adminPermissions: ["system.manage"] })) }));
 vi.mock("@/lib/auth/store-normalizers", () => ({ encryptAuthDbSecretsForStorage: vi.fn((value) => value) }));
 vi.mock("@/lib/server/admin-backup-policy", () => ({ mergeAuthBackupSecrets: mocks.mergeAuthBackupSecrets, sanitizeAuthBackup: vi.fn() }));
 vi.mock("@/lib/server/admin-backup-store", () => ({ readAdminBackupData: mocks.readAdminBackupData, restoreAdminBackupData: mocks.restoreAdminBackupData }));
+vi.mock("@/lib/server/audit-log-store", () => ({ auditActorFromRequest: vi.fn(() => ({ id: "admin-one" })), safeRecordAuditLog: mocks.audit }));
 vi.mock("@/lib/server/database", () => ({ getDatabaseProvider: vi.fn(() => "file") }));
 vi.mock("@/lib/server/data-adapter", () => ({
     copyDataFile: vi.fn(),
@@ -63,6 +65,12 @@ describe("POST /api/admin/backup", () => {
         expect(response.status).toBe(200);
         expect(mocks.mergeAuthBackupSecrets).toHaveBeenCalledWith(auth, expect.any(Object));
         expect(mocks.restoreAdminBackupData).toHaveBeenCalledWith(expect.any(Object), { mode: "account-config" });
+        expect(mocks.audit).toHaveBeenCalledWith(
+            expect.objectContaining({
+                action: "admin.backup.restore",
+                metadata: { mode: "account-config", imported: ["auth"] },
+            }),
+        );
     });
 });
 

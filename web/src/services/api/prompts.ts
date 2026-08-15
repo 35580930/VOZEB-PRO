@@ -17,6 +17,14 @@ export type Prompt = {
 
 export const ALL_PROMPTS_OPTION = "全部";
 
+const promptCategoryLabels: Readonly<Record<string, string>> = {
+    "UI 与社交媒体": "UI 与社交",
+};
+
+export function promptCategoryLabel(category: string) {
+    return promptCategoryLabels[category] || category;
+}
+
 export type PromptListResponse = {
     items: Prompt[];
     tags: string[];
@@ -24,7 +32,15 @@ export type PromptListResponse = {
     total: number;
 };
 
-export async function fetchPrompts({ keyword = "", tag = [], category = ALL_PROMPTS_OPTION, page, pageSize, random = false }: { keyword?: string; tag?: string[]; category?: string; page?: number; pageSize?: number; random?: boolean } = {}) {
+export async function fetchPrompts({
+    keyword = "",
+    tag = [],
+    category = ALL_PROMPTS_OPTION,
+    page,
+    pageSize,
+    random = false,
+    includeFacets = true,
+}: { keyword?: string; tag?: string[]; category?: string; page?: number; pageSize?: number; random?: boolean; includeFacets?: boolean } = {}) {
     const params = serializeApiParams(
         compactApiParams({
             ...(keyword ? { keyword } : {}),
@@ -33,6 +49,7 @@ export async function fetchPrompts({ keyword = "", tag = [], category = ALL_PROM
             ...(random ? { random: "1" } : {}),
             ...(page ? { page } : {}),
             ...(pageSize ? { pageSize } : {}),
+            ...(!includeFacets ? { includeFacets: "0" } : {}),
         }),
     );
     const response = await fetch(`/api/prompts${params.size ? `?${params}` : ""}`);

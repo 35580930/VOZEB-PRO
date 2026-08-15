@@ -13,7 +13,7 @@ export async function POST(request: NextRequest) {
     try {
         const install = await getInstallStatus();
         if (!install.ready && !install.firstAdminRequired) return NextResponse.json({ error: "请先完成数据库初始化并配置加密密钥" }, { status: 503 });
-        const body = await readJsonBody<{ username?: string; email?: string; emailCode?: string; displayName?: string; password?: string; referralCode?: string; referralSource?: string; installToken?: string }>(request);
+        const body = await readJsonBody<{ username?: string; email?: string; emailCode?: string; displayName?: string; password?: string; referralCode?: string; referralSource?: string; policyAccepted?: boolean; installToken?: string }>(request);
         const referralCodeProvided = Object.prototype.hasOwnProperty.call(body, "referralCode");
         const cookieReferralCode = request.cookies.get(REFERRAL_COOKIE_NAME)?.value;
         const referralCode = install.firstAdminRequired ? undefined : referralCodeProvided ? body.referralCode?.trim() || undefined : cookieReferralCode;
@@ -32,6 +32,7 @@ export async function POST(request: NextRequest) {
                   emailCode: body.emailCode,
                   displayName: body.displayName,
                   password: body.password || "",
+                  policyAccepted: body.policyAccepted === true,
                   referralCode,
                   referralSource,
                   referralClientIp: getClientIp(request),

@@ -198,7 +198,7 @@ export const adminHelpArticles: AdminHelpArticle[] = [
         steps: [
             {
                 title: "添加并启用上游渠道",
-                description: "按五步向导选择协议、配置连接、获取模型、自动同步逻辑模型并复核启用；未知上游使用自定义协议助手生成可复核草稿。",
+                description: "按五步向导选择协议、配置连接、添加模型、自动同步逻辑模型并复核启用；没有公开目录时手动填写模型 ID，未知上游使用自定义协议助手生成可复核草稿。",
                 checks: ["SD2 与 Stable Diffusion 协议没有混用", "Base URL 不包含错误重复路径", "无鉴权协议不会强制要求 API Key", "对应用户工作台已完成真实调用", "密钥不会返回普通用户端"],
             },
             {
@@ -234,9 +234,9 @@ export const adminHelpArticles: AdminHelpArticle[] = [
         id: "system",
         category: "系统管理",
         title: "站点资料、基础设置与用户权利",
-        summary: "统一管理品牌、注册与邮箱、生成默认值、账号注销和版本信息。",
-        keywords: ["站点资料", "Logo", "ICO", "SEO", "注册", "SMTP", "邮箱", "默认参数", "注销申请", "版本更新"],
-        purpose: "保持公开页面、用户工作区和后台品牌一致，并让注册、邮件、默认生成设置和用户权利处理具有明确运营边界。",
+        summary: "统一管理品牌、注册与邮箱、生成、数据维护、账号注销和版本信息。",
+        keywords: ["站点资料", "Logo", "ICO", "SEO", "注册", "SMTP", "邮箱", "默认参数", "数据维护", "注销申请", "版本更新"],
+        purpose: "保持公开页面、用户工作区和后台品牌一致，并让注册、邮件、生成、技术数据维护和用户权利处理具有明确运营边界。",
         steps: [
             {
                 title: "维护站点资料和品牌",
@@ -244,9 +244,9 @@ export const adminHelpArticles: AdminHelpArticle[] = [
                 checks: ["Logo、ICO、favicon 和后台标识一致", "默认与回退图标均不是三角形品牌", "浅色和深色背景下清晰可读"],
             },
             {
-                title: "配置注册、SMTP 和生成默认值",
-                description: "先测试 SMTP，再开启依赖邮件的注册、找回和换绑流程；生成默认参数按真实模型能力设置。",
-                checks: ["测试邮件成功到达", "注册策略与运营计划一致", "默认参数不会超出上游支持范围"],
+                title: "配置注册、SMTP、生成与数据维护",
+                description: "先测试 SMTP，再开启依赖邮件的注册、找回和换绑流程；生成参数按真实模型能力设置，技术到期数据按部署负载分批维护。",
+                checks: ["测试邮件成功到达", "注册策略与运营计划一致", "生成参数不会超出上游支持范围", "维护批次和生产调度已验证"],
             },
             {
                 title: "处理注销申请",
@@ -263,7 +263,7 @@ export const adminHelpArticles: AdminHelpArticle[] = [
         warnings: ["更换 Logo 后要同时检查 favicon、manifest、metadata、登录页、用户端、后台和助手头像。", "开启邮箱注册前必须完成真实收件测试，避免用户无法登录或找回密码。"],
         links: [
             { label: "站点资料", description: "管理品牌、SEO 与首页内容", section: "site" },
-            { label: "基础设置", description: "管理注册、邮箱和生成默认值", section: "settings" },
+            { label: "基础设置", description: "管理注册、邮箱、生成与数据维护", section: "settings" },
             { label: "注销申请", description: "处理用户权利请求", section: "accountDeletion" },
             { label: "版本更新", description: "查看版本与升级信息", section: "updates" },
         ],

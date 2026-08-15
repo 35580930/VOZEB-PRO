@@ -49,6 +49,22 @@ describe("Agent 返回文案", () => {
         expect(agentRunCompletionReply(run)).toBe("科技连接无限");
     });
 
+    it("never cuts an emoji surrogate pair while shortening generated text", () => {
+        const content = `${"字".repeat(1599)}😊后续`;
+        const message = agentTaskCompletionMessage(task({ title: "长文", result: { content } }));
+
+        expect(message).toContain(`${"字".repeat(1599)}😊`);
+        expect(message).not.toMatch(/[\uD800-\uDFFF]/u);
+    });
+
+    it("keeps the final emoji intact in concise text results", () => {
+        const content = `${"字".repeat(499)}😊后续`;
+        const run = agentRun({ prompt: "只需要文本产物", tasks: [task({ result: { content } })] });
+
+        expect(agentRunCompletionReply(run)).toBe(`${"字".repeat(499)}😊`);
+        expect(agentRunCompletionReply(run)).not.toMatch(/[\uD800-\uDFFF]/u);
+    });
+
     it("preserves the first failed task cause instead of replacing it with a dependency error", () => {
         expect(agentRunFailureMessage([task({ title: "辣妹图", status: "failed", error: "模型 gpt-image-2-4k 暂不可用" }), task({ title: "配套视频", status: "ready", dependencies: ["task"] })])).toContain("「辣妹图」：模型 gpt-image-2-4k 暂不可用");
     });

@@ -37,9 +37,11 @@ function nonNegativeNumber(value: unknown) {
     return Number.isFinite(number) ? Math.max(0, number) : 0;
 }
 
-type UserUpdatePatch = Partial<Omit<UserRecord, "id" | "createdAt" | "updatedAt" | "email" | "avatarStorageKey">> & {
+type UserUpdatePatch = Partial<Omit<UserRecord, "id" | "createdAt" | "updatedAt" | "email" | "avatarStorageKey" | "mfaSecretCiphertext" | "mfaEnabledAt">> & {
     email?: string | null;
     avatarStorageKey?: string | null;
+    mfaSecretCiphertext?: string | null;
+    mfaEnabledAt?: string | null;
 };
 
 export class UsersRepository {
@@ -307,8 +309,8 @@ export class UsersRepository {
     async create(user: UserRecord) {
         const result = await this.db.query(
             `
-            INSERT INTO users (id, account_id, username, email, display_name, bio, avatar_storage_key, role, status, plan_id, points_balance, password_hash, last_login_at, created_at, updated_at)
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
+            INSERT INTO users (id, account_id, username, email, display_name, bio, avatar_storage_key, role, admin_permissions, status, plan_id, points_balance, password_hash, mfa_secret_ciphertext, mfa_enabled_at, terms_version, terms_url, privacy_version, privacy_url, policy_accepted_at, last_login_at, created_at, updated_at)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::jsonb, $10, $11, $12::numeric, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23)
             RETURNING *
             `,
             [
@@ -320,10 +322,18 @@ export class UsersRepository {
                 user.bio,
                 user.avatarStorageKey || null,
                 user.role,
+                JSON.stringify(user.adminPermissions),
                 user.status,
                 user.planId,
                 user.pointsBalance,
                 user.passwordHash,
+                user.mfaSecretCiphertext || null,
+                user.mfaEnabledAt || null,
+                user.registrationConsent?.termsVersion || null,
+                user.registrationConsent?.termsUrl || null,
+                user.registrationConsent?.privacyVersion || null,
+                user.registrationConsent?.privacyUrl || null,
+                user.registrationConsent?.acceptedAt || null,
                 user.lastLoginAt || null,
                 user.createdAt,
                 user.updatedAt,
@@ -335,11 +345,34 @@ export class UsersRepository {
     async createWithNextAccountId(user: Omit<UserRecord, "accountId">) {
         const result = await this.db.query(
             `
-            INSERT INTO users (id, account_id, username, email, display_name, bio, avatar_storage_key, role, status, plan_id, points_balance, password_hash, last_login_at, created_at, updated_at)
-            VALUES ($1, nextval('user_account_id_seq'), $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
+            INSERT INTO users (id, account_id, username, email, display_name, bio, avatar_storage_key, role, admin_permissions, status, plan_id, points_balance, password_hash, mfa_secret_ciphertext, mfa_enabled_at, terms_version, terms_url, privacy_version, privacy_url, policy_accepted_at, last_login_at, created_at, updated_at)
+            VALUES ($1, nextval('user_account_id_seq'), $2, $3, $4, $5, $6, $7, $8::jsonb, $9, $10, $11::numeric, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22)
             RETURNING *
             `,
-            [user.id, user.username, user.email || null, user.displayName, user.bio, user.avatarStorageKey || null, user.role, user.status, user.planId, user.pointsBalance, user.passwordHash, user.lastLoginAt || null, user.createdAt, user.updatedAt],
+            [
+                user.id,
+                user.username,
+                user.email || null,
+                user.displayName,
+                user.bio,
+                user.avatarStorageKey || null,
+                user.role,
+                JSON.stringify(user.adminPermissions),
+                user.status,
+                user.planId,
+                user.pointsBalance,
+                user.passwordHash,
+                user.mfaSecretCiphertext || null,
+                user.mfaEnabledAt || null,
+                user.registrationConsent?.termsVersion || null,
+                user.registrationConsent?.termsUrl || null,
+                user.registrationConsent?.privacyVersion || null,
+                user.registrationConsent?.privacyUrl || null,
+                user.registrationConsent?.acceptedAt || null,
+                user.lastLoginAt || null,
+                user.createdAt,
+                user.updatedAt,
+            ],
         );
         return mapUser(result.rows[0]);
     }
@@ -347,6 +380,9 @@ export class UsersRepository {
     async update(id: string, patch: UserUpdatePatch) {
         const hasEmail = Object.prototype.hasOwnProperty.call(patch, "email");
         const hasAvatarStorageKey = Object.prototype.hasOwnProperty.call(patch, "avatarStorageKey");
+        const hasMfaSecret = Object.prototype.hasOwnProperty.call(patch, "mfaSecretCiphertext");
+        const hasMfaEnabledAt = Object.prototype.hasOwnProperty.call(patch, "mfaEnabledAt");
+        const hasAdminPermissions = Object.prototype.hasOwnProperty.call(patch, "adminPermissions");
         const result = await this.db.query(
             `
             UPDATE users SET
@@ -356,16 +392,40 @@ export class UsersRepository {
                 bio = COALESCE($6, bio),
                 avatar_storage_key = CASE WHEN $7::boolean THEN $8 ELSE avatar_storage_key END,
                 role = COALESCE($9, role),
-                status = COALESCE($10, status),
-                plan_id = COALESCE($11, plan_id),
-                points_balance = COALESCE($12, points_balance),
-                password_hash = COALESCE($13, password_hash),
-                last_login_at = COALESCE($14, last_login_at),
+                admin_permissions = CASE WHEN $10::boolean THEN $11::jsonb ELSE admin_permissions END,
+                status = COALESCE($12, status),
+                plan_id = COALESCE($13, plan_id),
+                points_balance = COALESCE($14::numeric, points_balance),
+                password_hash = COALESCE($15, password_hash),
+                last_login_at = COALESCE($16, last_login_at),
+                mfa_secret_ciphertext = CASE WHEN $17::boolean THEN $18 ELSE mfa_secret_ciphertext END,
+                mfa_enabled_at = CASE WHEN $19::boolean THEN $20 ELSE mfa_enabled_at END,
                 updated_at = now()
             WHERE id = $1
             RETURNING *
             `,
-            [id, patch.username, hasEmail, patch.email ?? null, patch.displayName, patch.bio, hasAvatarStorageKey, patch.avatarStorageKey ?? null, patch.role, patch.status, patch.planId, patch.pointsBalance, patch.passwordHash, patch.lastLoginAt],
+            [
+                id,
+                patch.username,
+                hasEmail,
+                patch.email ?? null,
+                patch.displayName,
+                patch.bio,
+                hasAvatarStorageKey,
+                patch.avatarStorageKey ?? null,
+                patch.role,
+                hasAdminPermissions,
+                JSON.stringify(patch.adminPermissions || []),
+                patch.status,
+                patch.planId,
+                patch.pointsBalance,
+                patch.passwordHash,
+                patch.lastLoginAt,
+                hasMfaSecret,
+                patch.mfaSecretCiphertext ?? null,
+                hasMfaEnabledAt,
+                patch.mfaEnabledAt ?? null,
+            ],
         );
         return result.rows[0] ? mapUser(result.rows[0]) : null;
     }
@@ -384,6 +444,11 @@ export class UsersRepository {
         const result = await this.db.query("SELECT id FROM users WHERE role = 'admin' AND status = 'active' ORDER BY id FOR UPDATE");
         return result.rows.map((row) => String(row.id));
     }
+
+    async lockActiveFullAdminIds(requiredPermissions: readonly string[]) {
+        const result = await this.db.query("SELECT id FROM users WHERE role = 'admin' AND status = 'active' AND admin_permissions @> $1::jsonb ORDER BY created_at ASC, id ASC FOR UPDATE", [JSON.stringify(requiredPermissions)]);
+        return result.rows.map((row) => stringValue(row.id));
+    }
 }
 
 export class SessionsRepository {
@@ -392,6 +457,11 @@ export class SessionsRepository {
     async create(session: SessionRecord) {
         const result = await this.db.query("INSERT INTO sessions (id, user_id, token_hash, created_at, expires_at) VALUES ($1, $2, $3, $4, $5) RETURNING *", [session.id, session.userId, session.tokenHash, session.createdAt, session.expiresAt]);
         return mapSession(result.rows[0]);
+    }
+
+    async deleteByUserIdExcept(userId: string, sessionId: string) {
+        const result = await this.db.query("DELETE FROM sessions WHERE user_id = $1 AND id <> $2", [userId, sessionId]);
+        return result.rowCount || 0;
     }
 
     async getByTokenHash(tokenHash: string) {
@@ -473,8 +543,19 @@ export class SessionsRepository {
         return result.rowCount || 0;
     }
 
-    async pruneExpired(now = new Date()) {
-        const result = await this.db.query("DELETE FROM sessions WHERE expires_at <= $1", [now.toISOString()]);
+    async pruneExpired(now: Date, limit: number) {
+        const result = await this.db.query(
+            `WITH candidates AS (
+                SELECT id FROM sessions
+                WHERE expires_at <= $1
+                ORDER BY expires_at ASC, id ASC
+                LIMIT $2
+            )
+            DELETE FROM sessions
+            USING candidates
+            WHERE sessions.id = candidates.id`,
+            [now.toISOString(), limit],
+        );
         return result.rowCount || 0;
     }
 }
@@ -520,6 +601,22 @@ export class EmailCodesRepository {
     async updateAttempt(id: string, attempts: number, consumedAt?: string) {
         const result = await this.db.query("UPDATE email_codes SET attempts = $2, consumed_at = $3 WHERE id = $1 RETURNING *", [id, attempts, consumedAt || null]);
         return result.rows[0] ? mapEmailCode(result.rows[0]) : null;
+    }
+
+    async pruneExpired(now: Date, limit: number) {
+        const result = await this.db.query(
+            `WITH candidates AS (
+                SELECT id FROM email_codes
+                WHERE expires_at <= $1 OR consumed_at IS NOT NULL
+                ORDER BY COALESCE(consumed_at, expires_at) ASC, id ASC
+                LIMIT $2
+            )
+            DELETE FROM email_codes
+            USING candidates
+            WHERE email_codes.id = candidates.id`,
+            [now.toISOString(), limit],
+        );
+        return result.rowCount || 0;
     }
 }
 

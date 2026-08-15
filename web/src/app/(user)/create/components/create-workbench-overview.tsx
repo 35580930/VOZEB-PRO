@@ -211,7 +211,7 @@ function RunningTasksCard({ tasks, loading, error, onRetry }: { tasks: CreateOve
 
 function TaskRow({ task }: { task: CreateOverviewTask }) {
     const isImage = task.kind === "image";
-    const href = task.conversationId ? createConversationHref(task.conversationId) : task.source === "canvas" ? "/canvas" : isImage ? "/image" : "/video";
+    const href = task.conversationId ? createConversationHref(task.conversationId) : task.source === "canvas" ? "/canvas" : "/create";
     const Icon = task.kind === "agent" ? Sparkles : isImage ? FileImage : Video;
     const status = task.status === "paused" ? "已暂停" : task.status === "planning" ? "规划中" : "运行中";
     return (

@@ -20,6 +20,7 @@ type EndpointMatch = EndpointSpec & {
 };
 
 const ENDPOINT_SPECS: EndpointSpec[] = [
+    { marker: "/kyyReactApiServer/v2/model-center/tasks", kind: "unknown" },
     { marker: "/v1/seedance-special/videos", kind: "video" },
     { marker: "/sdapi/v1/txt2img", kind: "image" },
     { marker: "/sdapi/v1/img2img", kind: "image-edit" },
@@ -34,7 +35,7 @@ const ENDPOINT_SPECS: EndpointSpec[] = [
     { marker: "/videos", kind: "video" },
 ];
 
-const IMAGE_REFERENCE_KEYS = new Set(["image", "images", "image_url", "image_urls", "input_image", "input_images", "ref_assets", "reference_image", "reference_images", "first_frame_url", "first_frame_image"]);
+const IMAGE_REFERENCE_KEYS = new Set(["image", "images", "image_url", "image_urls", "input_image", "input_images", "ref_assets", "reference_image", "reference_images", "first_frame_url", "first_frame_image", "last_frame_url", "last_frame_image"]);
 const VIDEO_REFERENCE_KEYS = new Set(["referencevideo", "referencevideos", "reference_video", "reference_videos", "video", "videos", "input_video", "input_videos"]);
 const AUDIO_REFERENCE_KEYS = new Set(["referenceaudio", "referenceaudios", "reference_audio", "reference_audios", "audio", "audios", "input_audio", "input_audios"]);
 const RESULT_URL_KEYS = new Set([
@@ -151,7 +152,7 @@ function matchEndpointUrl(value: string): EndpointMatch | null {
         const pathname = url.pathname.replace(/\/+$/g, "");
         const lowerPath = pathname.toLowerCase();
         for (const spec of ENDPOINT_SPECS) {
-            const index = lowerPath.lastIndexOf(spec.marker);
+            const index = lowerPath.lastIndexOf(spec.marker.toLowerCase());
             if (index < 0) continue;
             const end = index + spec.marker.length;
             if (lowerPath.length !== end && lowerPath[end] !== "/") continue;
@@ -184,7 +185,7 @@ function matchKnownEndpointUrl(value: string) {
 
 function matchEndpointText(text: string): EndpointMatch | null {
     const source = text.toLowerCase();
-    const spec = ENDPOINT_SPECS.find((item) => source.includes(item.marker));
+    const spec = ENDPOINT_SPECS.find((item) => source.includes(item.marker.toLowerCase()));
     return spec ? { ...spec, createPath: spec.marker } : null;
 }
 
@@ -246,9 +247,11 @@ function looksLikeRequestBody(value: Record<string, unknown>) {
 }
 
 function inferKind(endpoint: EndpointMatch | null, requestBody: unknown, raw: string): ExampleKind {
-    if (endpoint?.kind) return endpoint.kind;
+    if (endpoint?.kind && endpoint.kind !== "unknown") return endpoint.kind;
     if (isRecord(requestBody)) {
         if (requestBody.messages || requestBody.input) return "text";
+        if (/seedream|image-gen|图片模型/i.test(raw)) return Object.keys(requestBody).some((key) => isReferenceKey(key)) ? "image-edit" : "image";
+        if (/seedance|video-gen|视频模型/i.test(raw)) return "video";
         if (requestBody.duration || requestBody.seconds || requestBody.ratio || requestBody.resolution || requestBody.referenceImages || requestBody.referenceVideos) return "video";
         if (Object.keys(requestBody).some((key) => isReferenceKey(key))) return "image-edit";
         if (requestBody.prompt) return "image";
@@ -274,11 +277,12 @@ function findModel(requestBody: unknown, blocks: unknown[], raw: string) {
 
 function inferProtocol(raw: string, endpoint: EndpointMatch | null, requestBody: unknown, current: SystemChannelProtocol): SystemChannelProtocol {
     const source = `${raw}\n${endpoint?.requestUrl || ""}`.toLowerCase();
-    if (source.includes("/v1/seedance-special/videos") || source.includes("sd_2.0_special_") || source.includes("sd_2.0_fast_special_")) return "seedance-special";
+    if (source.includes("/kyyreactapiserver/v2/model-center/tasks")) return "yumeng";
+    if (source.includes("/v1/seedance-special/videos") || source.includes("sd_2.0_special_") || source.includes("sd_2.0_fast_special_")) return "custom";
     if (source.includes("/sdapi/v1/txt2img") || source.includes("/sdapi/v1/img2img") || source.includes("alwayson_scripts")) return "custom";
     if (source.includes("sub2api") || textContainsUrlHost(source, ["code2alita.com"])) return "sub2api";
     if (/\bnew\s*api\b|new-api|one-api/i.test(source)) return "newapi";
-    if (textContainsUrlHost(source, ["globalaiopc.com"]) || source.includes("/videos/videos") || source.includes("referenceimages")) return "globalaiopc";
+    if (textContainsUrlHost(source, ["globalaiopc.com"]) || source.includes("/videos/videos") || source.includes("referenceimages")) return "custom";
     if (textContainsUrlHost(source, ["ark.cn-beijing.volces.com"])) return "volcengine-video";
     if (source.includes("seedance") || source.includes("/contents/generations/tasks") || source.includes("/api/plan/v3")) return "seedance";
     if (isRecord(requestBody) && hasSub2ApiImageReferenceShape(requestBody)) return "sub2api";
@@ -361,7 +365,7 @@ function collectReferenceFields(value: Record<string, unknown>) {
 }
 
 function inferReferenceRule(raw: string, kind: ExampleKind, protocol: SystemChannelProtocol, fields: string[]) {
-    if (/multipart\/form-data|\s-F\s|--form\b/i.test(raw)) return "参考图使用 multipart/form-data 文件上传，由 MOCREAI 自动组装。";
+    if (/multipart\/form-data|\s-F\s|--form\b/i.test(raw)) return "参考图使用 multipart/form-data 文件上传，由平台自动组装。";
     if (protocol === "sub2api") return "图生图使用 JSON 请求体；参考图字段为 image_urls 字符串数组。站内素材会先保存到服务器，再使用站点地址提供给上游读取。";
     if (!fields.length && kind !== "image-edit" && kind !== "video") return "";
     const fieldText = fields.length ? fields.join("、") : kind === "image-edit" ? "image/images/ref_assets" : "image/images/referenceImages";
@@ -371,7 +375,7 @@ function inferReferenceRule(raw: string, kind: ExampleKind, protocol: SystemChan
 }
 
 function videoQueryPath(createPath: string) {
-    if (createPath === "/v1/seedance-special/videos") return "/v1/videos/:task_id";
+    if (createPath === "/v1/seedance-special/videos") return "/v1/result/:task_id";
     if (createPath === "/videos/videos") return "/result/:task_id";
     if (createPath === "/contents/generations/tasks") return "/contents/generations/tasks/:task_id";
     if (createPath === "/videos") return "/videos/:task_id";
@@ -434,6 +438,7 @@ function formatPath(path: Array<string | number>) {
 }
 
 function protocolLabel(protocol: SystemChannelProtocol) {
+    if (protocol === "yumeng") return "昱梦";
     if (protocol === "sub2api") return "sub2api";
     if (protocol === "newapi") return "New API";
     if (protocol === "vozeb-recommended") return "VOZEB推荐";

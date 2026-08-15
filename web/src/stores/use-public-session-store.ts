@@ -2,19 +2,20 @@
 
 import { create } from "zustand";
 
+import { resolveSiteTitle } from "@/lib/site-brand";
 import type { LocalUser } from "@/stores/use-user-store";
 import type { PublicSystemSettings } from "@/stores/use-config-store";
 
-type PublicSiteSettings = {
+export type PublicSiteSettings = {
     title: string;
     logoUrl: string;
     iconUrl?: string;
     seoDescription?: string;
     footerCopyright?: string;
     termsUrl?: string;
+    termsVersion?: string;
     privacyUrl?: string;
-    homeShowcaseMode?: "random" | "custom";
-    homeShowcaseItems?: Array<{ id: string; title: string; coverUrl: string; prompt: string; tags: string[]; category: string }>;
+    privacyVersion?: string;
     friendLinks?: Array<{ id: string; label: string; url: string; enabled: boolean }>;
     socials?: Record<string, { enabled: boolean; label: string; url: string }>;
 };
@@ -70,6 +71,26 @@ export function loadPublicSession({ force = false }: { force?: boolean } = {}) {
 export function notifyPublicSettingsChanged() {
     sessionLoadedAt = 0;
     if (typeof window !== "undefined") window.dispatchEvent(new Event(PUBLIC_SETTINGS_CHANGED_EVENT));
+}
+
+export function applyPublicSiteSettings(site: PublicSiteSettings) {
+    usePublicSessionStore.setState((state) => {
+        const payload = state.payload || {};
+        return {
+            payload: {
+                ...payload,
+                settings: {
+                    ...(payload.settings || {}),
+                    site: {
+                        ...(payload.settings?.site || {}),
+                        ...site,
+                        title: resolveSiteTitle(site.title),
+                        logoUrl: site.logoUrl?.trim() || "/logo.svg",
+                    },
+                },
+            },
+        };
+    });
 }
 
 export function resetPublicSession() {

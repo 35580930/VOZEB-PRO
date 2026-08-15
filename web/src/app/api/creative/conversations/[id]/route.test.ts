@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
     getCurrentUser: vi.fn(),
-    getWorkbenchSessionForUser: vi.fn(),
+    getConversationForUser: vi.fn(),
     deleteConversationsForUser: vi.fn(),
 }));
 
@@ -16,19 +16,18 @@ vi.mock("@/lib/server/creative-runtime-service", () => ({
             super(message);
         }
     },
-    getConversationForUser: vi.fn(),
-    getWorkbenchSessionForUser: mocks.getWorkbenchSessionForUser,
+    getConversationForUser: mocks.getConversationForUser,
     updateConversationForUser: vi.fn(),
     deleteConversationsForUser: mocks.deleteConversationsForUser,
 }));
 
 import { DELETE, GET } from "./route";
 
-describe("creative workbench conversation detail route", () => {
+describe("creative conversation detail route", () => {
     beforeEach(() => {
         vi.clearAllMocks();
         mocks.getCurrentUser.mockResolvedValue({ id: "user-one" });
-        mocks.getWorkbenchSessionForUser.mockResolvedValue({ id: "conversation-one", recordId: "record-one", messages: [], hasMore: false });
+        mocks.getConversationForUser.mockResolvedValue({ id: "conversation-one", title: "会话" });
         mocks.deleteConversationsForUser.mockResolvedValue(1);
     });
 
@@ -39,12 +38,12 @@ describe("creative workbench conversation detail route", () => {
         await expect(response.json()).resolves.toMatchObject({ code: 0, data: { deleted: true } });
     });
 
-    it("loads one owned workbench conversation on demand", async () => {
-        const response = await GET(new Request("http://localhost/api/creative/conversations/conversation-one?view=workbench&workspace=video"), { params: Promise.resolve({ id: "conversation-one" }) });
+    it("loads one owned conversation on demand", async () => {
+        const response = await GET(new Request("http://localhost/api/creative/conversations/conversation-one"), { params: Promise.resolve({ id: "conversation-one" }) });
         const payload = await response.json();
 
         expect(response.status).toBe(200);
-        expect(mocks.getWorkbenchSessionForUser).toHaveBeenCalledWith("user-one", "conversation-one", "video", 0);
-        expect(payload.data.session).toEqual(expect.objectContaining({ id: "conversation-one", recordId: "record-one" }));
+        expect(mocks.getConversationForUser).toHaveBeenCalledWith("user-one", "conversation-one");
+        expect(payload.data.conversation).toEqual(expect.objectContaining({ id: "conversation-one" }));
     });
 });

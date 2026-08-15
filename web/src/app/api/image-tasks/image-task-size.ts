@@ -1,7 +1,7 @@
 import { closestImageAspectRatio, parseImageDimensions } from "@/lib/image-size";
 import { GenerationSubmissionSafeFailure } from "@/lib/server/generation-submission-error";
 
-import { DEFAULT_IMAGE_SHORT_SIDE, IMAGE_MIN_PIXELS, IMAGE_SIZE_STEP, QUALITY_BASE } from "./image-task-types";
+import { DEFAULT_IMAGE_SHORT_SIDE, IMAGE_MIN_PIXELS, IMAGE_SIZE_STEP, QUALITY_ALIASES, QUALITY_BASE } from "./image-task-types";
 
 export function resolveRequestSize(quality: string | undefined, size: string) {
     try {
@@ -18,6 +18,20 @@ export function resolveRequestSize(quality: string | undefined, size: string) {
         if (error instanceof GenerationSubmissionSafeFailure) throw error;
         throw new GenerationSubmissionSafeFailure(error instanceof Error ? error.message : "图片尺寸参数无效");
     }
+}
+
+export function resolveResultSize(quality: string | undefined, size: string) {
+    const value = size.trim();
+    const dimensions = parseImageDimensions(value);
+    if (dimensions) {
+        validateImageDimensions(dimensions.width, dimensions.height);
+        return `${dimensions.width}x${dimensions.height}`;
+    }
+    const qualityValue = String(quality || "")
+        .trim()
+        .toLowerCase();
+    const normalizedQuality = QUALITY_ALIASES[qualityValue] || qualityValue;
+    return resolveRequestSize(QUALITY_BASE[normalizedQuality] ? normalizedQuality : undefined, value);
 }
 
 export function imageRequestAspectRatio(size: string) {

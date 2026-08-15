@@ -2,12 +2,13 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
     getInstallStatus: vi.fn(),
+    getPublicSiteSettings: vi.fn(),
     redirect: vi.fn(),
 }));
 
 vi.mock("next/navigation", () => ({ redirect: mocks.redirect }));
 vi.mock("@/lib/server/install-status", () => ({ getInstallStatus: mocks.getInstallStatus }));
-vi.mock("./home-client", () => ({ default: () => null }));
+vi.mock("@/lib/server/site-metadata", () => ({ getPublicSiteSettings: mocks.getPublicSiteSettings }));
 vi.mock("./install/install-scroll-unlock", () => ({ InstallScrollUnlock: () => null }));
 vi.mock("./install/install-wizard", () => ({ InstallWizard: () => null }));
 
@@ -17,6 +18,16 @@ import InstallPage from "./install/page";
 describe("installation page routing", () => {
     beforeEach(() => {
         vi.clearAllMocks();
+        mocks.getPublicSiteSettings.mockResolvedValue({
+            title: "VOZEB PRO",
+            logoUrl: "/logo.svg",
+            seoDescription: "",
+            footerCopyright: "",
+            privacyUrl: "",
+            termsUrl: "",
+            friendLinks: [],
+            socials: {},
+        });
         mocks.redirect.mockImplementation((path: string) => {
             throw new Error(`redirect:` + path);
         });

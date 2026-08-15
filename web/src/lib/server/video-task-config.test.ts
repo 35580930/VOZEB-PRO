@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { normalizeVideoAspectRatio, resolveUpstreamVideoDuration, resolveVideoGenerationParameters, withVideoReferenceFidelity } from "./video-task-config";
+import { normalizeVideoAspectRatio, normalizeVideoSize, resolveUpstreamVideoDuration, resolveVideoGenerationParameters, withVideoReferenceFidelity } from "./video-task-config";
 
 describe("resolveVideoGenerationParameters", () => {
     const defaults = { imageSize: "9:16", videoQuality: "1080", videoSeconds: 10 };
@@ -27,6 +27,10 @@ describe("resolveVideoGenerationParameters", () => {
         expect(resolveVideoGenerationParameters({ videoSeconds: "-1" }, defaults).videoSeconds).toBe(-1);
     });
 
+    it("does not impose a platform duration ceiling before provider normalization", () => {
+        expect(resolveVideoGenerationParameters({ videoSeconds: "60" }, defaults).videoSeconds).toBe(60);
+    });
+
     it("selects the first supported duration that is not shorter than the request", () => {
         expect(resolveUpstreamVideoDuration(7, 5, { durationRange: "5、8、10 秒" })).toBe(8);
         expect(resolveUpstreamVideoDuration(12, 5, { durationRange: "5、8、10 秒" })).toBe(10);
@@ -44,14 +48,16 @@ describe("resolveVideoGenerationParameters", () => {
         expect(resolveUpstreamVideoDuration(-1, 5, { durationRange: "-1 智能或 5-15 秒" })).toBe(-1);
     });
 
-    it("normalizes pixel dimensions to the provider aspect-ratio format", () => {
+    it("keeps exact pixel dimensions while exposing a normalized ratio separately", () => {
         expect(normalizeVideoAspectRatio("1280x720")).toBe("16:9");
         expect(normalizeVideoAspectRatio("720 × 1280")).toBe("9:16");
-        expect(resolveVideoGenerationParameters({ size: "1024x1024" }, defaults).size).toBe("1:1");
+        expect(normalizeVideoSize("720 × 1280")).toBe("720x1280");
+        expect(resolveVideoGenerationParameters({ size: "1024x1024" }, defaults).size).toBe("1024x1024");
+        expect(resolveVideoGenerationParameters({ size: "1280x720" }, defaults).size).toBe("1280x720");
     });
 
     it("adds a server-side subject fidelity constraint for visual references", () => {
-        const prompt = withVideoReferenceFidelity("让人物自然挥手", [{ type: "image" }]);
+        const prompt = withVideoReferenceFidelity("让人物自然挥手", [{ type: "image", url: "https://cdn.example.com/reference.png" }]);
 
         expect(prompt).toContain("让人物自然挥手");
         expect(prompt).toContain("将参考图作为首帧、主体身份、外观和场景的主要依据");
@@ -60,7 +66,7 @@ describe("resolveVideoGenerationParameters", () => {
 
     it("does not change text-to-video or duplicate the fidelity constraint", () => {
         expect(withVideoReferenceFidelity("生成海边日落", [])).toBe("生成海边日落");
-        const once = withVideoReferenceFidelity("让镜头缓慢推进", [{ type: "video" }]);
-        expect(withVideoReferenceFidelity(once, [{ type: "video" }])).toBe(once);
+        const once = withVideoReferenceFidelity("让镜头缓慢推进", [{ type: "video", url: "https://cdn.example.com/reference.mp4" }]);
+        expect(withVideoReferenceFidelity(once, [{ type: "video", url: "https://cdn.example.com/reference.mp4" }])).toBe(once);
     });
 });

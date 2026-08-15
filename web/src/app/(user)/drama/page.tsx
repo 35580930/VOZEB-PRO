@@ -103,35 +103,57 @@ export default function DramaPage() {
                     />
                 )}
             </div>
-            <Modal title="新建短剧项目" open={open} confirmLoading={creating} onCancel={() => setOpen(false)} onOk={() => void create()} okText="创建并进入" cancelText="取消">
-                <div className="space-y-4 pt-2 sm:space-y-5 sm:pt-3">
-                    <label className="block space-y-2.5">
-                        <span className="text-sm font-medium">项目名称</span>
-                        <Input className="!h-10 sm:!h-11" value={title} onChange={(event) => setTitle(event.target.value)} placeholder="例如：月影长安" />
-                    </label>
-                    <label className="block space-y-2.5">
-                        <span className="text-sm font-medium">故事简介</span>
-                        <Input.TextArea value={summary} onChange={(event) => setSummary(event.target.value)} rows={3} placeholder="一句话说明人物、冲突和目标" />
-                    </label>
-                    <label className="block space-y-2.5">
-                        <span className="text-sm font-medium">视觉风格</span>
-                        <Input className="!h-10 sm:!h-11" value={style} onChange={(event) => setStyle(event.target.value)} />
-                    </label>
-                    <label className="block space-y-2.5">
-                        <span className="text-sm font-medium">生成尺寸</span>
-                        <Segmented
-                            block
-                            className="!min-h-10 sm:!min-h-11"
-                            value={ratio.includes("x") ? "custom" : ratio}
-                            options={[
-                                { label: "9:16", value: "9:16" },
-                                { label: "16:9", value: "16:9" },
-                                { label: "自定义", value: "custom" },
-                            ]}
-                            onChange={(value) => setRatio(value === "custom" ? `${customWidth}x${customHeight}` : String(value))}
-                        />
+            <Modal
+                title="新建短剧项目"
+                open={open}
+                width={520}
+                destroyOnHidden
+                style={{ maxWidth: "calc(100vw - 24px)" }}
+                styles={{ body: { paddingTop: 4 } }}
+                confirmLoading={creating}
+                onCancel={() => setOpen(false)}
+                onOk={() => void create()}
+                okText="创建并进入"
+                cancelText="取消"
+                okButtonProps={{ className: "!h-9" }}
+                cancelButtonProps={{ className: "!h-9" }}
+            >
+                <div className="grid gap-3 pt-1">
+                    <div className="grid gap-1.5">
+                        <label htmlFor="drama-project-title" className="text-sm font-medium leading-5">
+                            项目名称
+                        </label>
+                        <Input id="drama-project-title" className="!h-9" value={title} onChange={(event) => setTitle(event.target.value)} placeholder="例如：月影长安" />
+                    </div>
+                    <div className="grid gap-1.5">
+                        <label htmlFor="drama-project-summary" className="text-sm font-medium leading-5">
+                            故事简介
+                        </label>
+                        <Input.TextArea id="drama-project-summary" value={summary} onChange={(event) => setSummary(event.target.value)} autoSize={{ minRows: 2, maxRows: 3 }} placeholder="一句话说明人物、冲突和目标" />
+                    </div>
+                    <div className="grid gap-1.5">
+                        <label htmlFor="drama-project-style" className="text-sm font-medium leading-5">
+                            视觉风格
+                        </label>
+                        <Input id="drama-project-style" className="!h-9" value={style} onChange={(event) => setStyle(event.target.value)} />
+                    </div>
+                    <div className="grid min-w-0 gap-1.5">
+                        <span className="text-sm font-medium leading-5">生成尺寸</span>
+                        <div className="min-w-0">
+                            <Segmented
+                                block
+                                className="!w-full"
+                                value={ratio.includes("x") ? "custom" : ratio}
+                                options={[
+                                    { label: "9:16", value: "9:16" },
+                                    { label: "16:9", value: "16:9" },
+                                    { label: "自定义", value: "custom" },
+                                ]}
+                                onChange={(value) => setRatio(value === "custom" ? `${customWidth}x${customHeight}` : String(value))}
+                            />
+                        </div>
                         {ratio.includes("x") ? (
-                            <div className="grid grid-cols-[1fr_auto_1fr] items-center gap-2">
+                            <div className="grid grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-center gap-2">
                                 <InputNumber
                                     className="!w-full"
                                     min={256}
@@ -157,7 +179,7 @@ export default function DramaPage() {
                                 />
                             </div>
                         ) : null}
-                    </label>
+                    </div>
                 </div>
             </Modal>
         </main>

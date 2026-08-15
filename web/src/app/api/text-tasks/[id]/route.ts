@@ -1,6 +1,7 @@
 import { after, NextResponse } from "next/server";
 
 import { getCurrentUser } from "@/lib/auth/session";
+import { readJsonBodyResult } from "@/lib/auth/request";
 import { runGenerationTaskRecoveryBatch } from "@/lib/server/generation-task-recovery-service";
 import { resolveInternalOrigin } from "@/lib/server/internal-origin";
 import { getTextTask, transitionTextTask } from "@/lib/server/text-task-store";
@@ -44,6 +45,7 @@ export async function GET(request: Request, context: RouteContext) {
                 result: settledTask.result,
                 error: settledTask.error,
                 needsReview: executionPhase === "needs_review",
+                reviewReason: executionPhase === "needs_review" ? task.reviewReason : undefined,
                 executionPhase,
             },
         },
@@ -57,7 +59,9 @@ export async function PATCH(request: Request, context: RouteContext) {
     if (!user || !task || (task.userId !== user.id && user.role !== "admin")) return NextResponse.json({ error: "任务不存在或已过期" }, { status: user ? 404 : 401 });
     const schedule = await getStoredGenerationTaskRecord("text", task.id);
     const executionPhase = schedule?.executionPhase || settledExecutionPhase(task.status);
-    const body = (await request.json().catch(() => ({}))) as { status?: string };
+    const parsed = await readJsonBodyResult<{ status?: string }>(request);
+    if (!parsed.ok) return NextResponse.json({ error: parsed.message }, { status: parsed.status });
+    const body = parsed.data;
     if (body.status !== "cancelled" || !["pending", "running"].includes(task.status)) return NextResponse.json({ error: "当前任务无法取消" }, { status: 409 });
     const target: GenerationCancellationTarget = {
         type: "text",

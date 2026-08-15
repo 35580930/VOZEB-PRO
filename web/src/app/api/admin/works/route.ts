@@ -1,3 +1,4 @@
+import { hasAdminPermission } from "@/lib/admin-permissions";
 import type { NextRequest } from "next/server";
 
 import { getCurrentUser } from "@/lib/auth/session";
@@ -10,7 +11,7 @@ export const dynamic = "force-dynamic";
 export async function GET(request: NextRequest) {
     const user = await getCurrentUser();
     if (!user) return unauthorized();
-    if (user.role !== "admin") return forbidden();
+    if (!hasAdminPermission(user, "content.manage")) return forbidden();
     try {
         const params = request.nextUrl.searchParams;
         const works = await listWorkPublicationsForAdmin({

@@ -86,4 +86,34 @@ describe("WorkGovernanceRepository", () => {
         expect(sql).toContain("lpad(owner.account_id::text, 4, '0') LIKE $4");
         expect(sql).toContain("lpad(submitter.account_id::text, 4, '0') LIKE $4");
     });
+
+    it("pages only the owner's own appeals without exposing report cases", async () => {
+        const query = vi.fn().mockResolvedValue({
+            rows: [
+                {
+                    id: "case-51",
+                    work_id: "work-one",
+                    version_id: "version-one",
+                    submitter_user_id: "user-one",
+                    case_type: "appeal",
+                    category: "appeal",
+                    description: "申诉说明",
+                    status: "open",
+                    created_at: "2026-08-10T00:00:00.000Z",
+                    updated_at: "2026-08-10T00:00:00.000Z",
+                    total_count: "51",
+                },
+            ],
+        });
+        const repository = new WorkGovernanceRepository({ query });
+
+        const result = await repository.listCasesForOwner("work-one", "user-one", { page: 3, pageSize: 20 });
+        const [sql, params] = query.mock.calls[0] as [string, unknown[]];
+
+        expect(sql).toContain("cases.case_type = 'appeal'");
+        expect(sql).toContain("cases.submitter_user_id = $2");
+        expect(sql).toContain("LIMIT $3 OFFSET $4");
+        expect(params).toEqual(["work-one", "user-one", 20, 40]);
+        expect(result).toMatchObject({ total: 51, page: 3, pageSize: 20, items: [{ id: "case-51", caseType: "appeal" }] });
+    });
 });

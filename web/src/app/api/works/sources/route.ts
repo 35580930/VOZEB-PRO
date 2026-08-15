@@ -13,8 +13,15 @@ export async function GET(request: NextRequest) {
     try {
         const sourceType = request.nextUrl.searchParams.get("sourceType");
         const sourceId = request.nextUrl.searchParams.get("sourceId");
-        if (sourceType || sourceId) return workPublicationOk({ source: await getWorkPublicationSource(user.id, sourceType, sourceId) });
-        return workPublicationOk({ sources: await listWorkPublicationSources(user.id) });
+        if (sourceId) return workPublicationOk({ source: await getWorkPublicationSource(user.id, sourceType, sourceId) });
+        return workPublicationOk(
+            await listWorkPublicationSources(user.id, {
+                sourceType,
+                page: Number(request.nextUrl.searchParams.get("page")) || 1,
+                pageSize: Number(request.nextUrl.searchParams.get("pageSize")) || undefined,
+                keyword: request.nextUrl.searchParams.get("keyword"),
+            }),
+        );
     } catch (error) {
         return workPublicationError(error, "获取可发布来源失败", "List work publication sources failed");
     }

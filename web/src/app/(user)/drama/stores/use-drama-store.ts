@@ -12,6 +12,7 @@ type DramaStore = {
     hydrated: boolean;
     hydratedUserId: string;
     syncError?: string;
+    saveStateByProject: Record<string, { status: "saving" | "saved" | "error"; savedAt?: string }>;
     summaries: DramaProjectSummary[];
     summaryTotal: number;
     summaryPage: number;
@@ -34,7 +35,7 @@ type DramaStore = {
     importEpisodes: (projectId: string, drafts: DramaSourceEpisodeDraft[]) => void;
     deleteEpisode: (projectId: string, episodeId: string) => void;
     selectEpisode: (projectId: string, episodeId: string) => void;
-    updateEpisode: (projectId: string, episodeId: string, patch: Partial<Pick<DramaEpisode, "title" | "script" | "outline" | "hook" | "nextPreview" | "sourceRange" | "reviewStatus" | "renderTask" | "visualReview">>) => void;
+    updateEpisode: (projectId: string, episodeId: string, patch: Partial<Pick<DramaEpisode, "title" | "script" | "scriptRichContent" | "outline" | "hook" | "nextPreview" | "sourceRange" | "reviewStatus" | "renderTask" | "visualReview">>) => void;
     buildStoryboard: (projectId: string, episodeId: string) => void;
     updateShot: (projectId: string, episodeId: string, shotId: string, patch: Partial<DramaShot>) => void;
     queueShots: (projectId: string, episodeId: string, shotIds: string[]) => void;
@@ -63,6 +64,7 @@ const SUMMARY_PAGE_SIZE = 12;
 export const useDramaStore = create<DramaStore>((set, get) => ({
     hydrated: false,
     hydratedUserId: "",
+    saveStateByProject: {},
     summaries: [],
     summaryTotal: 0,
     summaryPage: 0,
@@ -88,6 +90,7 @@ export const useDramaStore = create<DramaStore>((set, get) => ({
             summaryPage: state.hydratedUserId === userId ? state.summaryPage : 0,
             summaryLoadingMore: false,
             projects: state.hydratedUserId === userId ? state.projects : [],
+            saveStateByProject: state.hydratedUserId === userId ? state.saveStateByProject : {},
             syncError: undefined,
         }));
         const promise = listDramaProjectSummaries({ page: 1, pageSize: SUMMARY_PAGE_SIZE })
@@ -142,6 +145,7 @@ export const useDramaStore = create<DramaStore>((set, get) => ({
                     projects: [project, ...state.projects.filter((item) => item.id !== project.id)],
                     summaries: upsertSummary(state.summaries, project),
                     syncError: undefined,
+                    saveStateByProject: { ...state.saveStateByProject, [project.id]: { status: "saved", savedAt: project.updatedAt } },
                 }));
                 return project;
             })
@@ -161,6 +165,7 @@ export const useDramaStore = create<DramaStore>((set, get) => ({
                 projects: [project, ...state.projects.filter((item) => item.id !== project.id)],
                 summaries: upsertSummary(state.summaries, project),
                 summaryTotal: known ? state.summaryTotal : state.summaryTotal + 1,
+                saveStateByProject: { ...state.saveStateByProject, [project.id]: { status: "saved", savedAt: project.updatedAt } },
             };
         });
         return project.id;
@@ -216,7 +221,7 @@ export const useDramaStore = create<DramaStore>((set, get) => ({
         }),
     importEpisodes: (projectId, drafts) =>
         mutateProject(projectId, (project) => {
-            const episodes = drafts.slice(0, 100).map<DramaEpisode>((draft, index) => ({
+            const episodes = drafts.map<DramaEpisode>((draft, index) => ({
                 id: `episode-${nanoid()}`,
                 title: draft.title || `第 ${index + 1} 集`,
                 script: draft.script,
@@ -421,7 +426,7 @@ export const useDramaStore = create<DramaStore>((set, get) => ({
         ),
     reset: () => {
         invalidateSession();
-        set({ hydrated: false, hydratedUserId: "", summaries: [], summaryTotal: 0, summaryPage: 0, summaryPageSize: SUMMARY_PAGE_SIZE, summaryLoadingMore: false, projects: [], syncError: undefined });
+        set({ hydrated: false, hydratedUserId: "", summaries: [], summaryTotal: 0, summaryPage: 0, summaryPageSize: SUMMARY_PAGE_SIZE, summaryLoadingMore: false, projects: [], syncError: undefined, saveStateByProject: {} });
     },
 }));
 
@@ -485,6 +490,7 @@ function hasActiveShotTask(shot: DramaShot) {
 function queueSave(session: ClientSessionStamp, project: DramaProject) {
     const key = sessionEpoch.key(session, project.id);
     if (suspendedSaves.has(key)) return;
+    useDramaStore.setState((state) => ({ saveStateByProject: { ...state.saveStateByProject, [project.id]: { status: "saving", savedAt: state.saveStateByProject[project.id]?.savedAt } } }));
     clearProjectSave(session, project.id);
     saveTimers.set(
         key,
@@ -501,11 +507,16 @@ function queueSave(session: ClientSessionStamp, project: DramaProject) {
                         projects: state.projects.map((item) => (item.id === saved.id && item.updatedAt === project.updatedAt ? saved : item)),
                         summaries: upsertSummary(state.summaries, saved),
                         syncError: undefined,
+                        saveStateByProject: state.projects.find((item) => item.id === project.id)?.updatedAt === project.updatedAt ? { ...state.saveStateByProject, [project.id]: { status: "saved", savedAt: saved.updatedAt } } : state.saveStateByProject,
                     }));
                 } catch (error) {
                     if (!sessionEpoch.isCurrent(session)) return;
                     const latest = useDramaStore.getState().projects.find((item) => item.id === project.id);
-                    if (latest?.updatedAt === project.updatedAt) useDramaStore.setState({ syncError: error instanceof Error ? error.message : "短剧项目保存失败" });
+                    if (latest?.updatedAt === project.updatedAt)
+                        useDramaStore.setState((state) => ({
+                            syncError: error instanceof Error ? error.message : "短剧项目保存失败",
+                            saveStateByProject: { ...state.saveStateByProject, [project.id]: { status: "error", savedAt: state.saveStateByProject[project.id]?.savedAt } },
+                        }));
                 }
             });
             saveQueues.set(key, operation);
@@ -565,7 +576,6 @@ function scriptToShots(script: string, project: DramaProject): DramaShot[] {
         .split(/\n+/)
         .map((line) => line.trim())
         .filter(Boolean)
-        .slice(0, 24)
         .map((text, index) => {
             const context = [project.style, project.summary, text].filter(Boolean).join("，");
             return {

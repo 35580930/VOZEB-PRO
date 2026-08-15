@@ -4,15 +4,17 @@ import type { AdminSectionKey } from "@/components/admin/admin-sections";
 import { toNumberOrZero } from "@/components/admin/admin-values";
 import dayjs from "dayjs";
 import type { ReactNode } from "react";
+import { useRef } from "react";
 
 import type { AdminBillingSummary } from "@/lib/admin-billing-types";
 import type { AdminGenerationOverviewSummary } from "@/lib/admin-generation-overview";
-import type { AuthSettings, CreatedCdkCode, PublicAnnouncement, PublicCdkCode, PublicUser, PublicUserSummary, UserRole, UserStatus } from "@/lib/auth/store";
+import type { AuthSettings, CreatedCdkCode, PublicAnnouncement, PublicCdkCode, PublicUser, PublicUserSummary } from "@/lib/auth/store";
 import type { PaymentConfigSummary } from "@/lib/payment-config-types";
 import type { AdminSetupSummary } from "@/lib/server/admin-setup-status";
 import type { StoredGenerationLog } from "@/lib/server/generation-log-store";
 import type { Prompt } from "@/services/api/prompts";
-import { notifyPublicSettingsChanged } from "@/stores/use-public-session-store";
+import { applyPublicSiteSettings, notifyPublicSettingsChanged } from "@/stores/use-public-session-store";
+import { beginAdminSettingsSave, createAdminSettingsSaveSnapshot, finishAdminSettingsSave, mergeAdminSettingsSaveResponse } from "./admin-settings-save";
 import { downloadTextFile, formatCreatedCdkExport, splitTags } from "./admin-dashboard-elements";
 
 export type AdminDashboardProps = {
@@ -34,16 +36,6 @@ export type PromptFormValue = {
     preview?: string;
 };
 
-export type UserEditorValue = {
-    username?: string;
-    displayName: string;
-    email?: string;
-    password?: string;
-    role: UserRole;
-    status: UserStatus;
-    pointsBalance: number;
-};
-
 export const PROMPT_PAGE_SIZE = 20;
 export const PROMPT_SEARCH_DEBOUNCE_MS = 300;
 export const USER_PAGE_SIZE = 20;
@@ -51,9 +43,10 @@ export const CDK_PAGE_SIZE = 20;
 export const GENERATION_LOG_PAGE_SIZE = 20;
 export const ANNOUNCEMENT_PAGE_SIZE = 12;
 
-import type { AdminDashboardState } from "./use-admin-dashboard-state";
+import type { AdminDashboardState, UserEditorValue } from "./use-admin-dashboard-state";
 
 export function useAdminDashboardDataActions({ state }: { state: AdminDashboardState }) {
+    const settingsSaveCountRef = useRef(0);
     const {
         currentUser,
         message,
@@ -185,6 +178,8 @@ export function useAdminDashboardDataActions({ state }: { state: AdminDashboardS
     };
 
     const saveSettings = async (patch: Partial<AuthSettings>, successText = "设置已保存") => {
+        const snapshot = createAdminSettingsSaveSnapshot(patch);
+        settingsSaveCountRef.current = beginAdminSettingsSave(settingsSaveCountRef.current);
         setSettingsLoading(true);
         try {
             const response = await fetch("/api/admin/settings", {
@@ -194,7 +189,8 @@ export function useAdminDashboardDataActions({ state }: { state: AdminDashboardS
             });
             const payload = (await response.json()) as { settings?: AuthSettings; error?: string };
             if (!response.ok || !payload.settings) throw new Error(payload.error || "更新设置失败");
-            setSettings(payload.settings);
+            setSettings((current) => mergeAdminSettingsSaveResponse(current, payload.settings!, snapshot));
+            if (patch.site) applyPublicSiteSettings(payload.settings.site);
             notifyPublicSettingsChanged();
             message.success(successText);
             return true;
@@ -202,7 +198,9 @@ export function useAdminDashboardDataActions({ state }: { state: AdminDashboardS
             message.error(error instanceof Error ? error.message : "更新设置失败");
             return false;
         } finally {
-            setSettingsLoading(false);
+            const settled = finishAdminSettingsSave(settingsSaveCountRef.current);
+            settingsSaveCountRef.current = settled.remaining;
+            setSettingsLoading(settled.loading);
         }
     };
 
@@ -259,7 +257,7 @@ export function useAdminDashboardDataActions({ state }: { state: AdminDashboardS
         }
     };
 
-    const updateUser = async (userId: string, patch: Partial<Pick<PublicUser, "displayName" | "email" | "role" | "status" | "pointsBalance">> & { password?: string }) => {
+    const updateUser = async (userId: string, patch: Partial<Pick<PublicUser, "displayName" | "email" | "role" | "adminPermissions" | "status" | "pointsBalance">> & { password?: string }) => {
         setUpdatingUserId(userId);
         try {
             const response = await fetch(`/api/admin/users/${userId}`, {
@@ -292,6 +290,7 @@ export function useAdminDashboardDataActions({ state }: { state: AdminDashboardS
                     email: value.email || "",
                     password: value.password || "",
                     role: value.role,
+                    adminPermissions: value.adminPermissions,
                     status: value.status,
                     pointsBalance: toNumberOrZero(value.pointsBalance),
                 }),
@@ -313,7 +312,9 @@ export function useAdminDashboardDataActions({ state }: { state: AdminDashboardS
     const deleteUser = async (userId: string) => {
         setUpdatingUserId(userId);
         try {
-            const response = await fetch(`/api/admin/users/${userId}`, { method: "DELETE" });
+            const response = await fetch(`/api/admin/users/${userId}`, {
+                method: "DELETE",
+            });
             const payload = (await response.json()) as { error?: string };
             if (!response.ok) throw new Error(payload.error || "删除用户失败");
             setSelectedUserIds((items) => items.filter((id) => id !== userId));
@@ -338,7 +339,9 @@ export function useAdminDashboardDataActions({ state }: { state: AdminDashboardS
         const failedMessages: string[] = [];
         try {
             for (const user of deletable) {
-                const response = await fetch(`/api/admin/users/${user.id}`, { method: "DELETE" });
+                const response = await fetch(`/api/admin/users/${user.id}`, {
+                    method: "DELETE",
+                });
                 const payload = (await response.json().catch(() => null)) as { error?: string } | null;
                 if (response.ok) {
                     deletedIds.push(user.id);
@@ -674,7 +677,7 @@ export function useAdminDashboardDataActions({ state }: { state: AdminDashboardS
 
     const exportCreatedCdkCodes = (codes = createdCdkActionCodes) => {
         if (!codes.length) return;
-        const text = formatCreatedCdkExport(codes);
+        const text = formatCreatedCdkExport(codes, settings.site.title);
         downloadTextFile(`vozeb-pro-cdk-${dayjs().format("YYYYMMDD-HHmmss")}.txt`, text);
         message.success(`已导出 ${codes.length} 个 CDK`);
     };

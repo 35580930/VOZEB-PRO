@@ -55,12 +55,13 @@ describe("GET /api/image-tasks/[id]", () => {
     });
 
     it("leaves an uncertain submission for manual review", async () => {
-        mocks.getImageTask.mockResolvedValue(imageTask());
+        mocks.getImageTask.mockResolvedValue(imageTask({ reviewReason: "图片提交结果无法确认" }));
         mocks.getSchedule.mockResolvedValue({ executionPhase: "needs_review" });
 
-        await GET(new Request("http://localhost/api/image-tasks/image-one"), context);
+        const response = await GET(new Request("http://localhost/api/image-tasks/image-one"), context);
 
         expect(after).not.toHaveBeenCalled();
+        expect((await response.json()).task).toMatchObject({ needsReview: true, reviewReason: "图片提交结果无法确认" });
     });
 });
 

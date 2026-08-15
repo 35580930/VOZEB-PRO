@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { agentChildTaskTerminal, agentTaskCopies, resolveAgentTaskCount, resolveAgentVideoSeconds, validateAgentPlan, validateAgentTaskResult } from "./agent-run-validation";
+import { agentChildTaskTerminal, agentTaskCopies, resolveAgentTaskCount, resolveAgentVideoSeconds, validateAgentPlan, validateAgentPlanGenerationMode, validateAgentTaskResult } from "./agent-run-validation";
 
 describe("validateAgentPlan", () => {
     it("accepts a bounded executable plan", () => {
@@ -16,9 +16,10 @@ describe("validateAgentPlan", () => {
         expect(() => validateAgentPlan({ intent: "generation", objective: "建立项目", projectHandoff: { surface: "drama", title: "" }, deliverables: [] })).toThrow("项目交接参数无效");
     });
 
-    it("rejects empty and oversized plans", () => {
+    it("rejects empty plans without imposing a fixed deliverable count", () => {
         expect(() => validateAgentPlan({ objective: "", deliverables: [] })).toThrow();
-        expect(() => validateAgentPlan({ objective: "批量生成", deliverables: Array.from({ length: 51 }, (_, index) => ({ title: String(index), type: "image", prompt: "图" })) })).toThrow();
+        expect(() => validateAgentPlan({ objective: "批量生成", deliverables: Array.from({ length: 51 }, (_, index) => ({ title: String(index), type: "image", prompt: "图" })) })).not.toThrow();
+        expect(() => validateAgentPlan({ objective: "批量生成", deliverables: [{ title: "主图", type: "image", prompt: "图", count: Number.MAX_SAFE_INTEGER + 1 }] })).toThrow("任务参数无效");
     });
 
     it("accepts valid dependencies and rejects unknown ones", () => {
@@ -32,6 +33,19 @@ describe("validateAgentPlan", () => {
             }),
         ).not.toThrow();
         expect(() => validateAgentPlan({ objective: "发布", deliverables: [{ id: "image", title: "主图", type: "image", prompt: "做图", dependencies: ["missing"] }] })).toThrow("任务依赖无效");
+    });
+
+    it("rejects self and multi-task dependency cycles", () => {
+        expect(() => validateAgentPlan({ objective: "发布", deliverables: [{ id: "image", title: "主图", type: "image", prompt: "做图", dependencies: ["image"] }] })).toThrow("任务依赖存在循环");
+        expect(() =>
+            validateAgentPlan({
+                objective: "发布",
+                deliverables: [
+                    { id: "copy", title: "文案", type: "text", prompt: "写文案", dependencies: ["image"] },
+                    { id: "image", title: "主图", type: "image", prompt: "做图", dependencies: ["copy"] },
+                ],
+            }),
+        ).toThrow("任务依赖存在循环");
     });
 
     it("accepts model choices and validates visible decision summaries", () => {
@@ -58,22 +72,43 @@ describe("validateAgentPlan", () => {
         ).toThrow("任务依赖无效");
     });
 
-    it("accepts multiple real media results and rejects invalid entries", () => {
-        expect(() => validateAgentTaskResult("image", { results: [{ url: "https://example.com/1.png" }, { dataUrl: "data:image/png;base64,AA==" }] })).not.toThrow();
-        expect(() => validateAgentTaskResult("image", { results: [{ url: "https://example.com/1.png" }, {}] })).toThrow("包含无效产物");
+    it("keeps explicit media mode limited to one matching deliverable type", () => {
+        const foundation = { complexity: "simple" as const, brief: { objective: "生成视频" }, direction: { summary: "视频创作" } };
+
+        expect(() => validateAgentPlanGenerationMode({ objective: "商品视频", foundation, deliverables: [{ title: "视频", type: "video", prompt: "生成视频" }] }, "video")).not.toThrow();
+        expect(() => validateAgentPlanGenerationMode({ intent: "conversation", objective: "回答", reply: "你好", foundation, deliverables: [] }, "video")).toThrow("创作类型与用户选择不一致");
+        expect(() =>
+            validateAgentPlanGenerationMode(
+                {
+                    objective: "混合产物",
+                    foundation,
+                    deliverables: [
+                        { title: "视频", type: "video", prompt: "生成视频" },
+                        { title: "旁白", type: "audio", prompt: "生成旁白" },
+                    ],
+                },
+                "video",
+            ),
+        ).toThrow("创作类型与用户选择不一致");
     });
 
-    it("runs the configured number of image copies only", () => {
+    it("keeps valid media from a partially successful provider batch", () => {
+        expect(() => validateAgentTaskResult("image", { results: [{ url: "https://example.com/1.png" }, { dataUrl: "data:image/png;base64,AA==" }] })).not.toThrow();
+        expect(() => validateAgentTaskResult("image", { results: [{ url: "https://example.com/1.png" }, {}] })).not.toThrow();
+        expect(() => validateAgentTaskResult("image", { results: [{}, { error: "第二张失败" }] })).toThrow("没有返回有效产物");
+    });
+
+    it("runs the configured number of image and video copies", () => {
         expect(agentTaskCopies("image", 4)).toBe(4);
-        expect(agentTaskCopies("image", 99)).toBe(10);
-        expect(agentTaskCopies("video", 4)).toBe(1);
+        expect(agentTaskCopies("image", 99)).toBe(99);
+        expect(agentTaskCopies("video", 4)).toBe(4);
     });
 
     it("uses plan, skill, then canvas image count defaults", () => {
         expect(resolveAgentTaskCount("image", 3, 4, 5)).toBe(3);
         expect(resolveAgentTaskCount("image", undefined, 4, 5)).toBe(4);
         expect(resolveAgentTaskCount("image", undefined, undefined, 5)).toBe(5);
-        expect(resolveAgentTaskCount("video", 3, 4, 5)).toBe(1);
+        expect(resolveAgentTaskCount("video", 3, 4, 5)).toBe(3);
     });
 
     it("recognizes child cancellation as a terminal state", () => {
@@ -84,7 +119,7 @@ describe("validateAgentPlan", () => {
 
     it("keeps Agent video duration aligned with the real video task range", () => {
         expect(resolveAgentVideoSeconds("video", "5", undefined, 10)).toBe(5);
-        expect(resolveAgentVideoSeconds("video", 60, 10, 5)).toBe(20);
+        expect(resolveAgentVideoSeconds("video", 60, 10, 5)).toBe(60);
         expect(resolveAgentVideoSeconds("video", undefined, 10, 5)).toBe(10);
         expect(resolveAgentVideoSeconds("video", undefined, undefined, 6)).toBe(6);
         expect(resolveAgentVideoSeconds("image", 10, 10, 10)).toBeUndefined();

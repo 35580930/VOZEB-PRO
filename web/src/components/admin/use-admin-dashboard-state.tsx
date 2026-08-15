@@ -1,95 +1,18 @@
 "use client";
 
-import type { ReactNode } from "react";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { App, Button, Checkbox, DatePicker, Form, Input, InputNumber, Modal, Pagination, Popconfirm, Segmented, Select, Space, Switch, Table, Tag } from "antd";
-import type { TableColumnsType } from "antd";
-import Link from "next/link";
-import { BillingOperations } from "@/app/admin/billing/components/billing-operations";
-import { GenerationOperationsClient } from "@/app/admin/generation-operations/components/generation-operations-client";
-import {
-    formatAdminLogDuration,
-    formatAdminLogTime,
-    formatGenerationLogModel,
-    GenerationLogAssetPreview,
-    GenerationLogDetail,
-    GenerationLogMobileCard,
-    generationKindLabel,
-    generationSourceLabel,
-    generationStatusClass,
-    generationStatusLabel,
-} from "@/components/admin/admin-generation-log";
-import { GenerationConcurrencyPanel, GenerationDefaultsPanel, localAgentReadiness } from "@/components/admin/admin-generation-settings";
 import type { AgentReadiness } from "@/components/admin/admin-generation-settings";
-import { AdminLocalMediaStorage } from "@/components/admin/admin-local-media-storage";
-import { QuotaRuleTable } from "@/components/admin/admin-quota-rules";
-import { AdminOverview } from "@/components/admin/admin-overview";
-import { AdminLogicalModelManager } from "@/components/admin/admin-logical-model-manager";
-import { Metric, Panel, PanelHeader } from "@/components/admin/admin-panel";
-import { AdminSectionNav, adminSections } from "@/components/admin/admin-section-nav";
 import { adminSectionHref, type AdminSectionKey } from "@/components/admin/admin-sections";
-import { UpdateCenterPanel } from "@/components/admin/admin-update-center";
-import { LabeledControl, SectionTitle, SettingInlineToggle, SettingToggle } from "@/components/admin/admin-settings-controls";
-import { SiteLogoPreview, SiteSettingStatus, SiteShowcasePreview, siteSocialItems } from "@/components/admin/admin-site-preview";
-import { createDefaultChannelAdvancedConfig, SystemChannelEditor } from "@/components/admin/admin-system-channel-editor";
-import { formatAdminMoney, toNumberOrOne, toNumberOrZero, uniqueList } from "@/components/admin/admin-values";
-import {
-    ArrowRight,
-    Copy,
-    CreditCard,
-    CircleDollarSign,
-    Database,
-    Download,
-    ExternalLink,
-    Eye,
-    Gift,
-    Globe2,
-    Image as ImageIcon,
-    KeyRound,
-    Mail,
-    Menu,
-    PlugZap,
-    Plus,
-    ReceiptText,
-    RefreshCw,
-    Save,
-    Search,
-    Send,
-    ShieldCheck,
-    SlidersHorizontal,
-    Sparkles,
-    Trash2,
-    Upload,
-    UserCog,
-    UserRound,
-    WalletCards,
-} from "lucide-react";
-import dayjs from "dayjs";
-import { nanoid } from "nanoid";
+import { uniqueList } from "@/components/admin/admin-values";
+import { App, Form } from "antd";
+import type { ReactNode } from "react";
+import { useCallback, useMemo, useRef, useState } from "react";
 
-import { formatCreditAmount } from "@/constant/credits";
-import { emptyAdminGenerationOverviewSummary } from "@/lib/admin-generation-overview";
-import { normalizeDefaultModelsConfig } from "@/lib/model-routing-config";
-import type {
-    AgentSkill,
-    AuthSettings,
-    CreatedCdkCode,
-    PublicAnnouncement,
-    PublicCdkCode,
-    PublicUser,
-    PublicUserSummary,
-    SiteFriendLink,
-    SiteShowcaseItem,
-    SiteSocialKey,
-    SystemChannelAdvancedConfig,
-    SystemModelChannel,
-    UserRole,
-    UserStatus,
-} from "@/lib/auth/store";
-import type { GenerationAssetStats, StoredGenerationLog } from "@/lib/server/generation-log-store";
-import type { AdminSetupSummary } from "@/lib/server/admin-setup-status";
-import type { PaymentConfigSummary } from "@/lib/payment-config-types";
 import type { AdminBillingSummary } from "@/lib/admin-billing-types";
+import { emptyAdminGenerationOverviewSummary } from "@/lib/admin-generation-overview";
+import type { AuthSettings, CreatedCdkCode, PublicAnnouncement, PublicCdkCode, PublicUser, PublicUserSummary, UserRole, UserStatus } from "@/lib/auth/store";
+import type { PaymentConfigSummary } from "@/lib/payment-config-types";
+import type { AdminSetupSummary } from "@/lib/server/admin-setup-status";
+import type { GenerationAssetStats, StoredGenerationLog } from "@/lib/server/generation-log-store";
 import type { Prompt } from "@/services/api/prompts";
 
 export type AdminDashboardProps = {
@@ -117,6 +40,8 @@ export type UserEditorValue = {
     email?: string;
     password?: string;
     role: UserRole;
+    adminPermissions: PublicUser["adminPermissions"];
+    permissionPreset?: string;
     status: UserStatus;
     pointsBalance: number;
 };
@@ -126,24 +51,6 @@ export const PROMPT_SEARCH_DEBOUNCE_MS = 300;
 export const USER_PAGE_SIZE = 20;
 export const CDK_PAGE_SIZE = 20;
 export const GENERATION_LOG_PAGE_SIZE = 20;
-import {
-    settingsStatusToneClass,
-    SettingsStatusTile,
-    SettingsAnchorItem,
-    FinanceFlowItem,
-    FinanceMiniRow,
-    createSystemChannel,
-    requestAdminModels,
-    modelNameFromOption,
-    isCdkExpired,
-    cdkStatusLabel,
-    cdkStatusTone,
-    formatCreatedCdkExport,
-    downloadTextFile,
-    CdkRedemptionDetail,
-    splitTags,
-    clampInteger,
-} from "./admin-dashboard-elements";
 
 export function useAdminDashboardState({ initialUsers, initialUserSummary, initialSettings, initialPromptCount, currentUser, initialSection = "overview", setupSummary, headerActions }: AdminDashboardProps) {
     const { message } = App.useApp();
@@ -239,11 +146,11 @@ export function useAdminDashboardState({ initialUsers, initialUserSummary, initi
     const stats = useMemo(() => ({ total: userSummary.total, active: userSummary.active, admins: userSummary.admins, disabled: userSummary.disabled }), [userSummary]);
     const settingsSummary = useMemo(
         () => ({
-            totalChannels: settings.systemChannels.length,
-            enabledChannels: settings.systemChannels.filter((channel) => channel.enabled).length,
-            models: uniqueList(settings.systemChannels.flatMap((channel) => channel.models)).length,
+            totalChannels: setupSummary?.totalChannels ?? settings.systemChannels.length,
+            enabledChannels: setupSummary?.enabledChannels ?? settings.systemChannels.filter((channel) => channel.enabled).length,
+            models: setupSummary?.modelCount ?? uniqueList(settings.systemChannels.flatMap((channel) => channel.models)).length,
         }),
-        [settings.systemChannels],
+        [settings.systemChannels, setupSummary?.enabledChannels, setupSummary?.modelCount, setupSummary?.totalChannels],
     );
     const walletSummary = useMemo(
         () => ({

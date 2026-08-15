@@ -179,6 +179,8 @@ export function alignAdvancedVideoPayload(payload: Record<string, unknown>, mode
     alignListReferenceField(next, "ref_assets", context.images);
     alignListReferenceField(next, "referenceImages", context.images);
     alignListReferenceField(next, "reference_images", context.images);
+    alignSingleReferenceField(next, "first_image", undefined);
+    alignSingleReferenceField(next, "last_image", undefined);
     alignSingleReferenceField(next, "referenceVideo", context.referenceVideos[0]);
     alignSingleReferenceField(next, "reference_video", context.referenceVideos[0]);
     alignListReferenceField(next, "referenceVideos", context.referenceVideos);
@@ -357,15 +359,11 @@ export function uniqueStrings(items: string[]) {
 }
 
 export function normalizeCompatibleVideoDuration(value: string) {
-    const seconds = Math.floor(Number(value) || 5);
-    if (seconds <= 5) return 5;
-    if (seconds <= 10) return 10;
-    return 15;
+    return Number(normalizeVideoSeconds(value));
 }
 
 export function normalizeGlobalAiOpcVideoDuration(value: string) {
-    const seconds = Math.floor(Number(value) || 5);
-    return Math.max(4, Math.min(15, seconds));
+    return Number(normalizeVideoSeconds(value));
 }
 
 export function normalizeCompatibleVideoRatio(value: string) {

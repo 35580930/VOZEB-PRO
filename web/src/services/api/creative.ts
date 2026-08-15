@@ -1,7 +1,15 @@
-import { isCreativeProjectHandoff, type CreativeAsset, type CreativeConversation, type CreativeConversationSource, type CreativeMessage, type CreativeProjectHandoff, type CreativeRunRequest } from "@/lib/creative-runtime-contract";
-import type { CreativeWorkbenchSessionDetail, CreativeWorkbenchSessionSummary, WorkbenchWorkspace } from "@/lib/workbench-session-contract";
+import {
+    isCreativeProjectHandoff,
+    type CreativeAsset,
+    type CreativeConversation,
+    type CreativeConversationSource,
+    type CreativeGenerationPreferences,
+    type CreativeMessage,
+    type CreativeProjectHandoff,
+    type CreativeRunRequest,
+} from "@/lib/creative-runtime-contract";
 import { refreshUserPointsIfSystem } from "@/services/api/points";
-import { stopIfClientSessionExpired, throwIfClientSessionExpired } from "@/services/api/session-expiration";
+import { ClientSessionExpiredError, stopIfClientSessionExpired, throwIfClientSessionExpired } from "@/services/api/session-expiration";
 
 export type CreativeAgentRun = {
     id: string;
@@ -9,15 +17,42 @@ export type CreativeAgentRun = {
     inputMessageId: string;
     assistantMessageId: string;
     status: "planning" | "running" | "paused" | "completed" | "failed" | "cancelled";
+    surface?: CreativeRunRequest["surface"];
+    projectId?: string;
+    prompt?: string;
+    referencedAssetIds?: string[];
+    selectedSkillIds?: string[];
+    requestedModelIds?: string[];
+    generationPreferences?: CreativeGenerationPreferences;
+    createdAt?: number;
     updatedAt?: number;
     assetIds: string[];
-    tasks: Array<{ id: string; title: string; status: "ready" | "running" | "completed" | "failed"; error?: string }>;
+    tasks: Array<{
+        id: string;
+        title: string;
+        type?: "text" | "image" | "video" | "audio";
+        model?: string;
+        optimizedPrompt?: string;
+        ratio?: string;
+        quality?: string;
+        seconds?: number;
+        voice?: string;
+        format?: string;
+        generateAudio?: boolean;
+        watermark?: boolean;
+        speed?: number;
+        count?: number;
+        status: "ready" | "running" | "completed" | "failed" | "cancelled";
+        error?: string;
+    }>;
+    cancellation?: { pendingCount: number };
 };
 
 type ApiResponse<T> = { code: number; data: T; msg: string };
 
-export function listCreativeConversationPage(input: { source?: CreativeConversationSource; offset?: number; limit?: number } = {}) {
-    const query = new URLSearchParams({ surface: "chat", source: input.source || "agent", status: "active", limit: String(input.limit || 50), offset: String(input.offset || 0) });
+export function listCreativeConversationPage(input: { surface?: CreativeConversation["surface"]; source?: CreativeConversationSource; projectId?: string; offset?: number; limit?: number } = {}) {
+    const query = new URLSearchParams({ surface: input.surface || "chat", source: input.source || "agent", status: "active", limit: String(input.limit || 50), offset: String(input.offset || 0) });
+    if (input.projectId) query.set("projectId", input.projectId);
     return request<{ conversations: CreativeConversation[]; hasMore: boolean }>(`/api/creative/conversations?${query}`);
 }
 
@@ -25,23 +60,12 @@ export function listCreativeConversations(source: CreativeConversationSource = "
     return listCreativeConversationPage({ source, limit: 100 }).then((data) => data.conversations);
 }
 
-export function listCreativeWorkbenchSessions(workspace: WorkbenchWorkspace) {
-    const query = new URLSearchParams({ view: "workbench", workspace, limit: "100" });
-    return request<{ sessions: CreativeWorkbenchSessionSummary[]; hasMore: boolean }>(`/api/creative/conversations?${query}`).then((data) => data.sessions);
-}
-
-export function getCreativeWorkbenchSession(conversationId: string, workspace: WorkbenchWorkspace, beforeSequence?: number) {
-    const query = new URLSearchParams({ view: "workbench", workspace });
-    if (beforeSequence) query.set("beforeSequence", String(beforeSequence));
-    return request<{ session: CreativeWorkbenchSessionDetail }>(`/api/creative/conversations/${encodeURIComponent(conversationId)}?${query}`).then((data) => data.session);
-}
-
 export function getCreativeConversation(conversationId: string) {
     return request<{ conversation: CreativeConversation }>(`/api/creative/conversations/${encodeURIComponent(conversationId)}`).then((data) => data.conversation);
 }
 
-export function listCreativeMessages(conversationId: string, beforeSequence?: number) {
-    const query = new URLSearchParams({ limit: "200" });
+export function listCreativeMessages(conversationId: string, beforeSequence?: number, limit = 100) {
+    const query = new URLSearchParams({ limit: String(limit) });
     if (beforeSequence) query.set("beforeSequence", String(beforeSequence));
     return request<{ messages: CreativeMessage[] }>(`/api/creative/conversations/${encodeURIComponent(conversationId)}/messages?${query}`).then((data) => data.messages);
 }
@@ -69,21 +93,38 @@ export function createCreativeAgentRun(input: CreativeRunRequest) {
     return request<{ run: CreativeAgentRun; conversation?: CreativeConversation; created: boolean }>("/api/agent/runs", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(input) });
 }
 
-export function controlCreativeAgentRun(runId: string, action: "cancel" | "pause" | "resume" | "retry") {
-    return request<{ run: CreativeAgentRun }>(`/api/agent/runs/${encodeURIComponent(runId)}/${action}`, { method: "POST" });
+export function controlCreativeAgentRun(runId: string, action: "cancel" | "pause" | "resume" | "retry", expectedConversationId?: string) {
+    return request<{ run: CreativeAgentRun }>(`/api/agent/runs/${encodeURIComponent(runId)}/${action}`, {
+        method: "POST",
+        ...(expectedConversationId ? { headers: { "Content-Type": "application/json" }, body: JSON.stringify({ conversationId: expectedConversationId }) } : {}),
+    });
 }
 
 export function getCreativeAgentRun(runId: string) {
     return request<{ run: CreativeAgentRun }>(`/api/agent/runs/${encodeURIComponent(runId)}`).then((data) => data.run);
 }
 
-export function listCreativeAgentRuns(surface: CreativeRunRequest["surface"] = "chat") {
+export function listCreativeAgentRuns(surface: CreativeRunRequest["surface"] = "chat", input: { activeOnly?: boolean; limit?: number; projectId?: string; conversationId?: string } = {}) {
     const query = new URLSearchParams({ surface });
+    if (input.activeOnly) query.set("status", "active");
+    if (input.limit) query.set("limit", String(input.limit));
+    if (input.projectId) query.set("projectId", input.projectId);
+    if (input.conversationId) query.set("conversationId", input.conversationId);
     return request<{ runs: CreativeAgentRun[] }>(`/api/agent/runs?${query}`).then((data) => data.runs);
 }
 
-export function retryCreativeAgentTask(runId: string, taskId: string) {
-    return request<{ run: CreativeAgentRun }>(`/api/agent/runs/${encodeURIComponent(runId)}/tasks/${encodeURIComponent(taskId)}/retry`, { method: "POST" }).then((data) => data.run);
+export function retryCreativeAgentTask(runId: string, taskId: string, expectedConversationId?: string) {
+    return retryCreativeAgentTasks(runId, [taskId], expectedConversationId);
+}
+
+export function retryCreativeAgentTasks(runId: string, taskIds: string[], expectedConversationId?: string) {
+    const [taskId] = taskIds;
+    if (!taskId) return Promise.reject(new Error("请选择需要重试的失败任务"));
+    return request<{ run: CreativeAgentRun }>(`/api/agent/runs/${encodeURIComponent(runId)}/tasks/${encodeURIComponent(taskId)}/retry`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ ...(expectedConversationId ? { conversationId: expectedConversationId } : {}), taskIds }),
+    }).then((data) => data.run);
 }
 
 export function updateCreativeConversation(conversationId: string, patch: { title?: string; status?: CreativeConversation["status"] }) {
@@ -122,7 +163,8 @@ export type CreativeTaskProgress = {
 export function watchCreativeAgentRun(runId: string, handlers: CreativeRunHandlers) {
     const source = new EventSource(`/api/agent/runs/${encodeURIComponent(runId)}/events`);
     let settled = false;
-    let connectionErrors = 0;
+    let connectionInterrupted = false;
+    let reconciliation: Promise<void> | null = null;
     const read = (event: Event) => {
         let parsed: { data?: Record<string, unknown>; status?: string };
         try {
@@ -138,6 +180,34 @@ export function watchCreativeAgentRun(runId: string, handlers: CreativeRunHandle
         source.close();
         void refreshUserPointsIfSystem("system");
         handlers.onTerminal(status, text);
+    };
+    const stopObservation = (message: string) => {
+        if (settled) return;
+        settled = true;
+        source.close();
+        handlers.onConnectionError(message);
+    };
+    const reconcileRun = async () => {
+        if (await stopIfClientSessionExpired()) {
+            stopObservation("登录状态已失效，任务仍可能在后台运行；重新登录后可继续查看");
+            return;
+        }
+        try {
+            const run = await getCreativeAgentRun(runId);
+            if (settled) return;
+            handlers.onStatus?.(run.status);
+            if (run.status === "completed") return finish("completed");
+            if (run.status === "failed") return finish("failed", run.tasks.find((task) => task.status === "failed")?.error || "Agent 执行失败");
+            if (run.status === "cancelled") return finish("cancelled", "任务已取消");
+            handlers.onProgress(run.status === "paused" ? "任务仍在后台保存，当前处于暂停状态" : "任务仍在后台运行，正在恢复连接");
+        } catch (error) {
+            if (settled) return;
+            if (error instanceof ClientSessionExpiredError) {
+                stopObservation("登录状态已失效，任务仍可能在后台运行；重新登录后可继续查看");
+                return;
+            }
+            handlers.onProgress("暂时无法确认实时状态，任务仍会在后台继续运行");
+        }
     };
     const listen = (type: string, callback: (payload: { data?: Record<string, unknown>; status?: string }) => void) =>
         source.addEventListener(type, (event) => {
@@ -177,6 +247,8 @@ export function watchCreativeAgentRun(runId: string, handlers: CreativeRunHandle
         void refreshUserPointsIfSystem("system");
         handlers.onProgress("正在整理已完成的创作结果");
     });
+    listen("run.cancel.requested", () => handlers.onProgress("正在取消任务，等待子任务确认"));
+    listen("run.cancel.pending", () => handlers.onProgress("部分子任务取消状态尚未确认，可稍后再次取消"));
     listen("run.completed", ({ data }) => finish("completed", text(data?.reply)));
     listen("run.failed", ({ data }) => finish("failed", text(data?.message) || "Agent 执行失败"));
     listen("run.cancelled", () => finish("cancelled", "任务已取消"));
@@ -188,24 +260,16 @@ export function watchCreativeAgentRun(runId: string, handlers: CreativeRunHandle
         if (payload.status === "paused") handlers.onProgress("任务已暂停");
     });
     source.onopen = () => {
-        connectionErrors = 0;
+        if (connectionInterrupted && !settled) handlers.onProgress("连接已恢复，任务继续运行");
+        connectionInterrupted = false;
     };
     source.onerror = () => {
         if (settled) return;
-        void stopIfClientSessionExpired().then((expired) => {
-            if (!expired || settled) return;
-            settled = true;
-            source.close();
-            handlers.onConnectionError("登录状态已失效，请重新登录");
+        connectionInterrupted = true;
+        handlers.onProgress("连接暂时中断，正在确认后台任务状态");
+        reconciliation ||= reconcileRun().finally(() => {
+            reconciliation = null;
         });
-        connectionErrors += 1;
-        if (connectionErrors >= 5) {
-            settled = true;
-            source.close();
-            handlers.onConnectionError("事件连接多次重试后仍无法恢复");
-        } else {
-            handlers.onProgress(`连接暂时中断，正在进行第 ${connectionErrors} 次恢复`);
-        }
     };
     return () => {
         settled = true;

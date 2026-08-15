@@ -11,7 +11,17 @@ vi.mock("@/lib/server/data-adapter", () => ({
     writeJsonDataFile: vi.fn(async (name: string, value: unknown) => mocks.files.set(name, structuredClone(value))),
 }));
 
-import { createCanvasProject, getCanvasProject, getLatestCanvasProjectOverview, listCanvasProjects, listCanvasProjectSummaries, updateCanvasProject } from "./canvas-project-store";
+import {
+    createCanvasProject,
+    getCanvasProject,
+    getLatestCanvasProjectOverview,
+    listCanvasProjectPage,
+    listCanvasProjects,
+    listCanvasProjectSummaries,
+    updateCanvasProject,
+    updateCanvasProjectMutation,
+    updateCanvasProjectMutationPatch,
+} from "./canvas-project-store";
 
 describe("canvas project file provider", () => {
     beforeEach(() => {
@@ -57,6 +67,90 @@ describe("canvas project file provider", () => {
         expect(params[5]).toBe("2026-08-01T00:00:00.000Z");
     });
 
+    it("applies a compact PostgreSQL mutation in one conditional update", async () => {
+        mocks.provider = "postgres";
+        mocks.postgresQuery.mockResolvedValueOnce({ rows: [{ id: "one", updated_at: "2026-08-01T00:00:00.001Z" }] });
+
+        await expect(
+            updateCanvasProjectMutationPatch("user-one", "one", {
+                mutationId: "mutation-one",
+                baseUpdatedAt: "2026-08-01T00:00:00.000Z",
+                title: "紧凑更新",
+                nodeUpserts: [{ id: "node-one", type: "text" } as CanvasProject["nodes"][number]],
+                nodeDeletes: ["node-old"],
+            }),
+        ).resolves.toMatchObject({ projectId: "one", mutationId: "mutation-one" });
+
+        const [statement, params] = mocks.postgresQuery.mock.calls[0] as [string, unknown[]];
+        expect(statement).toContain("jsonb_array_elements");
+        expect(statement).toContain("COALESCE((");
+        expect(statement).toContain("existing.item->>'id' = incoming.item->>'id'");
+        expect(statement).toContain("to_jsonb($7::text)");
+        expect(statement).toContain("p.project_json->>'updatedAt' = $4");
+        expect(statement).not.toContain("project_json = $4::jsonb");
+        expect(params).toContain("mutation-one");
+        expect(params).toContain("2026-08-01T00:00:00.000Z");
+    });
+
+    it("replays a file mutation without overwriting the first acknowledgement", async () => {
+        const initial = project("one", "初始项目");
+        await createCanvasProject("user-one", initial);
+        const first = { ...initial, title: "第一次", updatedAt: "2026-08-01T00:00:00.001Z" };
+        const replay = { ...initial, title: "不应覆盖", updatedAt: "2026-08-01T00:00:00.002Z" };
+
+        await expect(updateCanvasProjectMutation("user-one", first, initial.updatedAt, "mutation-one")).resolves.toMatchObject({ title: "第一次" });
+        await expect(updateCanvasProjectMutation("user-one", replay, initial.updatedAt, "mutation-one")).resolves.toMatchObject({ title: "第一次" });
+        await expect(getCanvasProject("one", "user-one")).resolves.toMatchObject({ title: "第一次" });
+    });
+
+    it("round-trips Canvas video first and last frame metadata through compact project saves", async () => {
+        const initial = project("video-frames", "首尾帧项目");
+        await createCanvasProject("user-one", initial);
+        const firstSource = "permanent/canvas/first-frame.webp";
+        const lastSource = "permanent/canvas/last-frame.webp";
+
+        await updateCanvasProjectMutationPatch("user-one", initial.id, {
+            mutationId: "video-frame-mutation",
+            baseUpdatedAt: initial.updatedAt,
+            nodeUpserts: [
+                {
+                    id: "video-output",
+                    type: "video",
+                    title: "首尾帧视频",
+                    position: { x: 40, y: 80 },
+                    width: 320,
+                    height: 180,
+                    metadata: {
+                        videoReferenceMode: "first_last",
+                        videoFirstFrame: { nodeId: "first-image", title: "首帧", source: firstSource, storageKey: firstSource, previewUrl: `/api/reference-assets/${firstSource}` },
+                        videoLastFrame: { nodeId: "last-image", title: "尾帧", source: lastSource, storageKey: lastSource, previewUrl: `/api/reference-assets/${lastSource}` },
+                        videoReferences: [
+                            { type: "image", role: "first_frame", id: "first-image", name: "first.webp", mimeType: "image/webp", source: firstSource, storageKey: firstSource },
+                            { type: "image", role: "last_frame", id: "last-image", name: "last.webp", mimeType: "image/webp", source: lastSource, storageKey: lastSource },
+                        ],
+                    },
+                } as CanvasProject["nodes"][number],
+            ],
+        });
+
+        await expect(getCanvasProject(initial.id, "user-one")).resolves.toMatchObject({
+            nodes: [
+                {
+                    id: "video-output",
+                    metadata: {
+                        videoReferenceMode: "first_last",
+                        videoFirstFrame: { nodeId: "first-image", storageKey: firstSource },
+                        videoLastFrame: { nodeId: "last-image", storageKey: lastSource },
+                        videoReferences: [
+                            { role: "first_frame", source: firstSource },
+                            { role: "last_frame", source: lastSource },
+                        ],
+                    },
+                },
+            ],
+        });
+    });
+
     it("returns file-provider summaries without changing stored project details", async () => {
         await createCanvasProject("user-one", { ...project("one", "项目一"), nodes: [{ id: "node-one" }] as CanvasProject["nodes"] });
 
@@ -88,6 +182,26 @@ describe("canvas project file provider", () => {
         expect(statement).not.toMatch(/SELECT\s+project_json\s+FROM/i);
         expect(statement).toContain("LIMIT $2 OFFSET $3");
         expect(params).toEqual(["user-one", 12, 12]);
+    });
+
+    it("paginates complete PostgreSQL Canvas snapshots for explicit user export", async () => {
+        mocks.provider = "postgres";
+        mocks.postgresQuery.mockResolvedValue({ rows: [{ project_json: project("canvas-one", "画布一"), total_count: 3 }] });
+
+        await expect(listCanvasProjectPage("user-one", { page: 2, pageSize: 2 })).resolves.toMatchObject({ items: [{ id: "canvas-one" }], total: 3, page: 2, pageSize: 2 });
+
+        const [statement, params] = mocks.postgresQuery.mock.calls[0] as [string, unknown[]];
+        expect(statement).toContain("WHERE user_id = $1");
+        expect(statement).toContain("ORDER BY updated_at DESC, id ASC");
+        expect(statement).toContain("LIMIT $2 OFFSET $3");
+        expect(params).toEqual(["user-one", 2, 2]);
+    });
+
+    it("prevents the unbounded Canvas reader from querying PostgreSQL", async () => {
+        mocks.provider = "postgres";
+
+        await expect(listCanvasProjects("user-one")).rejects.toThrow("paginated project query");
+        expect(mocks.postgresQuery).not.toHaveBeenCalled();
     });
 
     it("returns only the latest file-provider project summary", async () => {

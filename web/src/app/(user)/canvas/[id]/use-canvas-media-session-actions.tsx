@@ -1,6 +1,5 @@
 "use client";
 
-import dynamic from "next/dynamic";
 import type { ChangeEvent as ReactChangeEvent, DragEvent as ReactDragEvent, MouseEvent as ReactMouseEvent } from "react";
 import { useCallback } from "react";
 
@@ -12,12 +11,8 @@ import { CanvasNodeType, type CanvasAssistantSession, type Position } from "../t
 import { fitNodeSize } from "../utils/canvas-node-size";
 import { PANORAMA_IMAGE_SIZE, isPanoramaRatio } from "../utils/canvas-panorama";
 
-const CanvasAssistantPanel = dynamic(() => import("../components/canvas-assistant-panel").then((mod) => mod.CanvasAssistantPanel), { ssr: false });
-const loadAssetPickerModal = () => import("../components/asset-picker-modal").then((mod) => mod.AssetPickerModal);
-const AssetPickerModal = dynamic(loadAssetPickerModal, { ssr: false, loading: () => null });
-
 import { CANVAS_DROP_NODE_OFFSET, VIDEO_NODE_MAX_HEIGHT, VIDEO_NODE_MAX_WIDTH } from "./canvas-page-elements";
-import { audioMetadata, imageMetadata, isAudioFile, uploadCanvasImage, videoMetadata } from "./canvas-page-utils";
+import { audioMetadata, imageMetadata, isAudioFile, replaceCanvasNodeMediaMetadata, uploadCanvasImage, videoMetadata } from "./canvas-page-utils";
 
 import type { CanvasInteractions } from "./use-canvas-interactions";
 import type { CanvasPageState } from "./use-canvas-page-state";
@@ -58,47 +53,84 @@ export function useCanvasMediaSessionActions({ state, interactions, files }: { s
         async (event: ReactChangeEvent<HTMLInputElement>) => {
             const file = event.target.files?.[0];
             const target = uploadTargetRef.current;
-            if (!file || (!file.type.startsWith("image/") && !file.type.startsWith("video/") && !isAudioFile(file))) return;
+            if (!file) return;
+            if (!file.type.startsWith("image/") && !file.type.startsWith("video/") && !isAudioFile(file)) {
+                uploadTargetRef.current = null;
+                event.target.value = "";
+                message.error("请选择图片、视频、MP3 或 WAV 文件");
+                return;
+            }
 
-            if (target?.nodeId) {
-                if (isAudioFile(file)) {
-                    const audio = await uploadMediaFile(file, "audio");
-                    const spec = NODE_DEFAULT_SIZE[CanvasNodeType.Audio];
+            try {
+                if (target?.nodeId) {
+                    if (isAudioFile(file)) {
+                        const audio = await uploadMediaFile(file, "audio");
+                        const spec = NODE_DEFAULT_SIZE[CanvasNodeType.Audio];
+                        setNodes((prev) =>
+                            prev.map((node) =>
+                                node.id === target.nodeId
+                                    ? {
+                                          ...node,
+                                          type: CanvasNodeType.Audio,
+                                          title: file.name,
+                                          position: { x: node.position.x + node.width / 2 - spec.width / 2, y: node.position.y + node.height / 2 - spec.height / 2 },
+                                          width: spec.width,
+                                          height: spec.height,
+                                          metadata: replaceCanvasNodeMediaMetadata(node.metadata, audioMetadata(audio)),
+                                      }
+                                    : node,
+                            ),
+                        );
+                        setSelectedNodeIds(new Set([target.nodeId]));
+                        setSelectedConnectionId(null);
+                        return;
+                    }
+                    if (file.type.startsWith("video/")) {
+                        const video = await uploadMediaFile(file, "video");
+                        const nextSize = fitNodeSize(video.width || 1280, video.height || 720, VIDEO_NODE_MAX_WIDTH, VIDEO_NODE_MAX_HEIGHT);
+                        setNodes((prev) =>
+                            prev.map((node) =>
+                                node.id === target.nodeId
+                                    ? {
+                                          ...node,
+                                          type: CanvasNodeType.Video,
+                                          title: file.name,
+                                          position: { x: node.position.x + node.width / 2 - nextSize.width / 2, y: node.position.y + node.height / 2 - nextSize.height / 2 },
+                                          width: nextSize.width,
+                                          height: nextSize.height,
+                                          metadata: replaceCanvasNodeMediaMetadata(node.metadata, videoMetadata(video)),
+                                      }
+                                    : node,
+                            ),
+                        );
+                        setSelectedNodeIds(new Set([target.nodeId]));
+                        setSelectedConnectionId(null);
+                        setDialogNodeId(target.nodeId);
+                        return;
+                    }
+                    const targetNode = nodesRef.current.find((node) => node.id === target.nodeId);
+                    const isPanorama = targetNode?.type === CanvasNodeType.Panorama;
+                    if (isPanorama) {
+                        const objectUrl = URL.createObjectURL(file);
+                        const dimensions = await readImageMeta(objectUrl).finally(() => URL.revokeObjectURL(objectUrl));
+                        if (!isPanoramaRatio(dimensions.width, dimensions.height)) {
+                            message.error("全景图必须接近 2:1 比例，例如 2048x1024");
+                            return;
+                        }
+                    }
+                    const image = await uploadCanvasImage(file);
+                    const imageSize = isPanorama ? NODE_DEFAULT_SIZE[CanvasNodeType.Panorama] : fitNodeSize(image.width, image.height);
                     setNodes((prev) =>
                         prev.map((node) =>
                             node.id === target.nodeId
                                 ? {
                                       ...node,
-                                      type: CanvasNodeType.Audio,
+                                      type: isPanorama ? CanvasNodeType.Panorama : CanvasNodeType.Image,
                                       title: file.name,
-                                      position: { x: node.position.x + node.width / 2 - spec.width / 2, y: node.position.y + node.height / 2 - spec.height / 2 },
-                                      width: spec.width,
-                                      height: spec.height,
-                                      metadata: { ...node.metadata, ...audioMetadata(audio), errorDetails: undefined },
-                                  }
-                                : node,
-                        ),
-                    );
-                    setSelectedNodeIds(new Set([target.nodeId]));
-                    setSelectedConnectionId(null);
-                    uploadTargetRef.current = null;
-                    event.target.value = "";
-                    return;
-                }
-                if (file.type.startsWith("video/")) {
-                    const video = await uploadMediaFile(file, "video");
-                    const nextSize = fitNodeSize(video.width || 1280, video.height || 720, VIDEO_NODE_MAX_WIDTH, VIDEO_NODE_MAX_HEIGHT);
-                    setNodes((prev) =>
-                        prev.map((node) =>
-                            node.id === target.nodeId
-                                ? {
-                                      ...node,
-                                      type: CanvasNodeType.Video,
-                                      title: file.name,
-                                      position: { x: node.position.x + node.width / 2 - nextSize.width / 2, y: node.position.y + node.height / 2 - nextSize.height / 2 },
-                                      width: nextSize.width,
-                                      height: nextSize.height,
-                                      metadata: { ...node.metadata, ...videoMetadata(video), errorDetails: undefined },
+                                      position: { x: node.position.x + node.width / 2 - imageSize.width / 2, y: node.position.y + node.height / 2 - imageSize.height / 2 },
+                                      width: imageSize.width,
+                                      height: imageSize.height,
+                                      metadata: replaceCanvasNodeMediaMetadata(node.metadata, imageMetadata(image), isPanorama ? { size: PANORAMA_IMAGE_SIZE, panoramaProjection: "equirectangular" } : undefined),
                                   }
                                 : node,
                         ),
@@ -106,68 +138,16 @@ export function useCanvasMediaSessionActions({ state, interactions, files }: { s
                     setSelectedNodeIds(new Set([target.nodeId]));
                     setSelectedConnectionId(null);
                     setDialogNodeId(target.nodeId);
-                    uploadTargetRef.current = null;
-                    event.target.value = "";
-                    return;
+                } else {
+                    const position = target?.position || screenToCanvas((containerRef.current?.getBoundingClientRect().left || 0) + size.width / 2, (containerRef.current?.getBoundingClientRect().top || 0) + size.height / 2);
+                    await (isAudioFile(file) ? createAudioFileNode(file, position) : file.type.startsWith("video/") ? createVideoFileNode(file, position) : createImageFileNode(file, position));
                 }
-                const targetNode = nodesRef.current.find((node) => node.id === target.nodeId);
-                const isPanorama = targetNode?.type === CanvasNodeType.Panorama;
-                if (isPanorama) {
-                    const objectUrl = URL.createObjectURL(file);
-                    const dimensions = await readImageMeta(objectUrl);
-                    URL.revokeObjectURL(objectUrl);
-                    if (!isPanoramaRatio(dimensions.width, dimensions.height)) {
-                        message.error("全景图必须接近 2:1 比例，例如 2048x1024");
-                        uploadTargetRef.current = null;
-                        event.target.value = "";
-                        return;
-                    }
-                }
-                const image = await uploadCanvasImage(file);
-                const imageSize = isPanorama ? NODE_DEFAULT_SIZE[CanvasNodeType.Panorama] : fitNodeSize(image.width, image.height);
-                setNodes((prev) =>
-                    prev.map((node) =>
-                        node.id === target.nodeId
-                            ? {
-                                  ...node,
-                                  type: isPanorama ? CanvasNodeType.Panorama : CanvasNodeType.Image,
-                                  title: file.name,
-                                  position: isPanorama ? { x: node.position.x + node.width / 2 - imageSize.width / 2, y: node.position.y + node.height / 2 - imageSize.height / 2 } : node.position,
-                                  width: imageSize.width,
-                                  height: imageSize.height,
-                                  metadata: {
-                                      ...node.metadata,
-                                      ...imageMetadata(image),
-                                      ...(isPanorama ? { size: PANORAMA_IMAGE_SIZE, panoramaProjection: "equirectangular" as const } : {}),
-                                      errorDetails: undefined,
-                                      freeResize: false,
-                                      isBatchRoot: undefined,
-                                      batchRootId: undefined,
-                                      batchChildIds: undefined,
-                                      batchUsesReferenceImages: undefined,
-                                      generationType: undefined,
-                                      model: undefined,
-                                      size: undefined,
-                                      quality: undefined,
-                                      count: undefined,
-                                      references: undefined,
-                                      primaryImageId: undefined,
-                                      imageBatchExpanded: undefined,
-                                  },
-                              }
-                            : node,
-                    ),
-                );
-                setSelectedNodeIds(new Set([target.nodeId]));
-                setSelectedConnectionId(null);
-                setDialogNodeId(target.nodeId);
-            } else {
-                const position = target?.position || screenToCanvas((containerRef.current?.getBoundingClientRect().left || 0) + size.width / 2, (containerRef.current?.getBoundingClientRect().top || 0) + size.height / 2);
-                void (isAudioFile(file) ? createAudioFileNode(file, position) : file.type.startsWith("video/") ? createVideoFileNode(file, position) : createImageFileNode(file, position));
+            } catch (error) {
+                message.error(error instanceof Error ? error.message : "文件添加失败，请稍后重试");
+            } finally {
+                uploadTargetRef.current = null;
+                event.target.value = "";
             }
-
-            uploadTargetRef.current = null;
-            event.target.value = "";
         },
         [createAudioFileNode, createImageFileNode, createVideoFileNode, message, nodesRef, screenToCanvas, size.height, size.width],
     );
@@ -179,12 +159,18 @@ export function useCanvasMediaSessionActions({ state, interactions, files }: { s
             if (!files.length) return;
 
             const pos = screenToCanvas(event.clientX, event.clientY);
-            files.forEach((file, index) => {
+            setSelectedNodeIds(new Set());
+            setSelectedConnectionId(null);
+            const creations = files.map((file, index) => {
                 const nextPos = { x: pos.x + index * CANVAS_DROP_NODE_OFFSET, y: pos.y + index * CANVAS_DROP_NODE_OFFSET };
-                void (isAudioFile(file) ? createAudioFileNode(file, nextPos) : file.type.startsWith("video/") ? createVideoFileNode(file, nextPos) : createImageFileNode(file, nextPos));
+                return isAudioFile(file) ? createAudioFileNode(file, nextPos, true) : file.type.startsWith("video/") ? createVideoFileNode(file, nextPos, true, false) : createImageFileNode(file, nextPos, true, false);
+            });
+            void Promise.allSettled(creations).then((results) => {
+                const failures = results.filter((result) => result.status === "rejected");
+                if (failures.length) message.error(failures.length === files.length ? "文件添加失败" : `有 ${failures.length} 个文件添加失败`);
             });
         },
-        [createAudioFileNode, createImageFileNode, createVideoFileNode, screenToCanvas],
+        [createAudioFileNode, createImageFileNode, createVideoFileNode, message, screenToCanvas, setSelectedConnectionId, setSelectedNodeIds],
     );
 
     const pasteAssistantImage = useCallback(

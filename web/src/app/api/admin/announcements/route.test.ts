@@ -29,7 +29,7 @@ describe("GET /api/admin/announcements", () => {
     });
 
     it("passes pagination parameters and returns page metadata", async () => {
-        mocks.getCurrentUser.mockResolvedValue({ id: "admin-one", role: "admin" });
+        mocks.getCurrentUser.mockResolvedValue({ id: "admin-one", role: "admin", status: "active", adminPermissions: ["content.manage"] });
 
         const response = await GET(new Request("http://localhost/api/admin/announcements?page=3&pageSize=12"));
 
@@ -39,7 +39,7 @@ describe("GET /api/admin/announcements", () => {
     });
 
     it("rejects unsafe pagination values before the repository boundary", async () => {
-        mocks.getCurrentUser.mockResolvedValue({ id: "admin-one", role: "admin" });
+        mocks.getCurrentUser.mockResolvedValue({ id: "admin-one", role: "admin", status: "active", adminPermissions: ["content.manage"] });
 
         await GET(new Request("http://localhost/api/admin/announcements?page=999999999999999999999&pageSize=-1"));
 

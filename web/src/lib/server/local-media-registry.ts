@@ -1,5 +1,5 @@
 import { readJsonDataFile, writeJsonDataFile } from "@/lib/server/data-adapter";
-import { ensurePostgresSchema, getDatabaseProvider, postgresQuery } from "@/lib/server/database";
+import { ensurePostgresSchema, getDatabaseProvider, postgresQuery, type QueryExecutor } from "@/lib/server/database";
 import type { LocalMediaClass, LocalMediaType } from "@/lib/local-media-storage-contract";
 import { isManagedMediaType, isMediaSourceGroup } from "@/lib/media-management-contract";
 
@@ -42,6 +42,8 @@ export type LocalMediaRegistrationPage = {
         expiredTemporaryFiles: number;
     };
 };
+
+export type UserLocalMediaRegistrationPage = Pick<LocalMediaRegistrationPage, "items" | "total" | "page" | "pageSize">;
 
 const FILE_NAME = "local-media-assets.json";
 let mutationQueue = Promise.resolve();
@@ -157,12 +159,70 @@ export async function listLocalMediaMigrationRegistrations(input: { limit?: numb
 export async function listLocalMediaRegistrationsForUser(userId: string) {
     const ownerUserId = text(userId, 160);
     if (!ownerUserId) return [];
+    if (getDatabaseProvider() === "postgres") throw new Error("PostgreSQL user media reads must use a paginated registration query");
+    return (await readRegistry()).assets.filter((item) => item.ownerUserId === ownerUserId).toSorted((a, b) => b.createdAt.localeCompare(a.createdAt) || a.storageKey.localeCompare(b.storageKey));
+}
+
+export async function listLocalMediaRegistrationsForUserPage(userId: string, input: { page: number; pageSize: number }): Promise<UserLocalMediaRegistrationPage> {
+    const ownerUserId = text(userId, 160);
+    const page = Math.max(1, Math.floor(Number(input.page) || 1));
+    const pageSize = Math.max(1, Math.min(100, Math.floor(Number(input.pageSize) || 20)));
+    if (!ownerUserId) return { items: [], total: 0, page, pageSize };
+    const offset = (page - 1) * pageSize;
     if (getDatabaseProvider() === "postgres") {
         await ensurePostgresSchema();
-        const result = await postgresQuery("SELECT * FROM local_media_assets WHERE owner_user_id = $1 ORDER BY created_at DESC", [ownerUserId]);
-        return result.rows.map(mapRegistration);
+        const result = await postgresQuery<Record<string, unknown>>(
+            `WITH filtered AS (
+                 SELECT *
+                 FROM local_media_assets
+                 WHERE owner_user_id = $1
+             ), page_items AS (
+                 SELECT *
+                 FROM filtered
+                 ORDER BY created_at DESC, storage_key ASC
+                 LIMIT $2 OFFSET $3
+             )
+             SELECT page_items.*, totals.total_count
+             FROM (SELECT count(*)::integer AS total_count FROM filtered) totals
+             LEFT JOIN page_items ON TRUE
+             ORDER BY page_items.created_at DESC NULLS LAST, page_items.storage_key ASC`,
+            [ownerUserId, pageSize, offset],
+        );
+        return {
+            items: result.rows.filter((row) => row.storage_key).map(mapRegistration),
+            total: Math.max(0, Number(result.rows[0]?.total_count) || 0),
+            page,
+            pageSize,
+        };
     }
-    return (await readRegistry()).assets.filter((item) => item.ownerUserId === ownerUserId).toSorted((a, b) => b.createdAt.localeCompare(a.createdAt));
+    const registrations = await listLocalMediaRegistrationsForUser(ownerUserId);
+    return { items: registrations.slice(offset, offset + pageSize), total: registrations.length, page, pageSize };
+}
+
+export async function listLocalMediaRegistrationsForDeletion(userId: string, input: { batchSize: number; executor?: QueryExecutor; forUpdate?: boolean }) {
+    const ownerUserId = text(userId, 160);
+    if (!ownerUserId) return [];
+    if (!Number.isSafeInteger(input.batchSize) || input.batchSize < 1) throw new Error("local media deletion batch size must be a positive safe integer");
+    if (getDatabaseProvider() !== "postgres") {
+        return (await readRegistry()).assets.filter((item) => item.ownerUserId === ownerUserId).toSorted((a, b) => b.createdAt.localeCompare(a.createdAt) || a.storageKey.localeCompare(b.storageKey));
+    }
+    if (!input.executor) await ensurePostgresSchema();
+    const query: QueryExecutor["query"] = input.executor ? input.executor.query.bind(input.executor) : postgresQuery;
+    const registrations: LocalMediaRegistration[] = [];
+    let offset = 0;
+    while (true) {
+        const result = await query<Record<string, unknown>>(
+            `SELECT * FROM local_media_assets
+             WHERE owner_user_id = $1
+             ORDER BY created_at DESC, storage_key ASC
+             LIMIT $2::integer OFFSET $3${input.forUpdate ? " FOR UPDATE" : ""}`,
+            [ownerUserId, input.batchSize, offset],
+        );
+        const page = result.rows.map(mapRegistration);
+        registrations.push(...page);
+        if (page.length < input.batchSize) return registrations;
+        offset += page.length;
+    }
 }
 
 export async function listLocalMediaRegistrationPage(input: { page?: number; pageSize?: number; storageClass?: string; type?: string; source?: string; search?: string; ownerUserIds?: string[] } = {}): Promise<LocalMediaRegistrationPage> {

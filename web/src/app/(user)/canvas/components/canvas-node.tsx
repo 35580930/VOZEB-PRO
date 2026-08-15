@@ -14,7 +14,11 @@ import type { CanvasResourceReference } from "../utils/canvas-resource-reference
 type ResizeCorner = "top-left" | "top-right" | "bottom-left" | "bottom-right";
 const selectionBlue = "#2f80ff";
 
-type CanvasNodeProps = {
+function isInteractiveTarget(target: EventTarget | null) {
+    return target instanceof Element && Boolean(target.closest("button,input,textarea,select,video,audio,[data-canvas-no-drag]"));
+}
+
+export type CanvasNodeProps = {
     data: CanvasNodeData;
     scale: number;
     isSelected: boolean;
@@ -40,11 +44,13 @@ type CanvasNodeProps = {
     onHoverEnd: (nodeId: string) => void;
     onConnectStart: (event: React.MouseEvent | React.PointerEvent, nodeId: string, handleType: "source" | "target") => void;
     onResize: (nodeId: string, width: number, height: number, position?: Position) => void;
+    onResizeEnd?: (nodeId: string, width: number, height: number, position?: Position) => void;
     onContentChange: (nodeId: string, content: string) => void;
     onToggleBatch?: (nodeId: string) => void;
     onSetBatchPrimary?: (node: CanvasNodeData) => void;
     onRetry?: (node: CanvasNodeData) => void;
     onGenerateImage?: (node: CanvasNodeData) => void;
+    onOpenPanel?: (node: CanvasNodeData) => void;
     onImageDimensions?: (nodeId: string, naturalWidth: number, naturalHeight: number) => void;
     onViewImage?: (node: CanvasNodeData) => void;
     onContextMenu: (event: React.MouseEvent, nodeId: string) => void;
@@ -98,11 +104,13 @@ export const CanvasNode = React.memo(function CanvasNode({
     onHoverEnd,
     onConnectStart,
     onResize,
+    onResizeEnd,
     onContentChange,
     onToggleBatch,
     onSetBatchPrimary,
     onRetry,
     onGenerateImage,
+    onOpenPanel,
     onImageDimensions,
     onViewImage,
     onContextMenu,
@@ -113,11 +121,14 @@ export const CanvasNode = React.memo(function CanvasNode({
     const hasImageContent = isCanvasImageNodeType(data.type) && Boolean(data.metadata?.content);
     const hasVideoContent = data.type === CanvasNodeType.Video && Boolean(data.metadata?.content);
     const hasAudioContent = data.type === CanvasNodeType.Audio && Boolean(data.metadata?.content);
+    const isConfig = data.type === CanvasNodeType.Config;
+    const nodeBackground = isConfig ? theme.node.panel : hasImageContent || hasVideoContent ? "transparent" : theme.node.fill;
     const isBatchRoot = data.type === CanvasNodeType.Image && Boolean(data.metadata?.isBatchRoot) && batchCount > 1;
     const isBatchChild = data.type === CanvasNodeType.Image && Boolean(data.metadata?.batchRootId);
     const isActive = isConnectionTarget || isSelected || isFocusRelated;
     const imageBorderColor = isActive ? selectionBlue : isRelated && !isBatchChild ? theme.node.muted : theme.node.stroke;
     const textareaRef = useRef<HTMLTextAreaElement>(null);
+    const clickStartRef = useRef<{ x: number; y: number } | null>(null);
     const resizeRef = useRef({
         isResizing: false,
         corner: "bottom-right" as ResizeCorner,
@@ -129,6 +140,9 @@ export const CanvasNode = React.memo(function CanvasNode({
         startHeight: 0,
         keepRatio: false,
         ratio: 1,
+        currentWidth: 0,
+        currentHeight: 0,
+        currentPosition: { x: 0, y: 0 },
     });
 
     useEffect(() => {
@@ -200,19 +214,25 @@ export const CanvasNode = React.memo(function CanvasNode({
                 }
             }
 
-            onResize(data.id, width, height, {
+            const position = {
                 x: fromLeft ? startRight - width : resizeRef.current.startLeft,
                 y: fromTop ? startBottom - height : resizeRef.current.startTop,
-            });
+            };
+            resizeRef.current.currentWidth = width;
+            resizeRef.current.currentHeight = height;
+            resizeRef.current.currentPosition = position;
+            onResize(data.id, width, height, position);
         },
         [data.id, onResize, scale],
     );
 
     const handleResizeUp = useCallback(() => {
+        if (!resizeRef.current.isResizing) return;
         resizeRef.current.isResizing = false;
         window.removeEventListener("mousemove", handleResizeMove);
         window.removeEventListener("mouseup", handleResizeUp);
-    }, [handleResizeMove]);
+        onResizeEnd?.(data.id, resizeRef.current.currentWidth, resizeRef.current.currentHeight, resizeRef.current.currentPosition);
+    }, [data.id, handleResizeMove, onResizeEnd]);
 
     const handleResizeMouseDown = (event: React.MouseEvent, corner: ResizeCorner) => {
         event.stopPropagation();
@@ -228,9 +248,64 @@ export const CanvasNode = React.memo(function CanvasNode({
             startHeight: data.height,
             keepRatio: (isCanvasImageNodeType(data.type) && !data.metadata?.freeResize) || data.type === CanvasNodeType.Video,
             ratio: (data.metadata?.naturalWidth || data.width) / (data.metadata?.naturalHeight || data.height || 1),
+            currentWidth: data.width,
+            currentHeight: data.height,
+            currentPosition: data.position,
         };
         window.addEventListener("mousemove", handleResizeMove);
         window.addEventListener("mouseup", handleResizeUp);
+    };
+
+    const handleNodeDoubleClick = (event: React.MouseEvent) => {
+        const target = event.target instanceof Element ? event.target : null;
+        if (target?.closest("button,input,textarea,select,video,audio,[data-canvas-no-drag]")) return;
+        if (isBatchRoot) {
+            event.stopPropagation();
+            onToggleBatch?.(data.id);
+            return;
+        }
+        if (data.type === CanvasNodeType.Image && hasImageContent) {
+            event.stopPropagation();
+            onViewImage?.(data);
+            return;
+        }
+        if (data.type === CanvasNodeType.Text) {
+            event.stopPropagation();
+            setIsEditingContent(true);
+            return;
+        }
+        if (data.type === CanvasNodeType.Image || data.type === CanvasNodeType.Panorama || data.type === CanvasNodeType.Video || data.type === CanvasNodeType.Audio || data.type === CanvasNodeType.Config) {
+            event.stopPropagation();
+            onOpenPanel?.(data);
+        }
+    };
+
+    const rememberNodePointer = (event: React.MouseEvent | React.PointerEvent) => {
+        const target = event.target instanceof Element ? event.target : null;
+        if (target?.closest("button,input,textarea,select,video,audio,[data-canvas-no-drag]")) return;
+        clickStartRef.current = { x: event.clientX, y: event.clientY };
+    };
+
+    const handleNodeClick = (event: React.MouseEvent) => {
+        const start = clickStartRef.current;
+        clickStartRef.current = null;
+        if (!start || Math.hypot(event.clientX - start.x, event.clientY - start.y) > 6) return;
+        if (event.shiftKey || event.ctrlKey || event.metaKey) return;
+        const target = event.target instanceof Element ? event.target : null;
+        if (target?.closest("button,input,textarea,select,video,audio,[data-canvas-no-drag]")) return;
+        if (data.type === CanvasNodeType.Text) {
+            setIsEditingContent(true);
+            return;
+        }
+        if (data.type === CanvasNodeType.Image || data.type === CanvasNodeType.Panorama || data.type === CanvasNodeType.Video || data.type === CanvasNodeType.Audio || data.type === CanvasNodeType.Config) {
+            onOpenPanel?.(data);
+        }
+    };
+
+    const activateTextEditorAfterClick = (event: React.MouseEvent | React.PointerEvent) => {
+        if (data.type !== CanvasNodeType.Text || isInteractiveTarget(event.target)) return;
+        const start = clickStartRef.current;
+        if (start && Math.hypot(event.clientX - start.x, event.clientY - start.y) <= 6 && !event.shiftKey && !event.ctrlKey && !event.metaKey) setIsEditingContent(true);
     };
 
     useEffect(() => {
@@ -259,40 +334,35 @@ export const CanvasNode = React.memo(function CanvasNode({
                 setHovered(false);
                 onHoverEnd(data.id);
             }}
+            onClick={handleNodeClick}
+            onMouseUp={activateTextEditorAfterClick}
+            onPointerUp={(event) => {
+                if (event.pointerType !== "mouse") activateTextEditorAfterClick(event);
+            }}
+            onDoubleClick={handleNodeDoubleClick}
             onContextMenu={(event) => onContextMenu(event, data.id)}
         >
             <div
-                className="relative h-full w-full overflow-visible rounded-3xl border-2"
+                className={`relative h-full w-full overflow-visible ${isConfig ? "rounded-2xl border" : "rounded-3xl border-2"}`}
                 style={{
-                    background: hasImageContent || hasVideoContent ? "transparent" : theme.node.fill,
+                    background: nodeBackground,
                     borderColor: hasImageContent ? imageBorderColor : isActive ? selectionBlue : isRelated ? theme.node.muted : theme.node.stroke,
                     boxShadow: isActive ? `0 0 0 1px ${selectionBlue}55` : isRelated && !isBatchChild ? `0 0 0 1px ${theme.node.muted}55, 0 18px 48px rgba(0,0,0,.14)` : undefined,
                 }}
-                onMouseDown={(event) => onMouseDown(event, data.id)}
-                onPointerDown={(event) => {
-                    if (event.pointerType !== "mouse") onMouseDown(event, data.id);
+                onMouseDown={(event) => {
+                    rememberNodePointer(event);
+                    onMouseDown(event, data.id);
                 }}
-                onDoubleClick={(event) => {
-                    if (isBatchRoot) {
-                        event.stopPropagation();
-                        onToggleBatch?.(data.id);
-                        return;
-                    }
-                    if (data.type === CanvasNodeType.Image && hasImageContent) {
-                        event.stopPropagation();
-                        onViewImage?.(data);
-                        return;
-                    }
-                    if (data.type !== CanvasNodeType.Text) return;
-                    event.stopPropagation();
-                    setIsEditingContent(true);
+                onPointerDown={(event) => {
+                    rememberNodePointer(event);
+                    if (event.pointerType !== "mouse") onMouseDown(event, data.id);
                 }}
             >
                 <div
                     className={`relative flex h-full w-full items-center justify-center rounded-[inherit] ${isBatchRoot ? "overflow-visible" : "overflow-hidden"}`}
                     style={
                         {
-                            background: hasImageContent || hasVideoContent ? "transparent" : theme.node.fill,
+                            background: nodeBackground,
                             "--batch-from-x": `${batchMotion?.x || 0}px`,
                             "--batch-from-y": `${batchMotion?.y || 0}px`,
                             "--batch-from-rotate": `${6 + (batchMotion?.index || 0) * 4}deg`,
@@ -339,7 +409,11 @@ export const CanvasNode = React.memo(function CanvasNode({
             <ConnectionHandleDot side="left" visible={hovered || isSelected || isConnecting} onConnectStart={(event) => onConnectStart(event, data.id, "target")} />
             <ConnectionHandleDot side="right" visible={data.type !== CanvasNodeType.Config && (hovered || isSelected || isConnecting)} onConnectStart={(event) => onConnectStart(event, data.id, "source")} />
 
-            {showPanel && renderPanel ? <div className="absolute left-1/2 top-full z-[70] w-[500px] max-w-[calc(100vw-2rem)] -translate-x-1/2 pt-4">{renderPanel(data)}</div> : null}
+            {showPanel && renderPanel ? (
+                <div data-canvas-no-drag className="absolute left-1/2 top-full z-[70] w-[500px] max-w-[calc(100vw-2rem)] -translate-x-1/2 pt-4">
+                    {renderPanel(data)}
+                </div>
+            ) : null}
         </div>
     );
 });

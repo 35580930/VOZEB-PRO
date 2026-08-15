@@ -17,6 +17,15 @@ export type AdminBillingSummary = {
         succeededAmountCents: number;
         refundedAmountCents: number;
     };
+    commerce: {
+        convertedOrders: number;
+        promotionOrders: number;
+        promotionConvertedOrders: number;
+        promotionDiscountCents: number;
+        couponOrders: number;
+        couponConvertedOrders: number;
+        couponDiscountCents: number;
+    };
     providers: Array<{
         provider: string;
         totalOrders: number;

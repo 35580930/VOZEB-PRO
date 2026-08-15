@@ -1,9 +1,11 @@
 import { getDatabaseProvider, ensurePostgresSchema, postgresQuery, withPostgresTransaction } from "@/lib/server/database";
+import { resolveGenerationReviewReason } from "@/lib/server/generation-task-review-reason";
 import { readJsonDataFile, withJsonDataFileLock, writeJsonDataFile } from "@/lib/server/data-adapter";
 import type {
     GenerationTaskContext,
     GenerationTaskCostAggregate,
     GenerationTaskExecutionState,
+    GenerationTaskPerformanceSummary,
     GenerationTaskRecordListOptions,
     GenerationTaskRecordSummary,
     GenerationTaskStatus,
@@ -11,7 +13,7 @@ import type {
     StoredGenerationTaskRecord,
 } from "@/lib/server/generation-task-types";
 
-export type { GenerationTaskContext, GenerationTaskCostAggregate, GenerationTaskRecordListOptions, GenerationTaskRecordSummary, GenerationTaskType, StoredGenerationTaskRecord } from "@/lib/server/generation-task-types";
+export type { GenerationTaskContext, GenerationTaskCostAggregate, GenerationTaskPerformanceSummary, GenerationTaskRecordListOptions, GenerationTaskRecordSummary, GenerationTaskType, StoredGenerationTaskRecord } from "@/lib/server/generation-task-types";
 
 type GenerationTaskSummaryAccumulator = Omit<GenerationTaskRecordSummary, "averageDurationMs"> & {
     averageDurationMs: number;
@@ -24,23 +26,54 @@ let fileMutationQueue = Promise.resolve();
 const concurrencyQueues = new Map<string, Promise<void>>();
 
 export async function createStoredGenerationTask<T extends { id: string; userId: string; status: string; createdAt: number; updatedAt: number }>(type: GenerationTaskType, task: T, ttlMs: number) {
-    await cleanupStoredGenerationTasks();
     return insertTask(type, task, ttlMs);
+}
+
+export async function cleanupExpiredStoredGenerationTasks(input: { limit: number; now?: Date }) {
+    const now = input.now || new Date();
+    const limit = Math.max(1, Math.min(500, Math.floor(input.limit)));
+    if (getDatabaseProvider() === "postgres") {
+        await ensurePostgresSchema();
+        const result = await postgresQuery<{ id: string }>(
+            `WITH candidates AS (
+                SELECT id FROM generation_tasks
+                WHERE expires_at <= $1
+                ORDER BY expires_at ASC, id ASC
+                LIMIT $2
+            )
+            DELETE FROM generation_tasks
+            USING candidates
+            WHERE generation_tasks.id = candidates.id
+            RETURNING generation_tasks.id`,
+            [now.toISOString(), limit],
+        );
+        return result.rows.length;
+    }
+    return withGenerationTaskFileMutation(async (tasks) => {
+        const expiredIds = new Set(
+            tasks
+                .filter((task) => task.expiresAt <= now.getTime())
+                .toSorted((left, right) => left.expiresAt - right.expiresAt || left.id.localeCompare(right.id))
+                .slice(0, limit)
+                .map((task) => task.id),
+        );
+        return { tasks: tasks.filter((task) => !expiredIds.has(task.id)), result: expiredIds.size };
+    });
 }
 
 export async function getStoredGenerationTask<T>(type: GenerationTaskType, id: string): Promise<(T & GenerationTaskExecutionState) | null> {
     if (getDatabaseProvider() === "postgres") {
         await ensurePostgresSchema();
-        const result = await postgresQuery<{ payload: T; execution_phase?: unknown; last_upstream_status?: unknown }>("SELECT payload, execution_phase, last_upstream_status FROM generation_tasks WHERE id = $1 AND task_type = $2 AND expires_at > now()", [
-            id,
-            type,
-        ]);
+        const result = await postgresQuery<{ payload: T; execution_phase?: unknown; last_upstream_status?: unknown; result_payload?: unknown }>(
+            "SELECT payload, execution_phase, last_upstream_status, result_payload FROM generation_tasks WHERE id = $1 AND task_type = $2 AND expires_at > now()",
+            [id, type],
+        );
         const row = result.rows[0];
-        return row?.payload ? withExecutionState(row.payload, row.execution_phase, row.last_upstream_status) : null;
+        return row?.payload ? withExecutionState(row.payload, row.execution_phase, row.last_upstream_status, row.result_payload) : null;
     }
     const tasks = await readFileTasks();
     const record = tasks.find((task) => task.id === id && task.type === type && task.expiresAt > Date.now());
-    return record ? withExecutionState(record.payload as T, record.executionPhase, record.lastUpstreamStatus) : null;
+    return record ? withExecutionState(record.payload as T, record.executionPhase, record.lastUpstreamStatus, record.resultPayload) : null;
 }
 
 export async function getStoredGenerationTaskRecord(type: GenerationTaskType, id: string): Promise<StoredGenerationTaskRecord | null> {
@@ -50,6 +83,26 @@ export async function getStoredGenerationTaskRecord(type: GenerationTaskType, id
         return result.rows[0] ? mapStoredTaskRecord(result.rows[0]) : null;
     }
     return (await readFileTasks()).find((task) => task.id === id && task.type === type && task.expiresAt > Date.now()) || null;
+}
+
+export async function listStoredGenerationTaskRecordsByRunIds(runIds: string[], userIds: string[] = []) {
+    const ids = Array.from(new Set(runIds.map(cleanContextText).filter(Boolean)));
+    const owners = Array.from(new Set(userIds.map(cleanContextText).filter(Boolean)));
+    if (!ids.length) return [];
+    if (getDatabaseProvider() === "postgres") {
+        await ensurePostgresSchema();
+        const result = await postgresQuery<Record<string, unknown>>(
+            `SELECT * FROM generation_tasks
+             WHERE expires_at > now() AND run_id = ANY($1::text[]) AND task_type <> 'agent'
+               AND (cardinality($2::text[]) = 0 OR user_id = ANY($2::text[]))
+             ORDER BY run_id ASC, created_at ASC, id ASC`,
+            [ids, owners],
+        );
+        return result.rows.map(mapStoredTaskRecord);
+    }
+    return (await readFileTasks())
+        .filter((task) => task.expiresAt > Date.now() && task.type !== "agent" && task.runId && ids.includes(task.runId) && (!owners.length || owners.includes(task.userId)))
+        .sort((left, right) => String(left.runId).localeCompare(String(right.runId)) || left.createdAt - right.createdAt || left.id.localeCompare(right.id));
 }
 
 export async function getStoredGenerationTaskByRequest<T>(type: GenerationTaskType, userId: string, clientRequestId: string, attemptNo?: number): Promise<T | null> {
@@ -88,22 +141,55 @@ export async function getStoredGenerationTaskByUpstream(type: GenerationTaskType
 }
 
 export async function listStoredGenerationTasks<T>(type: GenerationTaskType, userId: string, limit = 20): Promise<T[]> {
+    return queryStoredGenerationTasks<T>(type, { userId, limit });
+}
+
+export async function queryStoredGenerationTasks<T>(type: GenerationTaskType, options: { userId: string; conversationId?: string; projectId?: string; surface?: string; statuses?: string[]; limit?: number }): Promise<T[]> {
+    const userId = options.userId.trim();
+    const conversationId = cleanContextText(options.conversationId);
+    const projectId = cleanContextText(options.projectId);
+    const surface = cleanContextText(options.surface);
+    const statuses = [...new Set((options.statuses || []).map(normalizeGenerationTaskStatus))];
+    const limit = Math.max(1, Math.min(100, Math.floor(Number(options.limit) || 20)));
     if (getDatabaseProvider() === "postgres") {
         await ensurePostgresSchema();
-        const result = await postgresQuery<{ payload: T }>("SELECT payload FROM generation_tasks WHERE user_id = $1 AND task_type = $2 AND expires_at > now() ORDER BY updated_at DESC LIMIT $3", [userId, type, Math.max(1, Math.min(100, limit))]);
+        const values: unknown[] = [userId, type];
+        const filters = ["user_id = $1", "task_type = $2", "expires_at > now()"];
+        const addFilter = (column: string, value?: string) => {
+            if (!value) return;
+            values.push(value);
+            filters.push(`${column} = $${values.length}`);
+        };
+        addFilter("conversation_id", conversationId);
+        addFilter("project_id", projectId);
+        addFilter("surface", surface);
+        if (statuses.length) {
+            values.push(statuses);
+            filters.push(`status = ANY($${values.length}::text[])`);
+        }
+        values.push(limit);
+        const result = await postgresQuery<{ payload: T }>(`SELECT payload FROM generation_tasks WHERE ${filters.join(" AND ")} ORDER BY updated_at DESC, id DESC LIMIT $${values.length}`, values);
         return result.rows.map((row) => row.payload);
     }
     const tasks = await readFileTasks();
     return tasks
-        .filter((task) => task.userId === userId && task.type === type && task.expiresAt > Date.now())
-        .sort((a, b) => b.updatedAt - a.updatedAt)
-        .slice(0, Math.max(1, Math.min(100, limit)))
+        .filter(
+            (task) =>
+                task.userId === userId &&
+                task.type === type &&
+                task.expiresAt > Date.now() &&
+                (!conversationId || task.conversationId === conversationId) &&
+                (!projectId || task.projectId === projectId) &&
+                (!surface || task.surface === surface) &&
+                (!statuses.length || statuses.includes(task.status)),
+        )
+        .sort((a, b) => b.updatedAt - a.updatedAt || b.id.localeCompare(a.id))
+        .slice(0, limit)
         .map((task) => task.payload as T);
 }
 
 export async function listStoredGenerationTaskRecords(options: GenerationTaskRecordListOptions = {}) {
     let records: StoredGenerationTaskRecord[];
-    let databaseTotal = 0;
     let summary: GenerationTaskRecordSummary | null = null;
     const projectId = options.projectId?.trim() || null;
     const page = Math.max(1, Math.floor(Number(options.page) || 1));
@@ -116,32 +202,20 @@ export async function listStoredGenerationTaskRecords(options: GenerationTaskRec
         const surface = isTaskSurface(options.surface) ? options.surface : null;
         const userId = options.userId?.trim() || null;
         const search = (options.search || "").trim().slice(0, 160);
-        const searchUserIds = Array.from(new Set((options.searchUserIds || []).map((id) => id.trim()).filter(Boolean))).slice(0, 100);
-        const params = [type, status, surface, projectId, userId, search, searchUserIds];
-        if (!includeAll) {
-            const [pageResult, summaryResult] = await Promise.all([
-                postgresQuery<Record<string, unknown>>(
-                    `${generationTaskSelect()}
-                     ${generationTaskWhere()}
-                     ORDER BY updated_at DESC
-                     LIMIT $8 OFFSET $9`,
-                    [...params, pageSize, (page - 1) * pageSize],
-                ),
-                postgresQuery<Record<string, unknown>>(`${generationTaskSummarySelect()} ${generationTaskWhere()} GROUP BY task_type, status`, params),
-            ]);
-            records = pageResult.rows.map(mapStoredTaskRecord);
-            summary = mapGenerationTaskSummary(summaryResult.rows);
-            return { items: records, total: summary.total, page, pageSize, all: [], summary };
-        }
-        const result = await postgresQuery<Record<string, unknown>>(
-            `${generationTaskSelect()}
-             ${generationTaskWhere()}
-             ORDER BY updated_at DESC
-             LIMIT 5000`,
-            params,
-        );
-        databaseTotal = Number(result.rows[0]?.total_count || 0);
-        records = result.rows.map(mapStoredTaskRecord);
+        const params = [type, status, surface, projectId, userId, search];
+        const [pageResult, summaryResult] = await Promise.all([
+            postgresQuery<Record<string, unknown>>(
+                `${generationTaskSelect()}
+                 ${generationTaskWhere()}
+                 ORDER BY updated_at DESC
+                 LIMIT $7 OFFSET $8`,
+                [...params, pageSize, (page - 1) * pageSize],
+            ),
+            postgresQuery<Record<string, unknown>>(`${generationTaskSummarySelect()} ${generationTaskWhere()} GROUP BY task_type, status`, params),
+        ]);
+        records = pageResult.rows.map(mapStoredTaskRecord);
+        summary = mapGenerationTaskSummary(summaryResult.rows);
+        return { items: records, total: summary.total, page, pageSize, all: [], summary };
     } else {
         records = (await readFileTasks()).filter((record) => record.expiresAt > Date.now());
     }
@@ -166,16 +240,88 @@ export async function listStoredGenerationTaskRecords(options: GenerationTaskRec
         .sort((a, b) => b.updatedAt - a.updatedAt);
     const offset = (page - 1) * pageSize;
     summary = summarizeGenerationTaskRecords(filtered);
-    return { items: filtered.slice(offset, offset + pageSize), total: databaseTotal || summary.total, page, pageSize, all: includeAll ? filtered : [], summary };
+    return { items: filtered.slice(offset, offset + pageSize), total: summary.total, page, pageSize, all: includeAll ? filtered : [], summary };
+}
+
+export async function summarizeStoredAgentPerformance(options: GenerationTaskRecordListOptions = {}): Promise<GenerationTaskPerformanceSummary> {
+    if (getDatabaseProvider() !== "postgres") {
+        const result = await listStoredGenerationTaskRecords({ ...options, type: "agent", includeAll: true, page: 1, pageSize: 1 });
+        return summarizeAgentPerformanceRecords(result.all);
+    }
+    await ensurePostgresSchema();
+    const status = isTaskStatus(options.status) ? options.status : null;
+    const surface = isTaskSurface(options.surface) ? options.surface : null;
+    const projectId = options.projectId?.trim() || null;
+    const userId = options.userId?.trim() || null;
+    const search = (options.search || "").trim().slice(0, 160);
+    const result = await postgresQuery<Record<string, unknown>>(
+        `WITH scoped AS (
+            SELECT
+                ${numericJsonValue("payload#>>'{timings,planningStartedAt}'")} AS planning_started_at,
+                ${numericJsonValue("payload#>>'{timings,planningCompletedAt}'")} AS planning_completed_at,
+                ${numericJsonValue("payload#>>'{timings,requestAcceptedAt}'")} AS request_accepted_at,
+                ${numericJsonValue("payload#>>'{timings,firstTaskSubmittedAt}'")} AS first_task_submitted_at,
+                ${numericJsonValue("payload#>>'{timings,firstResultReadyAt}'")} AS first_result_ready_at,
+                ${numericJsonValue("payload#>>'{timings,allResultsReadyAt}'")} AS all_results_ready_at,
+                ${numericJsonValue("payload#>>'{timings,reviewCompletedAt}'")} AS review_completed_at
+            FROM generation_tasks
+            WHERE expires_at > now() AND task_type = 'agent'
+              AND ($1::text IS NULL OR status = $1)
+              AND ($2::text IS NULL OR surface = $2)
+              AND ($3::text IS NULL OR project_id = $3)
+              AND ($4::text IS NULL OR user_id = $4)
+              AND (
+                  $5 = ''
+                  OR id ILIKE '%' || $5 || '%'
+                  OR user_id ILIKE '%' || $5 || '%'
+                  OR coalesce(conversation_id, '') ILIKE '%' || $5 || '%'
+                  OR coalesce(run_id, '') ILIKE '%' || $5 || '%'
+                  OR coalesce(project_id, '') ILIKE '%' || $5 || '%'
+                  OR payload::text ILIKE '%' || $5 || '%'
+                  OR ${generationTaskUserSearch("generation_tasks.user_id", 5)}
+              )
+        ), durations AS (
+            SELECT
+                CASE WHEN planning_completed_at >= planning_started_at THEN planning_completed_at - planning_started_at END AS planning_ms,
+                CASE WHEN first_result_ready_at >= request_accepted_at THEN first_result_ready_at - request_accepted_at END AS first_result_ms,
+                CASE WHEN first_task_submitted_at >= planning_completed_at THEN first_task_submitted_at - planning_completed_at END AS queue_ms,
+                CASE WHEN first_result_ready_at >= first_task_submitted_at THEN first_result_ready_at - first_task_submitted_at END AS upstream_ms,
+                CASE WHEN review_completed_at >= all_results_ready_at THEN review_completed_at - all_results_ready_at END AS review_ms
+            FROM scoped
+        )
+        SELECT
+            greatest(count(*) FILTER (WHERE planning_ms > 0), count(*) FILTER (WHERE first_result_ms > 0))::int AS sample_size,
+            coalesce(percentile_disc(0.5) WITHIN GROUP (ORDER BY planning_ms) FILTER (WHERE planning_ms > 0), 0) AS planning_p50_ms,
+            coalesce(percentile_disc(0.95) WITHIN GROUP (ORDER BY planning_ms) FILTER (WHERE planning_ms > 0), 0) AS planning_p95_ms,
+            coalesce(percentile_disc(0.5) WITHIN GROUP (ORDER BY first_result_ms) FILTER (WHERE first_result_ms > 0), 0) AS first_result_p50_ms,
+            coalesce(percentile_disc(0.95) WITHIN GROUP (ORDER BY first_result_ms) FILTER (WHERE first_result_ms > 0), 0) AS first_result_p95_ms,
+            coalesce(round(avg(queue_ms) FILTER (WHERE queue_ms >= 0)), 0) AS queue_average_ms,
+            coalesce(round(avg(upstream_ms) FILTER (WHERE upstream_ms > 0)), 0) AS upstream_average_ms,
+            coalesce(round(avg(review_ms) FILTER (WHERE review_ms > 0)), 0) AS review_average_ms
+        FROM durations`,
+        [status, surface, projectId, userId, search],
+    );
+    const row = result.rows[0] || {};
+    return {
+        sampleSize: nonNegativeInteger(row.sample_size),
+        planningP50Ms: nonNegativeInteger(row.planning_p50_ms),
+        planningP95Ms: nonNegativeInteger(row.planning_p95_ms),
+        firstResultP50Ms: nonNegativeInteger(row.first_result_p50_ms),
+        firstResultP95Ms: nonNegativeInteger(row.first_result_p95_ms),
+        queueAverageMs: nonNegativeInteger(row.queue_average_ms),
+        upstreamAverageMs: nonNegativeInteger(row.upstream_average_ms),
+        reviewAverageMs: nonNegativeInteger(row.review_average_ms),
+    };
 }
 
 export function generationTaskPointsCost(payload: Record<string, unknown>) {
     const config = recordObject(payload.config);
     const upstream = recordObject(payload.upstream);
+    const plannerAudit = recordObject(payload.plannerAudit);
     const tasks = Array.isArray(payload.tasks) ? payload.tasks.map(recordObject) : [];
     const attempts = Array.isArray(payload.attempts) ? payload.attempts.map(recordObject) : [];
     return (
-        positiveNumber(payload.pointsCost, recordObject(payload.billing).pointsCost, upstream.pointsCost) ||
+        positiveNumber(payload.pointsCost, recordObject(payload.billing).pointsCost, upstream.pointsCost, plannerAudit.pointsCost) ||
         tasks.reduce((total, task) => total + positiveNumber(task.pointsCost, recordObject(task.billing).pointsCost), 0) ||
         attempts.filter((attempt) => attempt.status === "succeeded" || attempt.status === "success").reduce((total, attempt) => total + positiveNumber(attempt.pointsCost, recordObject(attempt.billing).pointsCost), 0)
     );
@@ -231,8 +377,22 @@ function generationTaskWhere() {
                   OR coalesce(run_id, '') ILIKE '%' || $6 || '%'
                   OR coalesce(project_id, '') ILIKE '%' || $6 || '%'
                   OR payload::text ILIKE '%' || $6 || '%'
-                  OR user_id = ANY($7::text[])
+                  OR ${generationTaskUserSearch("generation_tasks.user_id", 6)}
               )`;
+}
+
+function generationTaskUserSearch(userIdExpression: string, parameterIndex: number) {
+    return `EXISTS (
+                      SELECT 1
+                      FROM users AS search_users
+                      WHERE search_users.id = ${userIdExpression}
+                        AND (
+                            lpad(search_users.account_id::text, 4, '0') ILIKE '%' || $${parameterIndex} || '%'
+                            OR search_users.username ILIKE '%' || $${parameterIndex} || '%'
+                            OR coalesce(search_users.email, '') ILIKE '%' || $${parameterIndex} || '%'
+                            OR search_users.display_name ILIKE '%' || $${parameterIndex} || '%'
+                        )
+                  )`;
 }
 
 function generationTaskSummarySelect() {
@@ -316,6 +476,54 @@ function finalizeGenerationTaskSummary(summary: GenerationTaskSummaryAccumulator
         byType: summary.byType,
         byStatus: summary.byStatus,
     };
+}
+
+function summarizeAgentPerformanceRecords(records: StoredGenerationTaskRecord[]): GenerationTaskPerformanceSummary {
+    const timings = records.map((record) => recordObject(record.payload.timings));
+    const planning = timings.map((item) => elapsed(item.planningStartedAt, item.planningCompletedAt)).filter(positive);
+    const firstResult = timings.map((item) => elapsed(item.requestAcceptedAt, item.firstResultReadyAt)).filter(positive);
+    const queue = timings.map((item) => elapsed(item.planningCompletedAt, item.firstTaskSubmittedAt)).filter(nonNegative);
+    const upstream = timings.map((item) => elapsed(item.firstTaskSubmittedAt, item.firstResultReadyAt)).filter(positive);
+    const review = timings.map((item) => elapsed(item.allResultsReadyAt, item.reviewCompletedAt)).filter(positive);
+    return {
+        sampleSize: Math.max(planning.length, firstResult.length),
+        planningP50Ms: percentile(planning, 0.5),
+        planningP95Ms: percentile(planning, 0.95),
+        firstResultP50Ms: percentile(firstResult, 0.5),
+        firstResultP95Ms: percentile(firstResult, 0.95),
+        queueAverageMs: average(queue),
+        upstreamAverageMs: average(upstream),
+        reviewAverageMs: average(review),
+    };
+}
+
+function elapsed(start: unknown, end: unknown) {
+    const from = Number(start);
+    const to = Number(end);
+    return Number.isFinite(from) && Number.isFinite(to) && to >= from ? to - from : -1;
+}
+
+function positive(value: number) {
+    return value > 0;
+}
+
+function nonNegative(value: number) {
+    return value >= 0;
+}
+
+function percentile(values: number[], ratio: number) {
+    if (!values.length) return 0;
+    const sorted = [...values].sort((left, right) => left - right);
+    return Math.round(sorted[Math.max(0, Math.ceil(sorted.length * ratio) - 1)]);
+}
+
+function average(values: number[]) {
+    return values.length ? Math.round(values.reduce((total, value) => total + value, 0) / values.length) : 0;
+}
+
+function nonNegativeInteger(value: unknown) {
+    const number = Number(value);
+    return Number.isFinite(number) && number > 0 ? Math.round(number) : 0;
 }
 
 export async function updateStoredGenerationTask<T extends { id: string; userId: string; status: string; createdAt: number; updatedAt: number }>(type: GenerationTaskType, task: T, ttlMs: number) {
@@ -475,28 +683,30 @@ export async function linkStoredGenerationTask(type: GenerationTaskType, id: str
     await mutateFileTasks((tasks) => tasks.map((task) => (task.id === id && task.type === type ? { ...task, ...normalized, payload: { ...task.payload, ...normalized } } : task)));
 }
 
-export async function countActiveStoredGenerationTasks(userId: string, type: GenerationTaskType, staleMs: number) {
+export async function countActiveStoredGenerationTasks(userId: string, type: GenerationTaskType, staleMs: number, excludeTaskId?: string) {
     const activeAfter = Date.now() - staleMs;
     if (getDatabaseProvider() === "postgres") {
         await ensurePostgresSchema();
         const result = await postgresQuery<{ total: string | number }>(
-            "SELECT count(*) AS total FROM generation_tasks WHERE user_id = $1 AND task_type = $2 AND status IN ('pending', 'running') AND execution_phase = ANY($4::text[]) AND updated_at >= $3 AND expires_at > now()",
-            [userId, type, new Date(activeAfter), ACTIVE_CONCURRENCY_PHASES],
+            `SELECT count(*) AS total FROM generation_tasks WHERE user_id = $1 AND task_type = $2 AND status IN ('pending', 'running') AND execution_phase = ANY($4::text[]) AND updated_at >= $3 AND expires_at > now()${excludeTaskId ? " AND id <> $5" : ""}`,
+            [userId, type, new Date(activeAfter), ACTIVE_CONCURRENCY_PHASES, ...(excludeTaskId ? [excludeTaskId] : [])],
         );
         return Number(result.rows[0]?.total || 0);
     }
     const tasks = await readFileTasks();
-    return tasks.filter((task) => task.userId === userId && task.type === type && ["pending", "running"].includes(task.status) && isActiveConcurrencyPhase(task.executionPhase) && task.updatedAt >= activeAfter && task.expiresAt > Date.now()).length;
+    return tasks.filter(
+        (task) => task.id !== excludeTaskId && task.userId === userId && task.type === type && ["pending", "running"].includes(task.status) && isActiveConcurrencyPhase(task.executionPhase) && task.updatedAt >= activeAfter && task.expiresAt > Date.now(),
+    ).length;
 }
 
-export async function withGenerationConcurrencyLimit<T>(userId: string, type: GenerationTaskType, staleMs: number, limit: number, handler: () => Promise<T>): Promise<T | null> {
+export async function withGenerationConcurrencyLimit<T>(userId: string, type: GenerationTaskType, staleMs: number, limit: number, handler: () => Promise<T>, excludeTaskId?: string): Promise<T | null> {
     if (getDatabaseProvider() === "postgres") {
         await ensurePostgresSchema();
         return withPostgresTransaction(async (client) => {
             await client.query("SELECT pg_advisory_xact_lock(hashtext($1), hashtext($2))", [userId, type]);
             const result = await client.query<{ total: string | number }>(
-                "SELECT count(*) AS total FROM generation_tasks WHERE user_id = $1 AND task_type = $2 AND status IN ('pending', 'running') AND execution_phase = ANY($4::text[]) AND updated_at >= $3 AND expires_at > now()",
-                [userId, type, new Date(Date.now() - staleMs), ACTIVE_CONCURRENCY_PHASES],
+                `SELECT count(*) AS total FROM generation_tasks WHERE user_id = $1 AND task_type = $2 AND status IN ('pending', 'running') AND execution_phase = ANY($4::text[]) AND updated_at >= $3 AND expires_at > now()${excludeTaskId ? " AND id <> $5" : ""}`,
+                [userId, type, new Date(Date.now() - staleMs), ACTIVE_CONCURRENCY_PHASES, ...(excludeTaskId ? [excludeTaskId] : [])],
             );
             return Number(result.rows[0]?.total || 0) >= limit ? null : handler();
         });
@@ -512,7 +722,7 @@ export async function withGenerationConcurrencyLimit<T>(userId: string, type: Ge
     concurrencyQueues.set(key, queued);
     await previous;
     try {
-        return (await countActiveStoredGenerationTasks(userId, type, staleMs)) >= limit ? null : handler();
+        return (await countActiveStoredGenerationTasks(userId, type, staleMs, excludeTaskId)) >= limit ? null : handler();
     } finally {
         release();
         if (concurrencyQueues.get(key) === queued) concurrencyQueues.delete(key);
@@ -636,15 +846,6 @@ function taskValues<T extends { id: string; userId: string; createdAt: number; u
         context.attemptNo ?? null,
         context.clientRequestId || null,
     ];
-}
-
-async function cleanupStoredGenerationTasks() {
-    if (getDatabaseProvider() === "postgres") {
-        await ensurePostgresSchema();
-        await postgresQuery("DELETE FROM generation_tasks WHERE expires_at <= now()");
-        return;
-    }
-    await mutateFileTasks((tasks) => tasks.filter((task) => task.expiresAt > Date.now()));
 }
 
 async function readFileTasks() {
@@ -886,11 +1087,14 @@ function optionalDatabaseTime(value: unknown) {
     return value ? databaseTime(value) || undefined : undefined;
 }
 
-function withExecutionState<T>(payload: T, phase: unknown, status: unknown): T & GenerationTaskExecutionState {
+function withExecutionState<T>(payload: T, phase: unknown, status: unknown, resultPayload: unknown): T & GenerationTaskExecutionState {
+    const executionPhase = isExecutionPhase(phase) ? phase : undefined;
+    const lastUpstreamStatus = cleanContextText(typeof status === "string" ? status : "");
     return {
         ...payload,
-        executionPhase: isExecutionPhase(phase) ? phase : undefined,
-        lastUpstreamStatus: cleanContextText(typeof status === "string" ? status : ""),
+        executionPhase,
+        lastUpstreamStatus,
+        reviewReason: resolveGenerationReviewReason({ executionPhase, lastUpstreamStatus, resultPayload }),
     };
 }
 

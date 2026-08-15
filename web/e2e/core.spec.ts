@@ -9,6 +9,143 @@ test.beforeEach(async ({ request }) => {
     await resetProtocolFixture(request);
 });
 
+test("site footer deletions remain deleted after settings and public-session reloads", async ({ request }) => {
+    const beforeResponse = await request.get("/api/admin/settings");
+    expect(beforeResponse.ok(), await beforeResponse.text()).toBe(true);
+    const before = ((await beforeResponse.json()) as { settings: { site: Record<string, unknown> } }).settings.site;
+    const socials = before.socials as Record<string, { enabled: boolean; label: string; url: string }>;
+    try {
+        const site = {
+            ...before,
+            friendLinks: [],
+            socials: { ...socials, email: { enabled: false, label: "", url: "" } },
+        };
+        const savedResponse = await request.patch("/api/admin/settings", { data: { site } });
+        expect(savedResponse.ok(), await savedResponse.text()).toBe(true);
+
+        const persistedResponse = await request.get("/api/admin/settings");
+        const persisted = ((await persistedResponse.json()) as { settings: { site: { friendLinks: unknown[]; socials: typeof socials } } }).settings.site;
+        expect(persisted.friendLinks).toEqual([]);
+        expect(persisted.socials.email).toEqual({ enabled: false, label: "", url: "" });
+
+        const publicResponse = await request.get("/api/auth/session");
+        const publicSite = ((await publicResponse.json()) as { settings: { site: { friendLinks: unknown[]; socials: typeof socials } } }).settings.site;
+        expect(publicSite.friendLinks).toEqual([]);
+        expect(publicSite.socials.email).toEqual({ enabled: false, label: "", url: "" });
+    } finally {
+        const restored = await request.patch("/api/admin/settings", { data: { site: before } });
+        expect(restored.ok(), await restored.text()).toBe(true);
+    }
+});
+
+test("admin site form persists social addresses, publishes them to the home footer, and deletes friend links", async ({ page, request }) => {
+    const beforeResponse = await request.get("/api/admin/settings");
+    expect(beforeResponse.ok(), await beforeResponse.text()).toBe(true);
+    const before = ((await beforeResponse.json()) as { settings: { site: Record<string, unknown> } }).settings.site;
+    const socials = before.socials as Record<string, { enabled: boolean; label: string; url: string }>;
+    const testLink = { id: "e2e-footer-link", label: "E2E Footer Link", url: "https://example.com/footer", enabled: true };
+    try {
+        const seededResponse = await request.patch("/api/admin/settings", {
+            data: {
+                site: {
+                    ...before,
+                    friendLinks: [testLink],
+                    socials: {
+                        ...socials,
+                        email: { enabled: true, label: "邮箱联系", url: "mailto:before@example.com" },
+                        telegram: { enabled: true, label: "Telegram", url: "" },
+                        x: { enabled: true, label: "X", url: "" },
+                        instagram: { enabled: true, label: "Instagram", url: "" },
+                    },
+                },
+            },
+        });
+        expect(seededResponse.ok(), await seededResponse.text()).toBe(true);
+
+        await page.goto("/admin?section=site", { waitUntil: "domcontentloaded" });
+        await expect(page.locator(".admin-dashboard-shell")).toHaveAttribute("data-hydrated", "true");
+        const emailInput = page.getByPlaceholder("name@example.com");
+        const telegramInput = page.getByPlaceholder("https://t.me/username 或 @username");
+        const xInput = page.getByPlaceholder("https://x.com/username 或 @username");
+        const instagramInput = page.getByPlaceholder("https://instagram.com/username 或 @username");
+        await expect(emailInput).toBeVisible();
+        await expect(emailInput).toHaveValue("mailto:before@example.com");
+        await emailInput.fill("owner@example.com");
+        await telegramInput.fill("t.me/vozeb_group");
+        await xInput.fill("@vozeb_pro");
+        await instagramInput.fill("instagram.com/vozeb.pro");
+        await expect(emailInput).toHaveValue("owner@example.com");
+        await page.getByRole("button", { name: "保存网站设置" }).click();
+        await expect(page.getByLabel("当前密码")).toHaveCount(0);
+        await expect(page.getByText("网站信息已保存")).toBeVisible();
+        await expect(emailInput).toHaveValue("mailto:owner@example.com");
+        await expect(telegramInput).toHaveValue("https://t.me/vozeb_group");
+        await expect(xInput).toHaveValue("https://x.com/vozeb_pro");
+        await expect(instagramInput).toHaveValue("https://instagram.com/vozeb.pro");
+
+        await page.goto("/", { waitUntil: "domcontentloaded" });
+        await expect(page.locator('footer a[aria-label="Telegram"]')).toHaveAttribute("href", "https://t.me/vozeb_group");
+        await expect(page.locator('footer a[aria-label="X"]')).toHaveAttribute("href", "https://x.com/vozeb_pro");
+        await expect(page.locator('footer a[aria-label="Instagram"]')).toHaveAttribute("href", "https://instagram.com/vozeb.pro");
+
+        await page.goto("/admin?section=site", { waitUntil: "domcontentloaded" });
+        await expect(emailInput).toHaveValue("mailto:owner@example.com");
+        await expect(telegramInput).toHaveValue("https://t.me/vozeb_group");
+        await expect(xInput).toHaveValue("https://x.com/vozeb_pro");
+        await expect(instagramInput).toHaveValue("https://instagram.com/vozeb.pro");
+        await page.getByRole("button", { name: "删除友情链接" }).click();
+        await expect(page.getByLabel("当前密码")).toHaveCount(0);
+        await expect(page.getByText("友情链接已删除")).toBeVisible();
+        await expect(page.getByText(testLink.label, { exact: true })).toHaveCount(0);
+
+        const persistedResponse = await request.get("/api/admin/settings");
+        const persisted = ((await persistedResponse.json()) as { settings: { site: { friendLinks: unknown[]; socials: typeof socials } } }).settings.site;
+        expect(persisted.friendLinks).toEqual([]);
+
+        await page.reload({ waitUntil: "domcontentloaded" });
+        await expect(page.getByText(testLink.label, { exact: true })).toHaveCount(0);
+
+        expect(persisted.socials.email.url).toBe("mailto:owner@example.com");
+        expect(persisted.socials.telegram).toEqual({ enabled: true, label: "Telegram", url: "https://t.me/vozeb_group" });
+        expect(persisted.socials.x).toEqual({ enabled: true, label: "X", url: "https://x.com/vozeb_pro" });
+        expect(persisted.socials.instagram).toEqual({ enabled: true, label: "Instagram", url: "https://instagram.com/vozeb.pro" });
+
+        const publicResponse = await request.get("/api/auth/session");
+        const publicSite = ((await publicResponse.json()) as { settings: { site: { socials: typeof socials } } }).settings.site;
+        expect(publicSite.socials).toEqual(persisted.socials);
+    } finally {
+        const restored = await request.patch("/api/admin/settings", { data: { site: before } });
+        expect(restored.ok(), await restored.text()).toBe(true);
+    }
+});
+
+test("admin data lifecycle settings persist without password re-verification", async ({ page, request }) => {
+    const beforeResponse = await request.get("/api/admin/settings");
+    expect(beforeResponse.ok(), await beforeResponse.text()).toBe(true);
+    const before = ((await beforeResponse.json()) as { settings: { dataLifecycle: { maintenanceBatchSize: number } } }).settings.dataLifecycle;
+    const nextBatchSize = before.maintenanceBatchSize < 500 ? before.maintenanceBatchSize + 1 : before.maintenanceBatchSize - 1;
+
+    try {
+        await page.goto("/admin?section=settings", { waitUntil: "domcontentloaded" });
+        await expect(page.locator(".admin-dashboard-shell")).toHaveAttribute("data-hydrated", "true");
+        const batchInput = page.getByRole("spinbutton", { name: /单类每批处理数量/ });
+        await expect(batchInput).toHaveValue(String(before.maintenanceBatchSize));
+        await batchInput.fill(String(nextBatchSize));
+        await page.getByRole("button", { name: "保存系统设置" }).click();
+        await expect(page.getByLabel("当前密码")).toHaveCount(0);
+        await expect(page.getByText("系统设置已保存", { exact: true })).toBeVisible();
+
+        await page.reload({ waitUntil: "domcontentloaded" });
+        await expect(batchInput).toHaveValue(String(nextBatchSize));
+        const persistedResponse = await request.get("/api/admin/settings");
+        expect(persistedResponse.ok(), await persistedResponse.text()).toBe(true);
+        expect(((await persistedResponse.json()) as { settings: { dataLifecycle: { maintenanceBatchSize: number } } }).settings.dataLifecycle.maintenanceBatchSize).toBe(nextBatchSize);
+    } finally {
+        const restored = await request.patch("/api/admin/settings", { data: { dataLifecycle: before } });
+        expect(restored.ok(), await restored.text()).toBe(true);
+    }
+});
+
 test("text tasks return content, fail over automatically, and surface terminal failures", async ({ request }) => {
     const fallback = await request.post("/api/text-tasks", { data: { config: { model: "e2e-text-fallback" }, messages: [{ role: "user", content: "protocol fallback" }] } });
     expect(fallback.ok(), await fallback.text()).toBe(true);
@@ -49,35 +186,40 @@ test("image task persists a real media result and reuses the same request identi
     expect(state.requests.filter((item) => item.method === "POST" && item.path.endsWith("/images/generations"))).toHaveLength(1);
 });
 
-test("image workbench keeps both consecutive generation results after refresh", async ({ page, request }) => {
-    const suffix = randomUUID().slice(0, 8);
-    const firstPrompt = `生成小狗 ${suffix}`;
-    const secondPrompt = `生成唐老鸭 ${suffix}`;
-    await page.goto("/image", { waitUntil: "domcontentloaded" });
-    await page.getByRole("button", { name: "新建对话", exact: true }).click();
-    const prompt = page.getByPlaceholder("今天我们要创作什么，可直接粘贴文字或图片");
-    const generate = page.getByRole("button", { name: /开始生成/ });
+test("unified creative page reaches the local planning and image protocols", async ({ page, request }) => {
+    await page.goto("/create", { waitUntil: "domcontentloaded" });
+    await expect(page.locator(".creative-composer")).toHaveAttribute("data-ready", "true", { timeout: 45_000 });
 
-    await prompt.fill(firstPrompt);
-    await generate.click();
-    await expect(page.getByTestId("image-result-card")).toHaveCount(1, { timeout: 30_000 });
+    await page.getByRole("button", { name: "当前创作类型：Agent 模式" }).click();
+    const modePicker = page.locator(".ant-popover").filter({ hasText: "创作类型" }).last();
+    await expect(modePicker).toBeVisible();
+    await modePicker.getByRole("button", { name: /图片生成/ }).click();
+    await expect(page.getByRole("button", { name: "当前创作类型：图片生成" })).toBeVisible();
 
-    await prompt.fill(secondPrompt);
-    await generate.click();
-    await expect(page.getByText(firstPrompt, { exact: true })).toHaveCount(1);
-    await expect(page.getByText(secondPrompt, { exact: true })).toHaveCount(1);
-    await expect(page.getByTestId("image-result-card")).toHaveCount(2, { timeout: 30_000 });
+    const prompt = `统一入口协议图片 ${randomUUID().slice(0, 8)}`;
+    await page.getByRole("textbox", { name: "输入你的创作想法、脚本或画面要求" }).fill(prompt);
+    const runCreated = page.waitForResponse((response) => response.request().method() === "POST" && new URL(response.url()).pathname === "/api/agent/runs");
+    await page.getByRole("button", { name: "发送" }).click();
+    const runResponse = await runCreated;
+    expect(runResponse.ok(), await runResponse.text()).toBe(true);
+    const runId = ((await runResponse.json()) as { data: { run: { id: string } } }).data.run.id;
 
-    await expect.poll(async () => (await protocolFixtureState(request)).requests.filter((item) => item.method === "POST" && item.path.endsWith("/images/generations")).length).toBe(2);
-    await expect(page.getByTestId("image-result-card")).toHaveCount(2);
+    await expect
+        .poll(
+            async () => {
+                const response = await request.get(`/api/agent/runs/${runId}`);
+                if (!response.ok()) return `http-${response.status()}`;
+                return ((await response.json()) as { data: { run: { status: string } } }).data.run.status;
+            },
+            { timeout: 60_000 },
+        )
+        .toBe("completed");
+    await expect(page.getByTestId("creative-media-result")).toBeVisible();
+    await expect(page.getByTestId("creative-media-result").getByRole("img")).toHaveAttribute("src", /\/api\/generation-log-assets\/permanent\/.+\.png/);
 
-    await page.reload({ waitUntil: "domcontentloaded" });
-    await expect(page.getByText(firstPrompt, { exact: true })).toHaveCount(1);
-    await expect(page.getByText(secondPrompt, { exact: true })).toHaveCount(1);
-    await expect(page.getByTestId("image-result-card")).toHaveCount(2, { timeout: 30_000 });
-
-    await page.getByRole("button", { name: "生成记录" }).click();
-    await expect(page.getByTestId("workbench-history-card").filter({ hasText: firstPrompt })).toHaveCount(1);
+    const state = await protocolFixtureState(request);
+    expect(state.requests.some((item) => item.method === "POST" && item.path.endsWith("/chat/completions"))).toBe(true);
+    expect(state.requests.filter((item) => item.method === "POST" && item.path.endsWith("/images/generations"))).toHaveLength(1);
 });
 
 test("video request replay and cancellation keep one upstream task", async ({ request }) => {
@@ -99,80 +241,13 @@ test("video request replay and cancellation keep one upstream task", async ({ re
     expect(state.requests.filter((item) => item.method === "POST" && item.path.endsWith("/videos"))).toHaveLength(1);
 });
 
-test("video workbench prevents rapid duplicate submissions and restores cancellation after refresh", async ({ page, request }) => {
-    let planningRequests = 0;
-    await page.route("**/api/agent/workbench", async (route) => {
-        planningRequests += 1;
-        await route.fulfill({
-            status: 200,
-            contentType: "application/json",
-            body: JSON.stringify({
-                code: 0,
-                data: {
-                    intent: "generation",
-                    parameterPatch: { model: "e2e-video-slow", size: "16:9", vquality: "720", videoSeconds: 5 },
-                    resolvedPrompt: "slow video",
-                    shouldGenerate: true,
-                    reply: "开始生成。",
-                    choices: [],
-                    deliverables: [],
-                },
-                msg: "OK",
-            }),
-        });
-    });
-
-    await page.goto("/video", { waitUntil: "domcontentloaded" });
-    const prompt = page.getByPlaceholder("今天我们要创作什么，可直接粘贴文字或素材");
-    const generate = page.getByRole("button", { name: /开始生成/ });
-    await expect(generate).toHaveAttribute("aria-label", /消耗 0 积分/);
-    await prompt.fill("生成一段慢速测试视频");
-    await expect(prompt).toHaveValue("生成一段慢速测试视频");
-    await expect(generate).toBeEnabled();
-    await generate.evaluate((button) => {
-        button.dispatchEvent(new MouseEvent("click", { bubbles: true }));
-        button.dispatchEvent(new MouseEvent("click", { bubbles: true }));
-    });
-
-    await expect.poll(() => planningRequests).toBe(1);
-    await expect.poll(async () => (await protocolFixtureState(request)).requests.filter((item) => item.method === "POST" && item.path.endsWith("/videos")).length).toBe(1);
-    const createdRequest = (await protocolFixtureState(request)).requests.find((item) => item.method === "POST" && item.path.endsWith("/videos"));
-    expect(createdRequest?.contentType).toMatch(/^multipart\/form-data; boundary=/);
-    expect(createdRequest?.model).toBe("e2e-video-slow");
-    await expect(page.getByRole("button", { name: "取消任务" }).first()).toBeVisible();
-
-    await page.reload({ waitUntil: "domcontentloaded" });
-    await expect(page.getByRole("button", { name: "取消任务" }).first()).toBeVisible();
-    await page.getByRole("button", { name: "取消任务" }).first().click();
-    await expect(page.getByText("任务已取消").first()).toBeVisible();
-    await expect.poll(async () => (await protocolFixtureState(request)).requests.filter((item) => item.method === "POST" && item.path.endsWith("/videos")).length).toBe(1);
-
-    await prompt.fill("取消后再次生成慢速测试视频");
-    await expect(generate).toBeEnabled();
-    await generate.click();
-    await expect.poll(() => planningRequests).toBe(2);
-    await expect.poll(async () => (await protocolFixtureState(request)).requests.filter((item) => item.method === "POST" && item.path.endsWith("/videos")).length).toBe(2);
-    await expect(page.getByRole("button", { name: "取消任务" }).first()).toBeVisible();
-    await page.getByRole("button", { name: "取消任务" }).first().click();
-});
-
-test("video workbench restores a successful result after refresh", async ({ page }) => {
-    await page.goto("/video", { waitUntil: "domcontentloaded" });
-    await page.getByRole("button", { name: "智能规划已开启，点击关闭" }).click();
-    await expect(page.getByText("选择生成模型", { exact: true })).toBeVisible();
-    await page.getByRole("button", { name: "e2e-video", exact: true }).click();
-    await page.keyboard.press("Escape");
-
-    const prompt = page.getByPlaceholder("今天我们要创作什么，可直接粘贴文字或素材");
-    const generate = page.getByRole("button", { name: /开始生成/ });
-    await prompt.fill("生成一段刷新后仍然显示的测试视频");
-    await expect(generate).toBeEnabled();
-    await generate.click();
-    await expect(page.locator("video")).toHaveCount(1, { timeout: 30_000 });
-
-    await page.reload({ waitUntil: "domcontentloaded" });
-    await expect(page.getByText("生成一段刷新后仍然显示的测试视频", { exact: true })).toHaveCount(1);
-    await expect(page.locator("video")).toHaveCount(1, { timeout: 30_000 });
+test("legacy image and video routes hand off to the unified creative Agent", async ({ page }) => {
+    for (const route of ["/image", "/video"]) {
+        await page.goto(route, { waitUntil: "domcontentloaded" });
+        await expect(page).toHaveURL(/\/create$/);
+        await expect(page.getByRole("heading", { name: "VOZEB PRO 创作 Agent" })).toBeVisible();
+        await expect(page.getByRole("button", { name: /生成模型：/ })).toBeVisible();
+    }
 });
 
 test("audio task stores a valid audio result", async ({ request }) => {
@@ -215,6 +290,7 @@ test("new Agent Skill is saved before leaving the administrator page", async ({ 
         await page.getByLabel("Skill 名称").fill(skillName);
         await page.getByLabel("执行规则").fill("保持用户需求不变，按当前工作台能力规划并执行。");
         await page.getByRole("button", { name: "添加并保存" }).click();
+        await expect(page.getByLabel("当前密码")).toHaveCount(0);
         await expect(page.getByText("Agent Skill 已添加并保存", { exact: true })).toBeVisible();
 
         await page.goto("/create");

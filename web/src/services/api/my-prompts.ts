@@ -1,7 +1,13 @@
-import type { Prompt, PromptListResponse } from "./prompts";
+import { ALL_PROMPTS_OPTION, type Prompt, type PromptListResponse } from "./prompts";
 
-export function listMyPrompts(input: { page: number; pageSize: number }) {
-    const query = new URLSearchParams({ page: String(input.page), pageSize: String(input.pageSize) });
+export function listMyPrompts(input: { page: number; pageSize?: number; category?: string; keyword?: string; includeFacets?: boolean }) {
+    const query = new URLSearchParams({
+        page: String(input.page),
+        ...(input.pageSize ? { pageSize: String(input.pageSize) } : {}),
+        ...(input.category && input.category !== ALL_PROMPTS_OPTION ? { category: input.category } : {}),
+        ...(input.keyword?.trim() ? { keyword: input.keyword.trim() } : {}),
+        ...(input.includeFacets === false ? { includeFacets: "0" } : {}),
+    });
     return request<PromptListResponse>(`/api/my-prompts?${query}`, { cache: "no-store" });
 }
 

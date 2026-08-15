@@ -88,6 +88,24 @@ export class BillingPaymentRepository {
         return pageResult(result.rows.map(mapPaymentTransaction), Number(result.rows[0]?.total_count || 0), page, pageSize);
     }
 
+    async listPaymentsByOrderId(orderId: string) {
+        const result = await this.db.query("SELECT * FROM payment_transactions WHERE order_id = $1 ORDER BY created_at DESC, id DESC", [orderId]);
+        return result.rows.map(mapPaymentTransaction);
+    }
+
+    async findOrderPayment(input: { orderId: string; preferredPaymentId?: string; statuses: PaymentTransactionStatus[] }) {
+        const statuses = [...new Set(input.statuses)];
+        const result = await this.db.query(
+            `SELECT * FROM payment_transactions
+             WHERE order_id = $1
+               AND (($2::text IS NOT NULL AND id = $2) OR status = ANY($3::text[]))
+             ORDER BY CASE WHEN id = $2 THEN 0 ELSE 1 END, created_at DESC, id DESC
+             LIMIT 1`,
+            [input.orderId, input.preferredPaymentId?.trim() || null, statuses],
+        );
+        return result.rows[0] ? mapPaymentTransaction(result.rows[0]) : null;
+    }
+
     async lockPaymentIdentity(provider: string, identifiers: string[]) {
         const values = [...new Set(identifiers.map((item) => item.trim()).filter(Boolean))].sort();
         for (const identifier of values) await this.db.query("SELECT pg_advisory_xact_lock(hashtextextended($1, 0))", [`${provider}:${identifier}`]);
@@ -278,6 +296,11 @@ export class BillingPaymentRepository {
             `,
             [userId, at.toISOString()],
         );
+        return result.rows[0] ? mapUserPlanAssignment(result.rows[0]) : null;
+    }
+
+    async getPlanAssignmentBySource(source: PlanAssignmentSource, sourceId: string) {
+        const result = await this.db.query("SELECT * FROM user_plan_assignments WHERE source = $1 AND source_id = $2 LIMIT 1", [source, sourceId]);
         return result.rows[0] ? mapUserPlanAssignment(result.rows[0]) : null;
     }
 

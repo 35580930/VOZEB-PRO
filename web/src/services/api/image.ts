@@ -162,7 +162,7 @@ export async function waitForImageGenerationTask(config: AiConfig, task: ImageGe
         const payload = (await response.json()) as ImageTaskPayload;
         const current = payload.task;
         if (!current) throw new ImageGenerationTaskTerminalError(payload.error || "图片任务不存在", false);
-        if (current.needsReview) throw new GenerationTaskNeedsReviewError();
+        if (current.needsReview) throw new GenerationTaskNeedsReviewError(current.reviewReason);
         if (current.status === "success") {
             if (!current.result?.dataUrl) throw new ImageGenerationTaskTerminalError("图片任务没有返回结果", true);
             await refreshUserPointsIfSystem(config.apiSource);

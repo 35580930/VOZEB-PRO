@@ -4,7 +4,7 @@ import { GLOBAL_AIOPC_PRESETS } from "@/lib/globalaiopc-catalog";
 import { createProtocolFixtureServer } from "../../../scripts/protocol-fixture-server.mjs";
 import { runOpenAiImageTask } from "@/app/api/image-tasks/image-task-openai";
 import { pollOpenAiImageTask } from "@/app/api/image-tasks/image-task-support";
-import { createUpstream } from "@/app/api/video-generation-tasks/route";
+import { createUpstream } from "@/app/api/video-generation-tasks/video-generation-route";
 import { queryVideoTaskUpstream } from "./video-task-runtime";
 import type { ImageTask } from "@/lib/server/image-task-store";
 import type { VideoTask } from "@/lib/server/video-task-store";

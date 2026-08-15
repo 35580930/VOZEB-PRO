@@ -40,7 +40,7 @@ export type ResolvedVideoMediaUrl = { url: string; remoteUrl?: string };
 
 export type VideoGenerationResult = { blob?: Blob; url?: string; remoteUrl?: string; mimeType?: string; durationMs?: number };
 export type VideoGenerationTask = { id: string; provider: "openai" | "seedance" | "generation"; model: string; pollPath?: string; resultUrl?: string; serverTaskId?: string; durationSeconds?: number };
-export type VideoGenerationTaskState = { status: "pending" } | { status: "completed"; result: VideoGenerationResult } | { status: "failed"; error: string; canRetry?: boolean };
+export type VideoGenerationTaskState = { status: "pending" } | { status: "completed"; result: VideoGenerationResult } | { status: "failed"; error: string; canRetry?: boolean; needsReview?: boolean };
 
 export const VIDEO_GENERATION_WAIT_TIMEOUT_MS = 30 * 60_000;
 

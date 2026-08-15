@@ -27,7 +27,7 @@ describe("POST /api/auth/email-code", () => {
         mocks.checkAuthRateLimit.mockResolvedValue({ allowed: true, remaining: 4, resetAt: Date.now() + 60_000 });
         mocks.getCurrentUser.mockResolvedValue(null);
         mocks.readJsonBody.mockResolvedValue({ purpose: "password-reset", email: "person@example.com" });
-        mocks.getAuthSettings.mockResolvedValue({ mail: { host: "smtp.example.com" } });
+        mocks.getAuthSettings.mockResolvedValue({ site: { title: "无限创作" }, mail: { host: "smtp.example.com" } });
         mocks.sendSmtpMail.mockResolvedValue(undefined);
     });
 
@@ -50,5 +50,11 @@ describe("POST /api/auth/email-code", () => {
         expect(response.status).toBe(200);
         await expect(response.json()).resolves.toEqual({ ok: true });
         expect(mocks.sendSmtpMail).toHaveBeenCalledWith(expect.objectContaining({ to: "person@example.com" }));
+        expect(mocks.sendSmtpMail).toHaveBeenCalledWith(
+            expect.objectContaining({
+                subject: "无限创作 重置密码验证码",
+                text: expect.stringContaining("你的 无限创作 重置密码验证码是：123456"),
+            }),
+        );
     });
 });

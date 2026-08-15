@@ -1,14 +1,10 @@
 "use client";
 
-import dynamic from "next/dynamic";
+import { nanoid } from "nanoid";
 import { useCallback } from "react";
 
 import { CanvasNodeType, type CanvasNodeData, type Position } from "../types";
 import { resizeImageNodeToNaturalRatio } from "../utils/canvas-node-size";
-
-const CanvasAssistantPanel = dynamic(() => import("../components/canvas-assistant-panel").then((mod) => mod.CanvasAssistantPanel), { ssr: false });
-const loadAssetPickerModal = () => import("../components/asset-picker-modal").then((mod) => mod.AssetPickerModal);
-const AssetPickerModal = dynamic(loadAssetPickerModal, { ssr: false, loading: () => null });
 
 import { createCanvasNode } from "./canvas-page-elements";
 import { getGenerationCount } from "./canvas-page-utils";
@@ -20,6 +16,9 @@ import type { CanvasInteractionCore } from "./use-canvas-interaction-core";
 export function useCanvasNodeActions({ state, core }: { state: CanvasPageState; core: CanvasInteractionCore }) {
     const {
         clipboardRef,
+        projectId,
+        updateProject,
+        flushProjectSave,
         effectiveConfig,
         nodes,
         setNodes,
@@ -29,7 +28,6 @@ export function useCanvasNodeActions({ state, core }: { state: CanvasPageState; 
         setSelectedNodeIds,
         setSelectedConnectionId,
         setHoveredNodeId,
-        setSelectionBox,
         setContextMenu,
         setRunningNodeId,
         setClearConfirmOpen,
@@ -134,7 +132,6 @@ export function useCanvasNodeActions({ state, core }: { state: CanvasPageState; 
         setSelectedNodeIds(new Set());
         setSelectedConnectionId(null);
         setContextMenu(null);
-        setSelectionBox(null);
         setHoveredNodeId(null);
         setToolbarNodeId(null);
         setDialogNodeId(null);
@@ -144,6 +141,8 @@ export function useCanvasNodeActions({ state, core }: { state: CanvasPageState; 
     const clearCanvas = useCallback(() => {
         setNodes([]);
         setConnections([]);
+        updateProject(projectId, { nodes: [], connections: [] });
+        void flushProjectSave(projectId);
         setInfoNodeId(null);
         setCropNodeId(null);
         setMaskEditNodeId(null);
@@ -152,13 +151,13 @@ export function useCanvasNodeActions({ state, core }: { state: CanvasPageState; 
         setRunningNodeId(null);
         deselectCanvas();
         setClearConfirmOpen(false);
-    }, [deselectCanvas]);
+    }, [deselectCanvas, flushProjectSave, projectId, updateProject]);
 
     const duplicateNode = useCallback((nodeId: string) => {
         const source = nodesRef.current.find((node) => node.id === nodeId);
         if (!source) return;
 
-        const id = `${source.type}-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+        const id = `${source.type}-${nanoid()}`;
         const next: CanvasNodeData = {
             ...source,
             id,
@@ -209,8 +208,8 @@ export function useCanvasNodeActions({ state, core }: { state: CanvasPageState; 
         const dx = center.x - (bounds.left + bounds.right) / 2;
         const dy = center.y - (bounds.top + bounds.bottom) / 2;
         const idMap = new Map<string, string>();
-        const nextNodes = clipboard.nodes.map((node, index) => {
-            const id = `${node.type}-${Date.now()}-${index}-${Math.random().toString(36).slice(2, 7)}`;
+        const nextNodes = clipboard.nodes.map((node) => {
+            const id = `${node.type}-${nanoid()}`;
             idMap.set(node.id, id);
             return {
                 ...node,
@@ -224,14 +223,14 @@ export function useCanvasNodeActions({ state, core }: { state: CanvasPageState; 
             };
         });
 
-        const nextConnections = clipboard.connections.flatMap((connection, index) => {
+        const nextConnections = clipboard.connections.flatMap((connection) => {
             const fromNodeId = idMap.get(connection.fromNodeId);
             const toNodeId = idMap.get(connection.toNodeId);
             if (!fromNodeId || !toNodeId) return [];
             return [
                 {
                     ...connection,
-                    id: `conn-${Date.now()}-${index}-${Math.random().toString(36).slice(2, 7)}`,
+                    id: `conn-${nanoid()}`,
                     fromNodeId,
                     toNodeId,
                 },

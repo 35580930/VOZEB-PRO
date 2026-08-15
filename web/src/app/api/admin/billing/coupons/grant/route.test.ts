@@ -13,7 +13,7 @@ import { POST } from "./route";
 describe("POST /api/admin/billing/coupons/grant", () => {
     beforeEach(() => {
         vi.clearAllMocks();
-        mocks.getCurrentUser.mockResolvedValue({ id: "admin-one", role: "admin" });
+        mocks.getCurrentUser.mockResolvedValue({ id: "admin-one", role: "admin", status: "active", adminPermissions: ["commerce.manage"] });
         mocks.readJsonBody.mockResolvedValue({ userId: "user-one", templateId: "template-one" });
         mocks.issueCoupon.mockResolvedValue({ id: "coupon-one", userId: "user-one", templateId: "template-one" });
     });

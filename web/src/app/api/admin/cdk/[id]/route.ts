@@ -1,3 +1,4 @@
+import { hasAdminPermission } from "@/lib/admin-permissions";
 import { NextResponse } from "next/server";
 
 import { deleteCdkCode, isAuthInputError, updateCdkCode, type PublicCdkCode } from "@/lib/auth/store";
@@ -15,7 +16,7 @@ type RouteContext = {
 async function requireAdmin() {
     const currentUser = await getCurrentUser();
     if (!currentUser) return { response: NextResponse.json({ error: "请先登录" }, { status: 401 }) };
-    if (currentUser.role !== "admin") return { response: NextResponse.json({ error: "需要管理员权限" }, { status: 403 }) };
+    if (!hasAdminPermission(currentUser, "billing.manage")) return { response: NextResponse.json({ error: "需要管理员权限" }, { status: 403 }) };
     return { currentUser };
 }
 

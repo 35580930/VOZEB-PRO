@@ -1,13 +1,12 @@
 import { randomUUID } from "node:crypto";
 import { relative, resolve } from "node:path";
 
-import type { UserRole } from "@/lib/auth/store";
+import { getAuthSettings, type UserRole } from "@/lib/auth/store";
 import { createPostgresRepositories, ensurePostgresSchema, isPostgresDatabaseEnabled, withPostgresTransaction } from "@/lib/server/database";
 import { collectLocalMediaStorageKeys, countLocalMediaReferences, localMediaStorageKeyFromValue } from "@/lib/server/local-media-references";
 import { deleteLocalMediaAssetsByStorageKeys, deleteUserLocalMediaAssets, GENERATION_MEDIA_ROOT } from "@/lib/server/local-media-storage";
 import { getLocalMediaRegistration } from "@/lib/server/local-media-registry";
 import {
-    MAX_LOGS,
     defaultSummary,
     isGenerationKind,
     isGenerationSource,
@@ -142,7 +141,7 @@ export async function recordGenerationLog(input: GenerationLogInput) {
         const completedAt = input.status === "pending" ? undefined : normalizeTime(input.completedAt, now);
         const next = buildGenerationLog(input, id, existing, assets, now, completedAt);
 
-        db.logs = [next, ...db.logs.filter((log) => log.id !== id)].slice(0, MAX_LOGS);
+        db.logs = [next, ...db.logs.filter((log) => log.id !== id)];
         return next;
     });
 }
@@ -177,14 +176,21 @@ export async function deleteGenerationLogsByUserId(userId: string) {
     if (!targetUserId) return { deleted: 0 };
     if (isPostgresDatabaseEnabled()) {
         await ensurePostgresSchema();
-        const removed = await withPostgresTransaction(async (client) => {
-            const repository = createPostgresRepositories(client).generationLogs;
-            const logs = await repository.listByUserId(targetUserId, true);
-            await repository.delete(logs.map((log) => log.id));
-            return logs.map(toStoredGenerationLog);
-        });
-        await deleteRemovedLogMedia(removed);
-        return { deleted: removed.length };
+        const { dataLifecycle } = await getAuthSettings();
+        let deleted = 0;
+        while (true) {
+            const removed = await withPostgresTransaction(async (client) => {
+                const repository = createPostgresRepositories(client).generationLogs;
+                const logs = await repository.listByUserIdBatch(targetUserId, dataLifecycle.maintenanceBatchSize, true);
+                if (!logs.length) return [];
+                await repository.delete(logs.map((log) => log.id));
+                return logs.map(toStoredGenerationLog);
+            });
+            if (!removed.length) break;
+            await deleteRemovedLogMedia(removed);
+            deleted += removed.length;
+        }
+        return { deleted };
     }
     let removed: StoredGenerationLog[] = [];
     const result = await mutateGenerationLogDb(async (db) => {

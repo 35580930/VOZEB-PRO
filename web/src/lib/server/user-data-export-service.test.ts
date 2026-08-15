@@ -4,7 +4,7 @@ const mocks = vi.hoisted(() => ({
     getPublicUsersByIds: vi.fn(),
     listPointRecordsPage: vi.fn(),
     listPrompts: vi.fn(),
-    listCanvasProjects: vi.fn(),
+    listCanvasProjectPage: vi.fn(),
     listCreativeAssets: vi.fn(),
     listCreativeConversations: vi.fn(),
     listCreativeMessages: vi.fn(),
@@ -14,14 +14,14 @@ const mocks = vi.hoisted(() => ({
     getDramaProject: vi.fn(),
     listDramaProjectSummaries: vi.fn(),
     listGenerationLogs: vi.fn(),
-    listLibraryAssets: vi.fn(),
-    listLocalMediaRegistrationsForUser: vi.fn(),
+    listLibraryAssetPage: vi.fn(),
+    listLocalMediaRegistrationsForUserPage: vi.fn(),
     getOwnAccountDeletionRequest: vi.fn(),
 }));
 
 vi.mock("@/lib/auth/store", () => ({ getPublicUsersByIds: mocks.getPublicUsersByIds, listPointRecordsPage: mocks.listPointRecordsPage }));
 vi.mock("@/lib/prompts/store", () => ({ listPrompts: mocks.listPrompts }));
-vi.mock("@/lib/server/canvas-project-store", () => ({ listCanvasProjects: mocks.listCanvasProjects }));
+vi.mock("@/lib/server/canvas-project-store", () => ({ listCanvasProjectPage: mocks.listCanvasProjectPage }));
 vi.mock("@/lib/server/creative-runtime-store", () => ({
     listCreativeAssets: mocks.listCreativeAssets,
     listCreativeConversations: mocks.listCreativeConversations,
@@ -34,8 +34,8 @@ vi.mock("@/lib/server/database", () => ({
 }));
 vi.mock("@/lib/server/drama-project-store", () => ({ getDramaProject: mocks.getDramaProject, listDramaProjectSummaries: mocks.listDramaProjectSummaries }));
 vi.mock("@/lib/server/generation-log-store", () => ({ listGenerationLogs: mocks.listGenerationLogs }));
-vi.mock("@/lib/server/library-asset-store", () => ({ listLibraryAssets: mocks.listLibraryAssets }));
-vi.mock("@/lib/server/local-media-registry", () => ({ listLocalMediaRegistrationsForUser: mocks.listLocalMediaRegistrationsForUser }));
+vi.mock("@/lib/server/library-asset-store", () => ({ listLibraryAssetPage: mocks.listLibraryAssetPage }));
+vi.mock("@/lib/server/local-media-registry", () => ({ listLocalMediaRegistrationsForUserPage: mocks.listLocalMediaRegistrationsForUserPage }));
 vi.mock("@/lib/server/account-deletion-request-service", () => ({ getOwnAccountDeletionRequest: mocks.getOwnAccountDeletionRequest }));
 
 import { buildUserDataExport, createUserDataExportStream } from "./user-data-export-service";
@@ -47,14 +47,14 @@ describe("buildUserDataExport", () => {
         mocks.getPublicUsersByIds.mockResolvedValue([{ id: "user-one", username: "one", displayName: "用户一", role: "user", status: "active" }]);
         mocks.listPointRecordsPage.mockResolvedValue({ records: [], total: 0 });
         mocks.listPrompts.mockResolvedValue({ items: [], total: 0 });
-        mocks.listCanvasProjects.mockResolvedValue([]);
+        mocks.listCanvasProjectPage.mockResolvedValue({ items: [], total: 0 });
         mocks.listCreativeConversations.mockResolvedValue([]);
         mocks.listCreativeAssets.mockResolvedValue([]);
         mocks.listCreativeMessages.mockResolvedValue([]);
         mocks.listDramaProjectSummaries.mockResolvedValue({ items: [], total: 0, page: 1, pageSize: 100 });
         mocks.listGenerationLogs.mockResolvedValue({ items: [], total: 0 });
-        mocks.listLibraryAssets.mockResolvedValue([]);
-        mocks.listLocalMediaRegistrationsForUser.mockResolvedValue([]);
+        mocks.listLibraryAssetPage.mockResolvedValue({ items: [], total: 0 });
+        mocks.listLocalMediaRegistrationsForUserPage.mockResolvedValue({ items: [], total: 0 });
         mocks.getOwnAccountDeletionRequest.mockResolvedValue(null);
     });
 
@@ -111,13 +111,13 @@ describe("buildUserDataExport", () => {
             ],
             total: 1,
         });
-        mocks.listLocalMediaRegistrationsForUser.mockResolvedValue([{ storageKey: "user/image.png", ownerUserId: "user-one", externalObjectKey: "private/object.png", type: "image", source: "agent" }]);
+        mocks.listLocalMediaRegistrationsForUserPage.mockResolvedValue({ items: [{ storageKey: "user/image.png", ownerUserId: "user-one", externalObjectKey: "private/object.png", type: "image", source: "agent" }], total: 1 });
         mocks.getOwnAccountDeletionRequest.mockResolvedValue({ id: "delete-one", status: "pending", note: "不再使用", reviewNote: "", requestedAt: "2026-01-01T00:00:00.000Z", updatedAt: "2026-01-01T00:00:00.000Z" });
 
         const result = await buildUserDataExport("user-one");
 
         expect(mocks.getPublicUsersByIds).toHaveBeenCalledWith(["user-one"]);
-        expect(mocks.listLocalMediaRegistrationsForUser).toHaveBeenCalledWith("user-one");
+        expect(mocks.listLocalMediaRegistrationsForUserPage).toHaveBeenCalledWith("user-one", { page: 1, pageSize: 100 });
         expect(result.points).toEqual([
             { id: "point-1", amount: 1 },
             { id: "point-2", amount: -1 },
@@ -201,6 +201,22 @@ describe("buildUserDataExport", () => {
             { id: "drama-one", title: "drama-one" },
             { id: "drama-two", title: "drama-two" },
         ]);
+    });
+
+    it("collects Canvas, library, and media export data through user-scoped pages", async () => {
+        mocks.listCanvasProjectPage.mockResolvedValueOnce({ items: [{ id: "canvas-one" }], total: 2 }).mockResolvedValueOnce({ items: [{ id: "canvas-two" }], total: 2 });
+        mocks.listLibraryAssetPage.mockResolvedValueOnce({ items: [{ id: "asset-one" }], total: 2 }).mockResolvedValueOnce({ items: [{ id: "asset-two" }], total: 2 });
+        mocks.listLocalMediaRegistrationsForUserPage.mockResolvedValueOnce({ items: [{ storageKey: "one.png", ownerUserId: "user-one" }], total: 2 }).mockResolvedValueOnce({ items: [{ storageKey: "two.png", ownerUserId: "user-one" }], total: 2 });
+
+        const result = await buildUserDataExport("user-one");
+
+        expect(mocks.listCanvasProjectPage).toHaveBeenNthCalledWith(1, "user-one", { page: 1, pageSize: 100 });
+        expect(mocks.listCanvasProjectPage).toHaveBeenNthCalledWith(2, "user-one", { page: 2, pageSize: 100 });
+        expect(mocks.listLibraryAssetPage).toHaveBeenNthCalledWith(2, "user-one", { page: 2, pageSize: 100 });
+        expect(mocks.listLocalMediaRegistrationsForUserPage).toHaveBeenNthCalledWith(2, "user-one", { page: 2, pageSize: 100 });
+        expect(result.canvasProjects).toEqual([{ id: "canvas-one" }, { id: "canvas-two" }]);
+        expect(result.libraryAssets).toEqual([{ id: "asset-one" }, { id: "asset-two" }]);
+        expect(result.media).toEqual([{ storageKey: "one.png" }, { storageKey: "two.png" }]);
     });
 });
 

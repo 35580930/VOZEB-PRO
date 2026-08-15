@@ -40,4 +40,10 @@ describe("normalizeVideoResult", () => {
         expect(result).not.toHaveProperty("durationMs");
         expect(mocks.writeReferenceMediaFile).toHaveBeenCalledOnce();
     });
+
+    it("keeps long requested durations in stored metadata", async () => {
+        const result = await normalizeVideoResult({ url: "/api/source.mp4", origin: "http://localhost", requestedDurationSeconds: 60, ownerUserId: "user" });
+
+        expect(result.durationMs).toBe(60_000);
+    });
 });

@@ -18,7 +18,8 @@ import { adaptGlobalAiOpcTextRequest, adaptGlobalAiOpcTextResponse, isGlobalAiOp
 import { readVerifiedSystemAiBusinessRequestId, SYSTEM_AI_LOGICAL_MODEL_HEADER, SYSTEM_AI_UPSTREAM_MODEL_HEADER, systemAiPointsIdempotencyKey, systemAiRequestFingerprint } from "@/lib/server/system-ai-billing";
 import { isAgnesApiBaseUrl } from "@/lib/agnes-model-catalog";
 import { channelConnectionReady, protocolAuthHeaders, resolveChannelModelConfig } from "@/lib/channel-protocol-registry";
-import { authorizedMaintenanceUserId } from "@/lib/server/maintenance-auth";
+import { normalizeYumengModelCenterBaseUrl } from "@/lib/yumeng-model-center";
+import { authorizedWorkerUserId } from "@/lib/server/maintenance-auth";
 import { authorizeGenerationMediaProxyRequest } from "@/lib/server/generation-media-access";
 import { userOwnsGenerationUpstreamTask } from "@/lib/server/generation-task-authorization";
 import { authorizeSystemAiProxyRequest } from "@/lib/server/system-ai-proxy-policy";
@@ -65,7 +66,7 @@ export async function DELETE(request: Request, context: RouteContext) {
 
 async function proxySystemRequest(request: Request, context: RouteContext) {
     const currentUser = await getCurrentUser();
-    const userId = currentUser?.id || authorizedMaintenanceUserId(request);
+    const userId = currentUser?.id || authorizedWorkerUserId(request);
     if (!userId) return NextResponse.json({ error: "请先登录" }, { status: 401 });
 
     const { channelId, path } = await context.params;
@@ -146,7 +147,8 @@ async function proxySystemRequest(request: Request, context: RouteContext) {
     const clientRequestId = request.headers.get("x-client-request-id")?.trim().slice(0, 200);
     if (idempotencyKey) headers.set("idempotency-key", idempotencyKey);
     if (clientRequestId) headers.set("x-client-request-id", clientRequestId);
-    Object.entries(protocolAuthHeaders(channel.apiKey, channel.advancedConfig, globalChannel ? "openai" : apiFormat)).forEach(([key, value]) => headers.set(key, value));
+    const authConfig = modelConfig?.protocol ? { ...channel.advancedConfig, protocol: modelConfig.protocol } : channel.advancedConfig;
+    Object.entries(protocolAuthHeaders(channel.apiKey, authConfig, globalChannel ? "openai" : apiFormat)).forEach(([key, value]) => headers.set(key, value));
     const callType = `${access.capability}:${access.operation}:/${(globalAdaptation?.path || path).join("/")}`;
     const businessRequestId = readVerifiedSystemAiBusinessRequestId(request.headers, access.logicalModelId, upstreamModel) || `direct:${randomUUID()}`;
     const pointsIdempotencyKey = pointsRequest ? systemAiPointsIdempotencyKey({ userId, businessRequestId, logicalModel: access.logicalModelId, channelId: channel.id, upstreamModel, callType }) : undefined;
@@ -424,6 +426,9 @@ function classifyPointsRequest(method: string, apiFormat: ApiCallFormat, path: s
     if (routePath === "/videos" || routePath === "/video/generations" || routePath === "/videos/generations" || routePath === "/videos/videos" || routePath === "/contents/generations/tasks") {
         return { model, amount: videoParameterMultiplier(payload, multipliers), usageKind: "video" };
     }
+    if (apiFormat === "gemini" && /^\/models\/[^/]+:predictlongrunning$/i.test(routePath)) {
+        return { model, amount: videoParameterMultiplier(payload, multipliers), usageKind: "video" };
+    }
     if (routePath === "/responses") {
         const isImage = hasResponsesImageGenerationTool(payload);
         return { model, amount: isImage ? imageQualityMultiplier(payload, multipliers) : 1, usageKind: isImage ? "image" : "text" };
@@ -447,8 +452,8 @@ function classifyConfiguredPointsRequest(
     multipliers?: GenerationPointMultipliers,
 ): PointsRequest | null {
     if (method.toUpperCase() !== "POST") return null;
-    const cleanPath = `/${(path[0] === "v1" || path[0] === "v1beta" ? path.slice(1) : path).join("/")}`.replace(/\/+$/, "").toLowerCase();
-    if (!createPaths.some((createPath) => createPath && cleanPath === createPath.replace(/\/+$/, "").toLowerCase())) return null;
+    const cleanPath = normalizedConfiguredProxyPath(`/${path.join("/")}`);
+    if (!createPaths.some((createPath) => createPath && cleanPath === normalizedConfiguredProxyPath(createPath))) return null;
     const payload = readRequestBody(contentType, body);
     const model = readRequestModel(payload) || modelHint;
     if (!model) return null;
@@ -457,6 +462,14 @@ function classifyConfiguredPointsRequest(
     if (capability === "video") return { model, amount: videoParameterMultiplier(payload, multipliers), usageKind: "video" };
     if (capability === "audio") return { model, amount: 1, usageKind: "audio" };
     return capability === "text" ? { model, amount: 1, usageKind: "text" } : null;
+}
+
+function normalizedConfiguredProxyPath(value: string) {
+    return `/${value
+        .trim()
+        .replace(/^\/+/, "")
+        .replace(/^(?:v1|v1beta)\//i, "")
+        .replace(/\/+$/, "")}`.toLowerCase();
 }
 
 function sameModel(left: string, right: string) {
@@ -506,9 +519,10 @@ function imageQualityMultiplier(payload: Record<string, unknown>, multipliers?: 
 }
 
 function videoParameterMultiplier(payload: Record<string, unknown>, multipliers?: GenerationPointMultipliers) {
+    const parameters = payload.parameters && typeof payload.parameters === "object" && !Array.isArray(payload.parameters) ? (payload.parameters as Record<string, unknown>) : {};
     return (
-        multiplierValue(multipliers?.videoQuality, normalizeVideoQualityKey(payload.resolution_name || payload.resolution || payload.quality || payload.vquality)) *
-        multiplierValue(multipliers?.videoSeconds, normalizeVideoSecondsKey(payload.duration || payload.seconds))
+        multiplierValue(multipliers?.videoQuality, normalizeVideoQualityKey(payload.resolution_name || payload.resolution || payload.quality || payload.vquality || parameters.resolution || parameters.quality || parameters.resolution_name)) *
+        multiplierValue(multipliers?.videoSeconds, normalizeVideoSecondsKey(payload.duration || payload.seconds || parameters.durationSeconds || parameters.duration || parameters.seconds))
     );
 }
 
@@ -574,14 +588,28 @@ function readMultipartFields(text: string): Record<string, string> {
 }
 
 function targetUrl(baseUrl: string, apiFormat: "openai" | "gemini", path: string[], search: string, globalAiOpc = false, protocol?: import("@/lib/auth/store").SystemChannelProtocol) {
-    const usesLiteralPath = protocol === "seedance-special" || protocol === "stable-diffusion" || protocol === "custom";
+    const usesLiteralPath = protocol === "seedance-special" || protocol === "stable-diffusion" || protocol === "yumeng" || protocol === "custom";
     const cleanPath = !usesLiteralPath && (path[0] === "v1" || path[0] === "v1beta") ? path.slice(1) : path;
-    if (isAgnesApiBaseUrl(baseUrl) && cleanPath[0]?.toLowerCase() === "agnesapi") {
-        const origin = new URL(baseUrl).origin;
+    const resolvedBaseUrl = protocol === "yumeng" ? normalizeYumengModelCenterBaseUrl(baseUrl) : baseUrl;
+    if (isAgnesApiBaseUrl(resolvedBaseUrl) && cleanPath[0]?.toLowerCase() === "agnesapi") {
+        const origin = new URL(resolvedBaseUrl).origin;
         return `${origin}/${cleanPath.map((segment) => encodeTargetPathSegment(segment, apiFormat)).join("/")}${search}`;
     }
-    const apiBase = usesLiteralPath ? baseUrl.trim().replace(/\/+$/, "") : normalizeApiBaseUrl(baseUrl, apiFormat, globalAiOpc);
-    return `${apiBase}/${cleanPath.map((segment) => encodeTargetPathSegment(segment, apiFormat)).join("/")}${search}`;
+    if (usesLiteralPath) return literalTargetUrl(resolvedBaseUrl, cleanPath, search, apiFormat);
+    return `${normalizeApiBaseUrl(resolvedBaseUrl, apiFormat, globalAiOpc)}/${cleanPath.map((segment) => encodeTargetPathSegment(segment, apiFormat)).join("/")}${search}`;
+}
+
+function literalTargetUrl(baseUrl: string, path: string[], search: string, apiFormat: "openai" | "gemini") {
+    const normalizedBase = baseUrl.trim().replace(/\/+$/, "");
+    const baseSegments = new URL(normalizedBase).pathname.split("/").filter(Boolean).map(safeDecodeURIComponent);
+    const pathSegments = path.map(safeDecodeURIComponent);
+    let overlap = Math.min(baseSegments.length, pathSegments.length);
+    while (overlap > 0 && baseSegments.slice(-overlap).some((segment, index) => segment !== pathSegments[index])) overlap -= 1;
+    const suffix = path
+        .slice(overlap)
+        .map((segment) => encodeTargetPathSegment(segment, apiFormat))
+        .join("/");
+    return `${normalizedBase}${suffix ? `/${suffix}` : ""}${search}`;
 }
 
 function encodeTargetPathSegment(segment: string, apiFormat: "openai" | "gemini") {

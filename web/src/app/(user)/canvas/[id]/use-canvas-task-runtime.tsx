@@ -1,6 +1,5 @@
 "use client";
 
-import dynamic from "next/dynamic";
 import { useCallback } from "react";
 
 import { createFreshGenerationTaskContext } from "@/lib/generation-request-context";
@@ -12,10 +11,6 @@ import type { AiConfig } from "@/stores/use-config-store";
 import type { ReferenceImage } from "@/types/image";
 import { CanvasNodeType, type CanvasNodeMetadata } from "../types";
 import { fitNodeSize } from "../utils/canvas-node-size";
-
-const CanvasAssistantPanel = dynamic(() => import("../components/canvas-assistant-panel").then((mod) => mod.CanvasAssistantPanel), { ssr: false });
-const loadAssetPickerModal = () => import("../components/asset-picker-modal").then((mod) => mod.AssetPickerModal);
-const AssetPickerModal = dynamic(loadAssetPickerModal, { ssr: false, loading: () => null });
 
 import { CanvasHistoryEntry, NODE_STATUS_IDLE, NODE_STATUS_LOADING, NODE_STATUS_SUCCESS, VIDEO_NODE_MAX_HEIGHT, VIDEO_NODE_MAX_WIDTH } from "./canvas-page-elements";
 import { audioMetadata, imageMetadata, uploadGeneratedCanvasImage, videoMetadata } from "./canvas-page-utils";
@@ -39,12 +34,9 @@ export function useCanvasTaskRuntime({ state }: { state: CanvasPageState }) {
         historyCommitTimerRef,
         viewportSaveTimerRef,
         applyingHistoryRef,
-        historyPausedRef,
         didInitialCenterRef,
-        rafRef,
         toolbarHideTimerRef,
         nodeDraggingRef,
-        dragRef,
         effectiveConfig,
         isAiConfigReady,
         openConfigDialog,
@@ -77,16 +69,8 @@ export function useCanvasTaskRuntime({ state }: { state: CanvasPageState }) {
         setSelectedConnectionId,
         hoveredNodeId,
         setHoveredNodeId,
-        connectingParams,
-        setConnectingParams,
-        connectionTargetNodeId,
-        setConnectionTargetNodeId,
         pendingConnectionCreate,
         setPendingConnectionCreate,
-        mouseWorld,
-        setMouseWorld,
-        selectionBox,
-        setSelectionBox,
         contextMenu,
         setContextMenu,
         runningNodeId,
@@ -150,9 +134,6 @@ export function useCanvasTaskRuntime({ state }: { state: CanvasPageState }) {
         selectedNodeIdsRef,
         viewportRef,
         generateNodeRef,
-        connectingParamsRef,
-        connectionTargetNodeIdRef,
-        selectionBoxRef,
         agentCloseTimerRef,
         autoOpenedAgentRef,
         pendingConnectionCreateRef,

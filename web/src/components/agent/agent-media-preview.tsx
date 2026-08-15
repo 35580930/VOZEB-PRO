@@ -32,7 +32,7 @@ export function AgentMediaPreview({
     url: string;
     title: string;
     className?: string;
-    fit?: "cover" | "contain";
+    fit?: "cover" | "contain" | "intrinsic";
     onDimensions?: (width: number, height: number) => void;
 }) {
     const [videoOpen, setVideoOpen] = useState(false);
@@ -63,9 +63,13 @@ export function AgentMediaPreview({
                 <Image
                     src={thumbnailUrl}
                     alt={title}
-                    className={cn("!block", fit === "contain" ? "!size-full object-contain" : "!h-full !w-full object-cover")}
+                    onLoad={(event) => {
+                        const image = event.currentTarget;
+                        onDimensions?.(image.naturalWidth, image.naturalHeight);
+                    }}
+                    className={cn("!block", fit === "intrinsic" ? "!h-auto !w-auto max-h-[280px] max-w-full object-contain" : fit === "contain" ? "!size-full object-contain" : "!h-full !w-full object-cover")}
                     classNames={{
-                        root: cn("cursor-zoom-in overflow-hidden", fit === "contain" ? "!block !size-full" : "!block !h-full !w-full"),
+                        root: cn("cursor-zoom-in overflow-hidden", fit === "intrinsic" ? "!block max-w-full" : fit === "contain" ? "!block !size-full" : "!block !h-full !w-full"),
                         popup: { root: "agent-media-image-preview" },
                     }}
                     styles={agentMediaPreviewPopupStyles}
@@ -88,7 +92,14 @@ export function AgentMediaPreview({
             <>
                 <div ref={mediaRootRef} className={cn("group/media relative overflow-hidden bg-black text-white", className)}>
                     <button type="button" className="block size-full" onClick={() => setVideoOpen(true)} aria-label={`打开视频：${title}`}>
-                        <video src={url} muted playsInline preload="metadata" className={cn("size-full", fit === "contain" ? "object-contain" : "object-cover")} />
+                        <video
+                            src={url}
+                            muted
+                            playsInline
+                            preload="metadata"
+                            onLoadedMetadata={(event) => onDimensions?.(event.currentTarget.videoWidth, event.currentTarget.videoHeight)}
+                            className={cn("size-full", fit === "contain" ? "object-contain" : "object-cover")}
+                        />
                         <span className="absolute inset-0 grid place-items-center bg-black/10 transition group-hover/media:bg-black/20">
                             <span className="grid size-11 place-items-center rounded-full bg-black/55 shadow-sm backdrop-blur-sm">
                                 <PlayCircle className="size-6" />

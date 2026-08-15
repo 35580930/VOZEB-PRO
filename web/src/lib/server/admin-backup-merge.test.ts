@@ -108,6 +108,7 @@ function user(id: string, username: string, pointsBalance: number): StoredUser {
         displayName: username,
         bio: "",
         role: username === "admin" ? "admin" : "user",
+        adminPermissions: username === "admin" ? ["system.manage"] : [],
         status: "active",
         planId: "free",
         pointsBalance,

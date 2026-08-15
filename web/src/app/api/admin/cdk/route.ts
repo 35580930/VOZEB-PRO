@@ -4,6 +4,7 @@ import { createCdkCodes, deleteCdkCodes, isAuthInputError, listCdkCodes, type Cd
 import { readJsonBody } from "@/lib/auth/request";
 import { getCurrentUser } from "@/lib/auth/session";
 import { auditActorFromRequest, safeRecordAuditLog } from "@/lib/server/audit-log-store";
+import { hasAdminPermission } from "@/lib/admin-permissions";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -11,7 +12,7 @@ export const dynamic = "force-dynamic";
 export async function GET(request: NextRequest) {
     const currentUser = await getCurrentUser();
     if (!currentUser) return NextResponse.json({ error: "请先登录" }, { status: 401 });
-    if (currentUser.role !== "admin") return NextResponse.json({ error: "需要管理员权限" }, { status: 403 });
+    if (!hasAdminPermission(currentUser, "billing.read")) return NextResponse.json({ error: "当前管理员没有查看财务数据的职责权限" }, { status: 403 });
 
     const page = Number(request.nextUrl.searchParams.get("page") || 1);
     const pageSize = Number(request.nextUrl.searchParams.get("pageSize") || 20);
@@ -23,7 +24,7 @@ export async function GET(request: NextRequest) {
 export async function POST(request: Request) {
     const currentUser = await getCurrentUser();
     if (!currentUser) return NextResponse.json({ error: "请先登录" }, { status: 401 });
-    if (currentUser.role !== "admin") return NextResponse.json({ error: "需要管理员权限" }, { status: 403 });
+    if (!hasAdminPermission(currentUser, "billing.manage")) return NextResponse.json({ error: "当前管理员没有管理财务数据的职责权限" }, { status: 403 });
 
     try {
         const body = await readJsonBody<{ count?: number; points?: number; maxRedemptions?: number; expiresAt?: string; expiresInDays?: number; note?: string }>(request);
@@ -52,7 +53,7 @@ export async function POST(request: Request) {
 export async function DELETE(request: Request) {
     const currentUser = await getCurrentUser();
     if (!currentUser) return NextResponse.json({ error: "请先登录" }, { status: 401 });
-    if (currentUser.role !== "admin") return NextResponse.json({ error: "需要管理员权限" }, { status: 403 });
+    if (!hasAdminPermission(currentUser, "billing.manage")) return NextResponse.json({ error: "当前管理员没有管理财务数据的职责权限" }, { status: 403 });
 
     try {
         const body = await readJsonBody<{ ids?: string[] }>(request);

@@ -11,6 +11,9 @@ node_modules/
 .e2e-data/
 .e2e-artifacts/
 playwright-report/
+.tmp/
+web/.tmp/
+.tmp_*.txt
 data/
 *.log
 *.tsbuildinfo

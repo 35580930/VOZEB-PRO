@@ -77,7 +77,7 @@ export async function waitForAudioGenerationTask(config: AiConfig, task: AudioGe
             const taskPayload = (await taskResponse.json()) as AudioTaskPayload;
             const current = taskPayload.task;
             if (!current) throw new Error(taskPayload.error || "音频任务不存在");
-            if (current.needsReview) throw new GenerationTaskNeedsReviewError();
+            if (current.needsReview) throw new GenerationTaskNeedsReviewError(current.reviewReason);
             if (current.status === "success") {
                 if (!current.result?.url) throw new Error("音频任务没有返回结果");
                 const audioResponse = await fetch(current.result.url, { signal: options?.signal });

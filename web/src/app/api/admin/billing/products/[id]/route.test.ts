@@ -20,7 +20,7 @@ import { DELETE } from "./route";
 describe("DELETE /api/admin/billing/products/[id]", () => {
     beforeEach(() => {
         vi.clearAllMocks();
-        mocks.getCurrentUser.mockResolvedValue({ id: "admin", role: "admin" });
+        mocks.getCurrentUser.mockResolvedValue({ id: "admin", role: "admin", status: "active", adminPermissions: ["commerce.manage"] });
         mocks.deleteBillingProduct.mockResolvedValue({ id: "product", name: "商品" });
     });
 

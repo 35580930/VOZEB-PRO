@@ -5,6 +5,7 @@ import { canvasThemes } from "@/lib/canvas-theme";
 import { useThemeStore } from "@/stores/use-theme-store";
 import { CanvasNodeType, type CanvasNodeData } from "../types";
 import { CanvasNode } from "./canvas-node";
+import { NodeContent } from "./canvas-node-content";
 
 const imageNode: CanvasNodeData = {
     id: "generated-image",
@@ -42,6 +43,25 @@ function renderImageNode(overrides: Partial<React.ComponentProps<typeof CanvasNo
     );
 }
 
+function renderContent(node: CanvasNodeData, theme: (typeof canvasThemes)[keyof typeof canvasThemes]) {
+    return renderToStaticMarkup(
+        <NodeContent
+            node={node}
+            theme={theme}
+            isEditingContent={false}
+            textareaRef={{ current: null }}
+            isBatchRoot={false}
+            batchCount={0}
+            batchExpanded={false}
+            batchOpening={false}
+            batchRecovering={false}
+            onContentChange={noop}
+            onStopEditing={noop}
+            mentionReferences={[]}
+        />,
+    );
+}
+
 describe("CanvasNode image border", () => {
     beforeEach(() => useThemeStore.setState({ theme: "light" }));
 
@@ -72,6 +92,30 @@ describe("CanvasNode image border", () => {
 });
 
 describe("CanvasNode task content", () => {
+    it("uses theme-owned surfaces and borders for all nine node types", () => {
+        const theme = canvasThemes.light;
+
+        for (const type of Object.values(CanvasNodeType)) {
+            const markup = renderImageNode({ data: { ...imageNode, id: `theme-${type}`, type, metadata: {} } });
+            const expectedBackground = type === CanvasNodeType.Config ? theme.node.panel : theme.node.fill;
+
+            expect(markup, type).toContain(`background:${expectedBackground}`);
+            expect(markup, type).toContain(`border-color:${theme.node.stroke}`);
+        }
+    });
+
+    it.each(["light", "dark"] as const)("passes explicit %s theme colors into all nine node renderers", (themeName) => {
+        const theme = canvasThemes[themeName];
+
+        for (const type of Object.values(CanvasNodeType)) {
+            const markup = renderContent({ ...imageNode, id: `content-theme-${type}`, type, metadata: {} }, theme);
+            const expectedColor =
+                type === CanvasNodeType.Image || type === CanvasNodeType.Config ? theme.node.subtleText : type === CanvasNodeType.Panorama || type === CanvasNodeType.Video || type === CanvasNodeType.Audio ? theme.node.placeholder : theme.node.text;
+
+            expect(markup, type).toContain(`color:${expectedColor}`);
+        }
+    });
+
     it("keeps long task text scrollable while preserving the footer", () => {
         const taskNode: CanvasNodeData = {
             ...imageNode,
@@ -86,6 +130,41 @@ describe("CanvasNode task content", () => {
 
         expect(markup).toContain("thin-scrollbar min-h-0 flex-1 overflow-y-auto");
         expect(markup).toContain("mt-3 flex shrink-0");
+    });
+
+    it.each(["light", "dark"] as const)("keeps task states and supporting node chips readable in %s mode", (themeName) => {
+        const theme = canvasThemes[themeName];
+        const taskNode: CanvasNodeData = {
+            ...imageNode,
+            id: "task-theme",
+            type: CanvasNodeType.Task,
+            title: "Agent 任务",
+            metadata: { agentTaskStatus: "running", prompt: "生成主题回归" },
+        };
+        const briefNode: CanvasNodeData = {
+            ...imageNode,
+            id: "brief-theme",
+            type: CanvasNodeType.Brief,
+            title: "创作简报",
+            metadata: { agentBrief: { objective: "主题回归", deliverables: [{ type: "image", title: "主视觉", count: 1 }] } },
+        };
+        const brandNode: CanvasNodeData = {
+            ...imageNode,
+            id: "brand-theme",
+            type: CanvasNodeType.BrandKit,
+            title: "视觉方向",
+            metadata: { brandKit: { summary: "主题回归", keywords: ["电影感"] } },
+        };
+
+        const taskMarkup = renderContent(taskNode, theme);
+        const supportingMarkup = `${renderContent(briefNode, theme)}${renderContent(brandNode, theme)}`;
+
+        expect(taskMarkup).toContain(`background:${theme.node.infoSurface}`);
+        expect(taskMarkup).toContain(`border-color:${theme.node.infoBorder}`);
+        expect(taskMarkup).toContain(`color:${theme.node.infoText}`);
+        expect(supportingMarkup).toContain(`background:${theme.node.subtleSurface}`);
+        expect(supportingMarkup).toContain(`color:${theme.node.subtleText}`);
+        expect(taskMarkup).not.toContain(`background:${theme.toolbar.activeBg};color:${theme.node.text}`);
     });
 });
 
@@ -108,5 +187,15 @@ describe("CanvasNode error content", () => {
 
         expect(markup).toContain("任务已取消");
         expect(markup).not.toContain("重试");
+    });
+
+    it("pauses tasks that need review without offering a new generation retry", () => {
+        const reviewNode: CanvasNodeData = { ...imageNode, metadata: { status: "needs_review", errorDetails: "上游创建状态待确认" } };
+
+        const markup = renderImageNode({ data: reviewNode, onRetry: noop });
+
+        expect(markup).toContain("上游创建状态待确认");
+        expect(markup).toContain("检查状态");
+        expect(markup).not.toContain(">重试<");
     });
 });

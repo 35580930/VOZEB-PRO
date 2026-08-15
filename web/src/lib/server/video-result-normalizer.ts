@@ -54,5 +54,5 @@ export async function normalizeVideoResult(input: {
 
 function normalizeRequestedDuration(value: unknown) {
     const number = Number(value);
-    return Number.isFinite(number) && number > 0 ? Math.max(1, Math.min(20, Math.floor(number))) : undefined;
+    return Number.isSafeInteger(number) && number > 0 ? number : undefined;
 }

@@ -1,3 +1,5 @@
+import type { CreativeVideoReferenceMode, VideoReferenceRole } from "@/lib/video-reference-contract";
+
 export type Position = {
     x: number;
     y: number;
@@ -25,7 +27,7 @@ export function isCanvasImageNodeType(type: CanvasNodeType | null | undefined) {
     return type === CanvasNodeType.Image || type === CanvasNodeType.Panorama;
 }
 
-type CanvasNodeStatus = "idle" | "success" | "loading" | "error" | "cancelled";
+type CanvasNodeStatus = "idle" | "success" | "loading" | "error" | "needs_review" | "cancelled";
 export type CanvasGenerationMode = "text" | "image" | "video" | "audio";
 export type CanvasImageGenerationType = "generation" | "edit";
 
@@ -35,6 +37,36 @@ export type CameraControlOptions = {
     lens: string;
     focalLength: number;
     aperture: number;
+};
+
+export type CanvasVideoFrameSelection = {
+    nodeId?: string;
+    title: string;
+    source: string;
+    previewUrl?: string;
+    storageKey?: string;
+    remoteUrl?: string;
+    serverUrl?: string;
+    mimeType?: string;
+    width?: number;
+    height?: number;
+};
+
+export type CanvasVideoReferenceSnapshot = {
+    type: "image" | "video" | "audio";
+    role: VideoReferenceRole;
+    id: string;
+    name: string;
+    mimeType: string;
+    source: string;
+    previewUrl?: string;
+    storageKey?: string;
+    remoteUrl?: string;
+    serverUrl?: string;
+    bytes?: number;
+    width?: number;
+    height?: number;
+    durationMs?: number;
 };
 
 export type CanvasNodeMetadata = {
@@ -77,6 +109,7 @@ export type CanvasNodeMetadata = {
     status?: CanvasNodeStatus;
     errorDetails?: string;
     fontSize?: number;
+    configDetailsOpen?: boolean;
     generationMode?: CanvasGenerationMode;
     generationType?: CanvasImageGenerationType;
     model?: string;
@@ -87,6 +120,10 @@ export type CanvasNodeMetadata = {
     vquality?: string;
     generateAudio?: string;
     watermark?: string;
+    videoReferenceMode?: CreativeVideoReferenceMode;
+    videoFirstFrame?: CanvasVideoFrameSelection;
+    videoLastFrame?: CanvasVideoFrameSelection;
+    videoReferences?: CanvasVideoReferenceSnapshot[];
     audioVoice?: string;
     audioFormat?: string;
     audioSpeed?: string;
@@ -167,6 +204,7 @@ export type CanvasAssistantImage = {
 
 export type CanvasAssistantMessage = {
     id: string;
+    runId?: string;
     role: "user" | "assistant" | "system" | "tool" | "error";
     title?: string;
     text: string;
@@ -177,6 +215,7 @@ export type CanvasAssistantMessage = {
 
 export type CanvasAssistantSession = {
     id: string;
+    conversationId?: string;
     title: string;
     messages: CanvasAssistantMessage[];
     createdAt: string;

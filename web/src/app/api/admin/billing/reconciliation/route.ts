@@ -6,6 +6,7 @@ import { getCurrentUser } from "@/lib/auth/session";
 import { auditActorFromRequest, safeRecordAuditLog } from "@/lib/server/audit-log-store";
 import { isBillingInputError } from "@/lib/server/billing-errors";
 import { getBillingReconciliationRun, importBillingStatement, listBillingReconciliationRuns } from "@/lib/server/payment-reconciliation-service";
+import { hasAdminPermission } from "@/lib/admin-permissions";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -13,7 +14,7 @@ export const dynamic = "force-dynamic";
 export async function GET(request: NextRequest) {
     const currentUser = await getCurrentUser();
     if (!currentUser) return NextResponse.json({ error: "请先登录" }, { status: 401 });
-    if (currentUser.role !== "admin") return NextResponse.json({ error: "需要管理员权限" }, { status: 403 });
+    if (!hasAdminPermission(currentUser, "billing.read")) return NextResponse.json({ error: "当前管理员没有查看对账数据的职责权限" }, { status: 403 });
 
     try {
         const params = request.nextUrl.searchParams;
@@ -39,7 +40,7 @@ export async function GET(request: NextRequest) {
 export async function POST(request: Request) {
     const currentUser = await getCurrentUser();
     if (!currentUser) return NextResponse.json({ error: "请先登录" }, { status: 401 });
-    if (currentUser.role !== "admin") return NextResponse.json({ error: "需要管理员权限" }, { status: 403 });
+    if (!hasAdminPermission(currentUser, "billing.manage")) return NextResponse.json({ error: "当前管理员没有导入对账数据的职责权限" }, { status: 403 });
 
     try {
         const body = await readJsonBody<{ provider?: unknown; csvText?: unknown; fileName?: unknown; note?: unknown }>(request);

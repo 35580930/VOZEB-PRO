@@ -60,6 +60,30 @@ describe("GlobalAiOpc catalog", () => {
         expect(buildGlobalAiOpcVideoRequest(getGlobalAiOpcPreset("video-sora")!, input)).toEqual({ model: "video-model", prompt: "animate", aspect_ratio: "16:9", seconds: 5, input_reference: input.images });
     });
 
+    it("keeps explicit first and last frame roles in Seedance content", () => {
+        const request = buildGlobalAiOpcVideoRequest(getGlobalAiOpcPreset("video-seedance-special")!, {
+            model: "video-model",
+            prompt: "animate",
+            duration: 5,
+            ratio: "16:9",
+            resolution: "720p",
+            images: [],
+            videos: [],
+            audios: [],
+            generateAudio: true,
+            firstFrame: "https://cdn.example.com/first.png",
+            lastFrame: "https://cdn.example.com/last.png",
+        });
+
+        expect(request).toMatchObject({
+            content: [
+                { type: "text", text: "animate" },
+                { type: "image_url", role: "first_frame", image_url: { url: "https://cdn.example.com/first.png" } },
+                { type: "image_url", role: "last_frame", image_url: { url: "https://cdn.example.com/last.png" } },
+            ],
+        });
+    });
+
     it("keeps each video family on its documented request fields", () => {
         const input = { model: "video-model", prompt: "animate", duration: 5, ratio: "16:9", resolution: "720p", images: ["https://cdn.example.com/ref.png"], videos: [], audios: [], generateAudio: false };
 

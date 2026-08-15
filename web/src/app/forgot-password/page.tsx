@@ -52,13 +52,13 @@ export default function ForgotPasswordPage() {
 
     return (
         <main className="auth-page-bg app-scroll-page flex items-center justify-center px-4 py-6 text-foreground sm:px-6 sm:py-10">
-            <section className="w-full max-w-md rounded-lg border border-stone-200 bg-white/90 p-6 shadow-2xl shadow-cyan-950/10 backdrop-blur dark:border-white/10 dark:bg-black/55">
+            <section className="auth-reset-card w-full max-w-md border p-6 backdrop-blur">
                 <Link href="/login" className="mb-5 inline-flex items-center gap-1.5 text-sm font-medium text-stone-600 hover:text-stone-950 dark:text-stone-300 dark:hover:text-white">
                     <ArrowLeft className="size-4" />
                     返回登录
                 </Link>
                 <div className="mb-5">
-                    <p className="text-sm font-medium text-cyan-600 dark:text-cyan-300">找回账号</p>
+                    <p className="auth-form-kicker text-sm font-medium">找回账号</p>
                     <h1 className="mt-2 text-2xl font-semibold text-stone-950 dark:text-white">重置密码</h1>
                     <p className="mt-2 text-sm leading-6 text-stone-500 dark:text-stone-400">输入绑定邮箱，获取验证码后设置新密码。</p>
                 </div>

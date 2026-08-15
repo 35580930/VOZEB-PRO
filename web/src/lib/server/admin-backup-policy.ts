@@ -5,7 +5,7 @@ export function sanitizeAuthBackup(value: unknown) {
     const settings = isRecord(value.settings) ? sanitizeSettings(value.settings) : value.settings;
     return {
         ...value,
-        users: asRecords(value.users).map(({ passwordHash: _passwordHash, email: _email, ...user }) => user),
+        users: asRecords(value.users).map(({ passwordHash: _passwordHash, email: _email, mfaSecretCiphertext: _mfaSecretCiphertext, ...user }) => user),
         sessions: [],
         emailCodes: [],
         cdkCodes: [],
@@ -27,6 +27,8 @@ export function mergeAuthBackupSecrets(imported: unknown, current: unknown) {
             username: existing.username,
             email: existing.email,
             passwordHash: existing.passwordHash,
+            mfaSecretCiphertext: existing.mfaSecretCiphertext,
+            mfaEnabledAt: existing.mfaEnabledAt,
         };
     });
     return {

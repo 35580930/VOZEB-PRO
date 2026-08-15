@@ -1,10 +1,13 @@
 export type UserRole = "admin" | "user";
 export type UserStatus = "active" | "disabled";
+export type { AdminPermission } from "@/lib/admin-permissions";
+import type { AdminPermission } from "@/lib/admin-permissions";
 import type { GlobalAiOpcPresetId } from "@/lib/globalaiopc-catalog";
+import type { RegistrationPolicyConsent } from "@/lib/registration-consent";
 import { VOZEB_QQ_GROUP_URL } from "@/constant/community";
 
 export type ApiCallFormat = "openai" | "gemini";
-export type SystemChannelProtocol = "auto" | "openai" | "sub2api" | "newapi" | "vozeb-recommended" | "globalaiopc" | "seedance" | "stable-diffusion" | "volcengine-video" | "seedance-special" | "custom" | "compatible";
+export type SystemChannelProtocol = "auto" | "openai" | "yumeng" | "gemini" | "sub2api" | "newapi" | "vozeb-recommended" | "globalaiopc" | "seedance" | "stable-diffusion" | "volcengine-video" | "seedance-special" | "custom" | "compatible";
 export type SystemChannelAuthMode = "none" | "bearer" | "x-api-key" | "custom-header";
 
 export type SystemChannelModelConfig = {
@@ -171,16 +174,26 @@ export type GenerationDefaultSettings = {
     videoSeconds: number;
     audioVoice: string;
     audioFormat: string;
-    workbenchSmartPlanning: {
-        image: boolean;
-        video: boolean;
-    };
 };
 
 export type GenerationPointMultipliers = {
     imageQuality: Record<string, number>;
     videoQuality: Record<string, number>;
     videoSeconds: Record<string, number>;
+};
+
+export type GenerationCostControlSettings = {
+    maxPointsPerTask: number;
+    dailyUserPointSpend: number;
+    dailyTotalPointSpend: number;
+};
+
+export type DataLifecycleSettings = {
+    cleanupExpiredSessions: boolean;
+    cleanupExpiredEmailCodes: boolean;
+    cleanupExpiredGenerationTasks: boolean;
+    cleanupExpiredTemporaryMedia: boolean;
+    maintenanceBatchSize: number;
 };
 
 export type EntitlementPlanLimits = {
@@ -280,22 +293,11 @@ export type SiteSettings = {
     seoKeywords: string;
     footerCopyright: string;
     termsUrl: string;
+    termsVersion: string;
     privacyUrl: string;
-    homeShowcaseMode: SiteShowcaseMode;
-    homeShowcaseItems: SiteShowcaseItem[];
+    privacyVersion: string;
     friendLinks: SiteFriendLink[];
     socials: SiteSocialSettings;
-};
-
-export type SiteShowcaseMode = "random" | "custom";
-
-export type SiteShowcaseItem = {
-    id: string;
-    title: string;
-    coverUrl: string;
-    prompt: string;
-    tags: string[];
-    category: string;
 };
 
 export type SiteFriendLink = {
@@ -349,6 +351,7 @@ export type PublicUser = {
     bio: string;
     avatarUrl?: string;
     role: UserRole;
+    adminPermissions: AdminPermission[];
     status: UserStatus;
     planId: string;
     planName: string;
@@ -357,6 +360,7 @@ export type PublicUser = {
     permanentPointsBalance: number;
     dailyPointsBalance: number;
     dailyPointsExpiresAt: string;
+    mfaEnabled: boolean;
     createdAt: string;
     updatedAt: string;
     lastLoginAt?: string;
@@ -372,9 +376,12 @@ export type PublicUserSummary = {
     totalPointsBalance: number;
 };
 
-export type StoredUser = Omit<PublicUser, "avatarUrl" | "planName" | "hasActivePlan" | "permanentPointsBalance" | "dailyPointsBalance" | "dailyPointsExpiresAt"> & {
+export type StoredUser = Omit<PublicUser, "avatarUrl" | "planName" | "hasActivePlan" | "permanentPointsBalance" | "dailyPointsBalance" | "dailyPointsExpiresAt" | "mfaEnabled"> & {
     avatarStorageKey?: string;
     passwordHash: string;
+    mfaSecretCiphertext?: string;
+    mfaEnabledAt?: string;
+    registrationConsent?: RegistrationPolicyConsent;
 };
 
 export type StoredSession = {
@@ -451,6 +458,8 @@ export type AuthSettings = {
     allowUserApiConfig: boolean;
     modelPointCosts: ModelPointCosts;
     generationPointMultipliers: GenerationPointMultipliers;
+    generationCostControl: GenerationCostControlSettings;
+    dataLifecycle: DataLifecycleSettings;
     entitlements: EntitlementSettings;
     generationConcurrency: GenerationConcurrencySettings;
     generationDefaults: GenerationDefaultSettings;

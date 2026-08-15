@@ -5,7 +5,10 @@ import { cn } from "@/lib/utils";
 
 export function AgentMarkdown({ children, className }: { children: string; className?: string }) {
     return (
-        <div className={cn("min-w-0 max-w-full break-words [overflow-wrap:anywhere]", className)}>
+        <div
+            className={cn("min-w-0 max-w-full break-words [overflow-wrap:anywhere]", className)}
+            style={{ fontFamily: '"SF Pro Text","PingFang SC","Microsoft YaHei","Helvetica Neue","Apple Color Emoji","Segoe UI Emoji","Noto Color Emoji","Segoe UI Symbol",sans-serif' }}
+        >
             <ReactMarkdown
                 remarkPlugins={[remarkGfm]}
                 components={{

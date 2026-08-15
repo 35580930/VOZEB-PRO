@@ -1,4 +1,5 @@
 import { createPostgresRepositories, ensurePostgresSchema, withPostgresTransaction, type JsonValue } from "@/lib/server/database";
+import type { AppSettingsRecord } from "@/lib/server/database/repository-types";
 
 import { AuthInputError } from "./store-foundation";
 import { encryptAuthSettingsSecrets, normalizeSettings } from "./store-normalizers";
@@ -13,57 +14,69 @@ export async function updatePostgresAuthSettings(patch: Partial<AuthSettings>) {
         const settings = normalizeSettings({ ...(await readPostgresAuthSettings(client)), ...patch });
         const encrypted = encryptAuthSettingsSecrets(settings);
 
-        for (const [sortOrder, plan] of settings.entitlements.plans.entries()) {
-            await settingsRepository.upsertEntitlementPlan({
-                id: plan.id,
-                name: plan.name,
-                enabled: plan.enabled,
-                dailyPoints: plan.dailyPoints,
-                limits: asJson(plan.limits),
-                features: asJson(plan.features),
-                sortOrder,
-            });
+        if (patch.entitlements !== undefined) {
+            const retainedPlans = await settingsRepository.removeEntitlementPlansNotIn(settings.entitlements.plans.map((plan) => plan.id));
+            if (retainedPlans.length) throw new AuthInputError(`套餐仍被用户或订单引用，无法删除：${retainedPlans.join("、")}`);
+            for (const [sortOrder, plan] of settings.entitlements.plans.entries()) {
+                await settingsRepository.upsertEntitlementPlan({
+                    id: plan.id,
+                    name: plan.name,
+                    enabled: plan.enabled,
+                    dailyPoints: plan.dailyPoints,
+                    limits: asJson(plan.limits),
+                    features: asJson(plan.features),
+                    sortOrder,
+                });
+            }
         }
 
-        await settingsRepository.updateSettings({
-            site: asJson(encrypted.site),
-            registrationEnabled: encrypted.registrationEnabled,
-            emailRegistrationEnabled: encrypted.emailRegistrationEnabled,
-            freeDailyPointsEnabled: encrypted.freeDailyPointsEnabled,
-            freeDailyPoints: encrypted.freeDailyPoints,
-            mail: asJson(encrypted.mail),
-            allowUserApiConfig: encrypted.allowUserApiConfig,
-            modelPointCosts: asJson(encrypted.modelPointCosts),
-            generationPointMultipliers: asJson(encrypted.generationPointMultipliers),
-            entitlementsEnabled: encrypted.entitlements.enabled,
-            defaultPlanId: encrypted.entitlements.defaultPlanId,
-            generationConcurrency: asJson(encrypted.generationConcurrency),
-            generationDefaults: asJson(encrypted.generationDefaults),
-            logicalModels: asJson(encrypted.logicalModels),
-            defaultModels: asJson(encrypted.defaultModels),
-            agentSkills: asJson(encrypted.agentSkills),
-        });
+        const settingsPatch = postgresSettingsPatch(patch, encrypted);
+        if (Object.keys(settingsPatch).length) await settingsRepository.updateSettings(settingsPatch);
 
-        for (const [sortOrder, channel] of encrypted.systemChannels.entries()) {
-            await settingsRepository.upsertSystemModelChannel({
-                id: channel.id,
-                name: channel.name,
-                baseUrl: channel.baseUrl,
-                apiKeyCiphertext: channel.apiKey,
-                webhookSecretCiphertext: channel.webhookSecret || "",
-                apiFormat: channel.apiFormat,
-                models: asJson(channel.models),
-                enabled: channel.enabled,
-                advancedConfig: channel.advancedConfig ? asJson(channel.advancedConfig) : undefined,
-                sortOrder,
-            });
+        if (patch.systemChannels !== undefined) {
+            for (const [sortOrder, channel] of encrypted.systemChannels.entries()) {
+                await settingsRepository.upsertSystemModelChannel({
+                    id: channel.id,
+                    name: channel.name,
+                    baseUrl: channel.baseUrl,
+                    apiKeyCiphertext: channel.apiKey,
+                    webhookSecretCiphertext: channel.webhookSecret || "",
+                    apiFormat: channel.apiFormat,
+                    models: asJson(channel.models),
+                    enabled: channel.enabled,
+                    advancedConfig: channel.advancedConfig ? asJson(channel.advancedConfig) : undefined,
+                    sortOrder,
+                });
+            }
+            await settingsRepository.deleteSystemModelChannelsNotIn(encrypted.systemChannels.map((channel) => channel.id));
         }
-        await settingsRepository.deleteSystemModelChannelsNotIn(encrypted.systemChannels.map((channel) => channel.id));
-
-        const retainedPlans = await settingsRepository.removeEntitlementPlansNotIn(encrypted.entitlements.plans.map((plan) => plan.id));
-        if (retainedPlans.length) throw new AuthInputError(`套餐仍被用户或订单引用，无法删除：${retainedPlans.join("、")}`);
         return settings;
     });
+}
+
+function postgresSettingsPatch(patch: Partial<AuthSettings>, settings: AuthSettings) {
+    const result: Partial<Omit<AppSettingsRecord, "id" | "createdAt" | "updatedAt">> = {};
+    if (patch.site !== undefined) result.site = asJson(settings.site);
+    if (patch.registrationEnabled !== undefined) result.registrationEnabled = settings.registrationEnabled;
+    if (patch.emailRegistrationEnabled !== undefined) result.emailRegistrationEnabled = settings.emailRegistrationEnabled;
+    if (patch.freeDailyPointsEnabled !== undefined) result.freeDailyPointsEnabled = settings.freeDailyPointsEnabled;
+    if (patch.freeDailyPoints !== undefined) result.freeDailyPoints = settings.freeDailyPoints;
+    if (patch.mail !== undefined) result.mail = asJson(settings.mail);
+    if (patch.allowUserApiConfig !== undefined) result.allowUserApiConfig = settings.allowUserApiConfig;
+    if (patch.modelPointCosts !== undefined) result.modelPointCosts = asJson(settings.modelPointCosts);
+    if (patch.generationPointMultipliers !== undefined) result.generationPointMultipliers = asJson(settings.generationPointMultipliers);
+    if (patch.generationCostControl !== undefined) result.generationCostControl = asJson(settings.generationCostControl);
+    if (patch.dataLifecycle !== undefined) result.dataLifecycle = asJson(settings.dataLifecycle);
+    if (patch.entitlements !== undefined) {
+        result.entitlementsEnabled = settings.entitlements.enabled;
+        result.defaultPlanId = settings.entitlements.defaultPlanId;
+    }
+    if (patch.generationConcurrency !== undefined) result.generationConcurrency = asJson(settings.generationConcurrency);
+    if (patch.generationDefaults !== undefined) result.generationDefaults = asJson(settings.generationDefaults);
+    if (patch.logicalModels !== undefined) result.logicalModels = asJson(settings.logicalModels);
+    if (patch.defaultModels !== undefined) result.defaultModels = asJson(settings.defaultModels);
+    if (patch.agentSkills !== undefined) result.agentSkills = asJson(settings.agentSkills);
+    return result;
 }
 
 function asJson(value: unknown) {

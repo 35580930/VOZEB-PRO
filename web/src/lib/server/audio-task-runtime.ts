@@ -1,4 +1,5 @@
 import { getAuthSettings, refundUserPoints } from "@/lib/auth/store";
+import { fileTypeFromBuffer } from "file-type";
 import { mediaTaskSource } from "@/lib/media-management-contract";
 import { audioTaskRefundIdempotencyKey, refundAudioTask } from "@/lib/server/audio-task-refund";
 import { getAudioTask, transitionAudioTask, updateAudioTask, type AudioTask } from "@/lib/server/audio-task-store";
@@ -78,10 +79,33 @@ export async function createAudioTaskUpstreamStep(task: AudioTask, origin: strin
             }
             if (isProviderBusinessError(data)) throw new GenerationSubmissionSafeFailure(readProviderError(data) || "音频接口返回失败");
             const directUrl = readProviderString(data, config.advancedConfig?.resultField, AUDIO_KEYS);
-            if (directUrl) return { state: "result_ready", status: "completed", resultUrl: directUrl, ...billing };
+            if (directUrl) {
+                const submittedAt = Date.now();
+                await scheduleGenerationTask("audio", task.id, {
+                    executionPhase: "result_ready",
+                    channelId: config.channelId,
+                    provider: config.advancedConfig?.protocol || config.apiFormat,
+                    submittedAt,
+                    nextPollAt: submittedAt,
+                    lastUpstreamStatus: "completed",
+                    resultPayload: { url: directUrl },
+                });
+                return { state: "result_ready", status: "completed", resultUrl: directUrl, ...billing };
+            }
             const id = readProviderString(data, undefined, ID_KEYS);
             if (!id) throw new GenerationSubmissionUncertainError("音频接口没有返回音频或任务 ID，创建结果待确认");
             await updateAudioTask(task.id, { upstream: { id, createPath: path } });
+            const submittedAt = Date.now();
+            await scheduleGenerationTask("audio", task.id, {
+                executionPhase: "submitted",
+                upstreamTaskId: id,
+                channelId: config.channelId,
+                provider: config.advancedConfig?.protocol || config.apiFormat,
+                queryPath: config.advancedConfig?.queryPath,
+                submittedAt,
+                nextPollAt: submittedAt,
+                lastUpstreamStatus: "submitted",
+            });
             return { state: "pending", status: "submitted", upstreamTaskId: id, createPath: path, ...billing };
         } catch (error) {
             if (!(error instanceof GenerationSubmissionSafeFailure)) throw generationSubmissionUncertainError(error, "音频任务创建结果未知");
@@ -181,9 +205,18 @@ async function refundAudioCandidate(task: AudioTask) {
 
 async function persistAudioBytes(task: AudioTask, origin: string, bytes: Buffer, responseMime: string) {
     if (!bytes.length || bytes.length > 30 * 1024 * 1024) throw new Error("音频结果为空或超过 30MB 限制");
-    const mimeType = responseMime.startsWith("audio/") ? responseMime : mimeFromFormat(task.config.format || "mp3");
+    const detected = await fileTypeFromBuffer(bytes);
+    const detectedMime = detected?.mime.startsWith("audio/") ? detected.mime : "";
+    const declaredMime = responseMime.toLowerCase().startsWith("audio/") ? responseMime.toLowerCase() : "";
+    if (!detectedMime && (!declaredMime || looksLikeTextResponse(bytes))) throw new GenerationSubmissionSafeFailure("音频接口返回的不是有效音频文件");
+    const mimeType = detectedMime || declaredMime || mimeFromFormat(task.config.format || "mp3");
     const asset = await writePersistentMediaDataUrl(`data:${mimeType};base64,${bytes.toString("base64")}`, "audio", mediaContext(task));
     return completeAudioTask(task, asset.url || `${origin}/api/reference-assets/${asset.token}`, mimeType);
+}
+
+function looksLikeTextResponse(bytes: Buffer) {
+    const prefix = bytes.subarray(0, 256).toString("utf8").trimStart().toLowerCase();
+    return prefix.startsWith("<!doctype") || prefix.startsWith("<html") || prefix.startsWith("{") || prefix.startsWith("[");
 }
 
 async function completeAudioTask(task: AudioTask, url: string, mimeType: string) {

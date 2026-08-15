@@ -11,8 +11,8 @@ export const managedMediaTypeOptions: Array<{ value: ManagedMediaType | ""; labe
 export const mediaSourceGroupOptions = [
     { value: "", label: "全部入口" },
     { value: "agent", label: "Agent 工作台" },
-    { value: "image-workbench", label: "图片工作台" },
-    { value: "video-workbench", label: "视频工作台" },
+    { value: "image-workbench", label: "图片生成" },
+    { value: "video-workbench", label: "视频生成" },
     { value: "canvas", label: "Canvas" },
     { value: "drama", label: "短剧" },
     { value: "upload", label: "用户上传" },
@@ -76,10 +76,10 @@ export function mediaTaskSource(source: unknown, context: { surface?: string; cl
 export function mediaSourceLabel(source?: string) {
     const labels: Record<string, string> = {
         agent: "Agent 工作台",
-        "image-workbench": "图片工作台",
+        "image-workbench": "图片生成",
         "image-task": "图片生成任务",
         "image-task-reference": "图片任务参考图",
-        "video-workbench": "视频工作台",
+        "video-workbench": "视频生成",
         "video-task": "视频生成任务",
         "audio-task": "音频生成任务",
         canvas: "Canvas",

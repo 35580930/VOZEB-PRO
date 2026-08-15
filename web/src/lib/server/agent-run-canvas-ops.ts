@@ -2,6 +2,7 @@ import type { AgentRunTask } from "@/lib/server/agent-run-store";
 import type { AgentPlan } from "@/lib/server/agent-run-validation";
 
 import { agentCanvasOutputNodeIds, agentCanvasTaskNodeId } from "./agent-run-canvas-node-ids";
+import { agentTaskResultItems } from "./agent-run-result-items";
 import { canvasSnapshotNodes } from "./agent-run-task-input";
 
 const WORK_COLUMN_X = 400;
@@ -85,6 +86,7 @@ export function taskCanvasEventOps(runId: string, index: number, task: AgentRunT
     const nodeIds = task.type === "text" ? [] : agentCanvasOutputNodeIds(runId, index, task);
     const failed = eventType === "task.failed";
     const taskIds = task.taskIds?.length ? task.taskIds : task.taskId ? [task.taskId] : undefined;
+    const partialFailure = failed && task.type !== "text" && task.childTasks?.some((child) => child.status === "completed") ? failedTaskOutputOps(runId, index, task) : null;
     const ops: Array<Record<string, unknown>> = [
         {
             type: "update_node",
@@ -97,17 +99,18 @@ export function taskCanvasEventOps(runId: string, index: number, task: AgentRunT
                 agentGenerationTaskIds: taskIds || [],
             },
         },
-        ...nodeIds.map((id) => ({
-            type: "update_node",
-            id,
-            metadata: {
-                ...outputMetadata(runId, task, failed ? "error" : "loading"),
-                errorDetails: failed ? task.error || "生成任务失败" : undefined,
-                agentGenerationTaskIds: taskIds || [],
-            },
-        })),
+        ...(partialFailure?.ops ||
+            nodeIds.map((id) => ({
+                type: "update_node",
+                id,
+                metadata: {
+                    ...outputMetadata(runId, task, failed ? "error" : "loading"),
+                    errorDetails: failed ? task.error || "生成任务失败" : undefined,
+                    agentGenerationTaskIds: taskIds || [],
+                },
+            }))),
     ];
-    return { nodeIds, ops };
+    return { nodeIds: partialFailure?.nodeIds || nodeIds, ops };
 }
 
 function taskChildResultOps(runId: string, index: number, task: AgentRunTask, eventType: string, childTaskId?: string) {
@@ -127,7 +130,7 @@ function taskChildResultOps(runId: string, index: number, task: AgentRunTask, ev
                 id: outputNodeId,
                 metadata: failed
                     ? { ...outputMetadata(runId, task, "error"), errorDetails: child?.error || "生成任务失败", agentGenerationTaskIds: child?.id ? [child.id] : [] }
-                    : { ...completedMediaMetadata(task, record(child?.result)), agentRunId: runId, agentTaskId: task.id, agentTaskType: task.type, agentGenerationTaskIds: child?.id ? [child.id] : [] },
+                    : { ...completedMediaMetadata(task, agentTaskResultItems(child?.result)[0] || {}), agentRunId: runId, agentTaskId: task.id, agentTaskType: task.type, agentGenerationTaskIds: child?.id ? [child.id] : [] },
             },
             {
                 type: "update_node",
@@ -159,7 +162,7 @@ export function cancelledRunCanvasOps(runId: string, tasks: AgentRunTask[]) {
 
 export function taskResultOps(runId: string, index: number, task: AgentRunTask) {
     const taskNodeId = agentCanvasTaskNodeId(runId, index);
-    const results = taskResultItems(task.result);
+    const results = agentTaskResultItems(task.result);
     if (task.type === "text" && task.targetNodeId) {
         const content = String(results[0]?.content || "").trim();
         const nodeIds = [task.targetNodeId];
@@ -172,6 +175,7 @@ export function taskResultOps(runId: string, index: number, task: AgentRunTask) 
         };
     }
 
+    const plannedNodeIds = agentCanvasOutputNodeIds(runId, index, task);
     const nodeIds = results.map((_, resultIndex) => `output-${runId}-${index}-${resultIndex}`);
     const ops: Array<Record<string, unknown>> = results.flatMap((record, resultIndex) => {
         const outputNodeId = nodeIds[resultIndex];
@@ -186,12 +190,21 @@ export function taskResultOps(runId: string, index: number, task: AgentRunTask) 
                       position: { x: OUTPUT_COLUMN_X + resultIndex * 380, y: START_Y + index * ROW_GAP },
                       metadata: { ...metadata, agentRunId: runId, agentTaskId: task.id, agentTaskType: task.type },
                   }
-                : {
-                      type: "update_node",
-                      id: outputNodeId,
-                      patch: { title: results.length > 1 ? `${task.title} ${resultIndex + 1}` : task.title },
-                      metadata: { ...metadata, agentRunId: runId, agentTaskId: task.id, agentTaskType: task.type, agentGenerationTaskIds: task.taskIds?.length ? task.taskIds : task.taskId ? [task.taskId] : [] },
-                  };
+                : plannedNodeIds.includes(outputNodeId)
+                  ? {
+                        type: "update_node",
+                        id: outputNodeId,
+                        patch: { title: results.length > 1 ? `${task.title} ${resultIndex + 1}` : task.title },
+                        metadata: { ...metadata, agentRunId: runId, agentTaskId: task.id, agentTaskType: task.type, agentGenerationTaskIds: task.taskIds?.length ? task.taskIds : task.taskId ? [task.taskId] : [] },
+                    }
+                  : {
+                        type: "add_node",
+                        id: outputNodeId,
+                        nodeType: task.type,
+                        title: `${task.title} ${resultIndex + 1}`,
+                        position: { x: OUTPUT_COLUMN_X + resultIndex * 380, y: START_Y + index * ROW_GAP },
+                        metadata: { ...metadata, agentRunId: runId, agentTaskId: task.id, agentTaskType: task.type, agentGenerationTaskIds: task.taskIds?.length ? task.taskIds : task.taskId ? [task.taskId] : [] },
+                    };
         return [nodeOp, { type: "connect_nodes", fromNodeId: taskNodeId, toNodeId: outputNodeId }];
     });
     ops.push({ type: "update_node", id: taskNodeId, metadata: { agentTaskStatus: "completed", agentTaskOutputNodeIds: nodeIds, agentTaskAttempts: task.attempts, agentTaskError: "" } });
@@ -235,14 +248,6 @@ function completedMediaMetadata(task: AgentRunTask, record: Record<string, unkno
     };
 }
 
-function taskResultItems(value: unknown): Record<string, unknown>[] {
-    if (!value || typeof value !== "object") return [{}];
-    const record = value as Record<string, unknown>;
-    const list = [record.results, record.images, record.outputs, record.items].find(Array.isArray);
-    if (!Array.isArray(list) || !list.length) return [record];
-    return list.filter((item): item is Record<string, unknown> => Boolean(item) && typeof item === "object").slice(0, 10);
-}
-
 function positiveNumber(value: unknown) {
     const number = Number(value);
     return Number.isFinite(number) && number > 0 ? number : undefined;
@@ -252,6 +257,24 @@ function text(value: unknown) {
     return typeof value === "string" ? value.trim() || undefined : undefined;
 }
 
-function record(value: unknown): Record<string, unknown> {
-    return value && typeof value === "object" && !Array.isArray(value) ? (value as Record<string, unknown>) : {};
+function failedTaskOutputOps(runId: string, index: number, task: AgentRunTask) {
+    const plannedCount = agentCanvasOutputNodeIds(runId, index, task).length;
+    const entries: Array<{ status: "completed"; result: Record<string, unknown>; taskId: string } | { status: "failed"; error: string; taskId: string }> = [];
+    for (const child of task.childTasks || []) {
+        if (child.status === "completed") entries.push(...agentTaskResultItems(child.result).map((result) => ({ status: "completed" as const, result, taskId: child.id })));
+        else entries.push({ status: "failed", error: child.error || task.error || "生成任务失败", taskId: child.id });
+    }
+    const missingChildren = Math.max(0, plannedCount - (task.childTasks?.length || 0));
+    entries.push(...Array.from({ length: missingChildren }, () => ({ status: "failed" as const, error: task.error || "生成任务失败", taskId: "" })));
+    const nodeIds = entries.map((_, resultIndex) => `output-${runId}-${index}-${resultIndex}`);
+    const ops = entries.map((entry, resultIndex) => {
+        const id = nodeIds[resultIndex];
+        const metadata =
+            entry.status === "completed"
+                ? { ...completedMediaMetadata(task, entry.result), agentRunId: runId, agentTaskId: task.id, agentTaskType: task.type, agentGenerationTaskIds: entry.taskId ? [entry.taskId] : [] }
+                : { ...outputMetadata(runId, task, "error"), errorDetails: entry.error, agentGenerationTaskIds: entry.taskId ? [entry.taskId] : [] };
+        if (resultIndex < plannedCount) return { type: "update_node", id, patch: { title: entries.length > 1 ? `${task.title} ${resultIndex + 1}` : task.title }, metadata };
+        return { type: "add_node", id, nodeType: task.type, title: `${task.title} ${resultIndex + 1}`, position: { x: OUTPUT_COLUMN_X + resultIndex * 380, y: START_Y + index * ROW_GAP }, metadata };
+    });
+    return { nodeIds, ops };
 }

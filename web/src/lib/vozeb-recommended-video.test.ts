@@ -16,7 +16,7 @@ describe("VOZEB recommended video protocol", () => {
                 videos: [],
                 audios: [],
             }),
-        ).toMatchObject({ resolution: "720p", generate_audio: false });
+        ).toMatchObject({ resolution: "720p", metadata: { resolution: "720p" }, generate_audio: false });
     });
 
     it("keeps supported reference media in JSON arrays", () => {
@@ -37,6 +37,7 @@ describe("VOZEB recommended video protocol", () => {
             prompt: "test",
             duration: 10,
             resolution: "720p",
+            metadata: { resolution: "720p" },
             generate_audio: true,
             aspect_ratio: "9:16",
             images: ["image-one"],

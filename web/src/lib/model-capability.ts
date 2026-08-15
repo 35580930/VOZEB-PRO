@@ -8,6 +8,13 @@ export type ModelCatalogEntry = {
     source: ModelCatalogSource;
 };
 
+const NON_CREATIVE_MODEL_PATTERN =
+    /(?:^|[-_.\s/])(?:embed(?:ding|dings)?|rerank(?:er|ing)?|re[-_.\s]?rank(?:er|ing)?|ocr|asr|stt|speech[-_.\s]?to[-_.\s]?text|audio[-_.\s]?(?:transcription|transcriptions|transcribe)|transcription|transcriptions|moderation|safety|guard(?:rail)?|classifier|topic[-_.\s]?control)(?:$|[-_.\s/])|whisper|sensevoice|paraformer|funasr|nemoguard|bge[-_.\s]?(?:m3|embedding|reranker)|(?:^|[-_.\s/])e5[-_.\s]|gte[-_.\s]|jina[-_.\s]?embeddings?/;
+
+export function isCreativeGenerationModel(model: string) {
+    return !NON_CREATIVE_MODEL_PATTERN.test(normalizeModelId(model));
+}
+
 export function inferModelCapability(model: string): LogicalModelCapability {
     const value = normalizeModelId(model);
     if (isSeedanceVideoModelName(value) || /stable[-_.\s]?video[-_.\s]?diffusion|(?:^|[-_.\s/])(video|videos|svd|i2v|t2v|img2video|text2video|sora|veo|kling|wan|hailuo|runway|luma|vidu)(?:$|[-_.\s/])/.test(value)) return "video";

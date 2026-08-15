@@ -3,6 +3,15 @@ import type { CouponTemplate } from "./billing";
 export type ReferralRiskStatus = "clear" | "review" | "frozen" | "rejected";
 export type ReferralRewardStatus = "pending" | "settled" | "revoked" | "rejected" | "reversal_pending";
 
+export type AdminReferralStats = {
+    clicks: number;
+    registrations: number;
+    qualified: number;
+    pending: number;
+    settled: number;
+    risky: number;
+};
+
 export type ReferralProgram = {
     id?: "default";
     enabled: boolean;
@@ -62,15 +71,32 @@ export type ReferralCenter = {
     link: string;
     stats: { clicks: number; registrations: number; qualified: number; pending: number; settled: number; revoked: number };
     referrals: Array<{ id: string; inviteeName: string; riskStatus: ReferralRiskStatus; registeredAt: string }>;
+    referralsTotal: number;
+    referralsPage: number;
+    referralsPageSize: number;
     rewards: ReferralReward[];
+    rewardsTotal: number;
+    rewardsPage: number;
+    rewardsPageSize: number;
 };
 
-export async function getReferralCenter() {
-    return requestReferral<ReferralCenter>("/api/referrals");
+export async function getReferralCenter(input: { referralsPage?: number; rewardsPage?: number; pageSize?: number } = {}) {
+    const query = new URLSearchParams();
+    if (input.referralsPage) query.set("referralsPage", String(input.referralsPage));
+    if (input.rewardsPage) query.set("rewardsPage", String(input.rewardsPage));
+    if (input.pageSize) query.set("pageSize", String(input.pageSize));
+    return requestReferral<ReferralCenter>(`/api/referrals${query.size ? `?${query}` : ""}`);
 }
 
 export async function getAdminReferralOverview() {
-    return requestReferral<{ program: ReferralProgram; stats: { clicks: number; registrations: number; qualified: number; pending: number; settled: number; risky: number }; couponTemplates: CouponTemplate[] }>("/api/admin/referrals");
+    return requestReferral<{ program: ReferralProgram; stats: AdminReferralStats }>("/api/admin/referrals");
+}
+
+export async function listAdminReferralCouponTemplates(input: { keyword?: string; selectedId?: string; pageSize?: number } = {}) {
+    const query = new URLSearchParams({ page: "1", pageSize: String(input.pageSize || 20), includeDisabled: "false" });
+    if (input.keyword) query.set("keyword", input.keyword);
+    if (input.selectedId) query.set("selectedId", input.selectedId);
+    return requestReferral<{ templates: CouponTemplate[]; total: number; page: number; pageSize: number }>(`/api/admin/billing/coupon-templates?${query}`);
 }
 
 export async function saveAdminReferralProgram(program: ReferralProgram) {

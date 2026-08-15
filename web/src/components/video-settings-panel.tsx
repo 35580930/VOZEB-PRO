@@ -45,7 +45,9 @@ export function VideoSettingsPanel({ config, onConfigChange, theme, showTitle = 
     const resolution = normalizeVideoResolutionValue(config.vquality);
     const updateDimension = (key: "width" | "height", value: number | null) => {
         const next = Math.max(1, Math.floor(value || dimensions[key] || 720));
-        onConfigChange("size", `${key === "width" ? next : dimensions.width}x${key === "height" ? next : dimensions.height}`);
+        const width = key === "width" ? next : dimensions.width || 1280;
+        const height = key === "height" ? next : dimensions.height || 720;
+        onConfigChange("size", `${width}x${height}`);
     };
 
     return (
@@ -64,9 +66,9 @@ export function VideoSettingsPanel({ config, onConfigChange, theme, showTitle = 
                 </SettingGroup>
                 <SettingGroup title="尺寸" color={theme.node.muted}>
                     <div className="grid grid-cols-[1fr_auto_1fr] items-center gap-2.5">
-                        <DimensionInput prefix="W" value={dimensions.width} disabled={size === "auto"} theme={theme} onChange={(value) => updateDimension("width", value)} />
+                        <DimensionInput prefix="W" value={dimensions.width} theme={theme} onChange={(value) => updateDimension("width", value)} />
                         <span className="text-lg opacity-45">↔</span>
-                        <DimensionInput prefix="H" value={dimensions.height} disabled={size === "auto"} theme={theme} onChange={(value) => updateDimension("height", value)} />
+                        <DimensionInput prefix="H" value={dimensions.height} theme={theme} onChange={(value) => updateDimension("height", value)} />
                     </div>
                     <div className="grid grid-cols-3 gap-2.5">
                         {sizeOptions.map((item) => (
@@ -92,7 +94,7 @@ export function VideoSettingsPanel({ config, onConfigChange, theme, showTitle = 
                                 {value}s
                             </OptionPill>
                         ))}
-                        <NumberInput value={seconds} min={1} max={20} theme={theme} onChange={(value) => onConfigChange("videoSeconds", value)} />
+                        <NumberInput value={seconds} min={1} theme={theme} onChange={(value) => onConfigChange("videoSeconds", value)} />
                     </div>
                 </SettingGroup>
             </div>
@@ -182,16 +184,16 @@ export function videoSecondsLabel(value: string) {
     return `${value || "5"}s`;
 }
 
-function videoSecondOptionsFromConfig(config: AiConfig, allowAuto = false, maxSeconds = 20) {
+export function videoSecondOptionsFromConfig(config: AiConfig, allowAuto = false, maxSeconds?: number) {
     const multipliers = config.generationPointMultipliers?.videoSeconds || {};
     const customOptions = Object.entries(multipliers)
         .map(([key, multiplier]) => ({ seconds: Number(key), key, multiplier: Number(multiplier) }))
         .filter((item) => Number.isFinite(item.seconds) && Number.isInteger(item.seconds) && (allowAuto ? item.seconds >= -1 : item.seconds > 0))
         .filter((item) => item.seconds !== -1 || allowAuto)
-        .filter((item) => item.seconds === -1 || item.seconds <= maxSeconds)
+        .filter((item) => item.seconds === -1 || maxSeconds === undefined || item.seconds <= maxSeconds)
         .filter((item) => !legacyDefaultSecondKeys.has(item.key) || item.multiplier !== 1)
         .map((item) => item.seconds);
-    const values = Array.from(new Set([...(allowAuto && customOptions.includes(-1) ? [-1] : []), ...defaultSecondOptions.filter((value) => value <= maxSeconds), ...customOptions.filter((value) => value > 0)]));
+    const values = Array.from(new Set([...(allowAuto && customOptions.includes(-1) ? [-1] : []), ...defaultSecondOptions.filter((value) => maxSeconds === undefined || value <= maxSeconds), ...customOptions.filter((value) => value > 0)]));
     return values.sort((a, b) => (a === -1 ? -1 : b === -1 ? 1 : a - b));
 }
 
@@ -251,16 +253,15 @@ function ResolutionInput({ value, theme, onChange }: { value: string; theme: Can
     );
 }
 
-function DimensionInput({ prefix, value, disabled, theme, onChange }: { prefix: string; value: number; disabled: boolean; theme: CanvasTheme; onChange: (value: number | null) => void }) {
+function DimensionInput({ prefix, value, theme, onChange }: { prefix: string; value: number; theme: CanvasTheme; onChange: (value: number | null) => void }) {
     return (
-        <label className="flex h-9 overflow-hidden rounded-xl text-sm" style={{ background: theme.node.fill, color: theme.node.text, opacity: disabled ? 0.55 : 1 }}>
+        <label className="flex h-9 overflow-hidden rounded-xl text-sm" style={{ background: theme.node.fill, color: theme.node.text }}>
             <span className="grid w-9 place-items-center" style={{ color: theme.node.muted }}>
                 {prefix}
             </span>
             <input
                 type="number"
                 min={1}
-                disabled={disabled}
                 className="min-w-0 flex-1 bg-transparent px-2 outline-none [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
                 value={value || ""}
                 onChange={(event) => onChange(Number(event.target.value) || null)}
@@ -270,7 +271,7 @@ function DimensionInput({ prefix, value, disabled, theme, onChange }: { prefix: 
     );
 }
 
-function NumberInput({ value, min, max, theme, onChange }: { value: string; min: number; max: number; theme: CanvasTheme; onChange: (value: string) => void }) {
+function NumberInput({ value, min, max, theme, onChange }: { value: string; min: number; max?: number; theme: CanvasTheme; onChange: (value: string) => void }) {
     return (
         <input
             type="number"

@@ -18,7 +18,7 @@ vi.mock("@/lib/auth/store", () => ({ getAuthSettings: mocks.getAuthSettings }));
 vi.mock("@/lib/server/agent-run-store", () => ({ getAgentRun: mocks.getAgentRun, updateAgentRunById: mocks.updateAgentRunById }));
 vi.mock("@/lib/server/generation-task-recovery-service", () => ({ runGenerationTaskRecoveryBatch: mocks.runGenerationTaskRecoveryBatch }));
 vi.mock("@/lib/server/generation-task-scheduler", () => ({ scheduleGenerationTask: mocks.scheduleGenerationTask }));
-vi.mock("@/lib/server/generation-task-store", () => ({ withGenerationConcurrencyLimit: vi.fn(async (_userId, _type, _staleMs, limit, handler) => ((await mocks.countActive()) >= limit ? null : handler())) }));
+vi.mock("@/lib/server/generation-task-store", () => ({ withGenerationConcurrencyLimit: vi.fn(async (_userId, _type, _staleMs, limit, handler, excludeTaskId) => ((await mocks.countActive(excludeTaskId)) >= limit ? null : handler())) }));
 vi.mock("@/lib/server/internal-origin", () => ({ resolveInternalOrigin: vi.fn(() => "http://localhost") }));
 
 import { POST } from "./route";
@@ -26,9 +26,24 @@ import { POST } from "./route";
 describe("Agent child task retry concurrency", () => {
     beforeEach(() => {
         vi.clearAllMocks();
-        mocks.getAgentRun.mockResolvedValue({ id: "run", userId: "user", status: "failed", tasks: [{ id: "task", status: "failed" }] });
+        mocks.getAgentRun.mockResolvedValue({ id: "run", userId: "user", conversationId: "conversation-one", status: "failed", tasks: [{ id: "task", status: "failed" }] });
         mocks.countActive.mockResolvedValue(1);
         mocks.getAuthSettings.mockResolvedValue({ generationConcurrency: { agent: 1 }, generationDefaults: { imageSize: "1:1" } });
+    });
+
+    it("rejects a retry issued from a different conversation", async () => {
+        const response = await POST(
+            new Request("http://localhost/api/agent/runs/run/tasks/task/retry", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ conversationId: "conversation-two" }),
+            }),
+            { params: Promise.resolve({ id: "run", taskId: "task" }) },
+        );
+
+        expect(response.status).toBe(409);
+        expect(mocks.getAuthSettings).not.toHaveBeenCalled();
+        expect(mocks.updateAgentRunById).not.toHaveBeenCalled();
     });
 
     it("uses the current backend limit before changing the failed task", async () => {
@@ -37,6 +52,55 @@ describe("Agent child task retry concurrency", () => {
         expect(response.status).toBe(429);
         expect(mocks.getAuthSettings).toHaveBeenCalledTimes(1);
         expect(mocks.updateAgentRunById).not.toHaveBeenCalled();
+    });
+
+    it("does not count the existing scheduler record for the same Run against a multi-task retry", async () => {
+        mocks.countActive.mockImplementation(async (excludeTaskId) => (excludeTaskId === "run" ? 0 : 1));
+        mocks.updateAgentRunById.mockImplementation(async (_id, patch) => ({ ...(await mocks.getAgentRun()), ...patch }));
+
+        const response = await POST(new Request("http://localhost/api/agent/runs/run/tasks/task/retry", { method: "POST" }), { params: Promise.resolve({ id: "run", taskId: "task" }) });
+
+        expect(response.status).toBe(200);
+        expect(mocks.countActive).toHaveBeenCalledWith("run");
+        expect(mocks.updateAgentRunById).toHaveBeenCalledTimes(1);
+    });
+
+    it("retries every requested failed task in one Run update and one scheduler request", async () => {
+        const run = {
+            id: "run",
+            userId: "user",
+            conversationId: "conversation-one",
+            status: "failed",
+            tasks: [
+                { id: "task-one", status: "failed", attempts: 1, error: "图片失败" },
+                { id: "task-two", status: "failed", attempts: 2, error: "视频失败" },
+                { id: "task-complete", status: "completed", attempts: 1, result: "完成" },
+            ],
+        };
+        mocks.countActive.mockResolvedValue(0);
+        mocks.getAgentRun.mockResolvedValue(run);
+        mocks.updateAgentRunById.mockImplementation(async (_id, patch) => ({ ...run, ...patch }));
+
+        const response = await POST(
+            new Request("http://localhost/api/agent/runs/run/tasks/task-one/retry", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ conversationId: "conversation-one", taskIds: ["task-one", "task-two"] }),
+            }),
+            { params: Promise.resolve({ id: "run", taskId: "task-one" }) },
+        );
+
+        expect(response.status).toBe(200);
+        expect(mocks.updateAgentRunById).toHaveBeenCalledTimes(1);
+        const tasks = mocks.updateAgentRunById.mock.calls[0]?.[1]?.tasks;
+        expect(tasks).toEqual([
+            expect.objectContaining({ id: "task-one", status: "ready", error: undefined }),
+            expect.objectContaining({ id: "task-two", status: "ready", error: undefined }),
+            expect.objectContaining({ id: "task-complete", status: "completed", result: "完成" }),
+        ]);
+        expect(mocks.updateAgentRunById.mock.calls[0]?.[2]).toMatchObject({ type: "task.retry.requested", data: { taskId: "task-one", taskIds: ["task-one", "task-two"] } });
+        expect(mocks.scheduleGenerationTask).toHaveBeenCalledTimes(1);
+        expect(mocks.runGenerationTaskRecoveryBatch).toHaveBeenCalledTimes(1);
     });
 
     it("discards failed child task IDs before starting a new retry", async () => {

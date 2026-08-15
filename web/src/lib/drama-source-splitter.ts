@@ -7,9 +7,10 @@ export type DramaSourceEpisodeDraft = {
 const HEADING_PATTERN = /^(?:第[0-9〇零一二三四五六七八九十百千万两]+[章节集回幕卷]|序章|楔子|前言|尾声|番外|chapter\s+\d+|episode\s+\d+).*$/i;
 
 export function splitDramaSource(value: string, targetCharacters = 4000): DramaSourceEpisodeDraft[] {
-    const source = value.replace(/\r\n?/g, "\n").trim().slice(0, 500_000);
+    const source = value.replace(/\r\n?/g, "\n").trim();
     if (!source) return [];
-    const target = Math.max(800, Math.min(12_000, Math.floor(targetCharacters) || 4000));
+    const requestedTarget = Math.floor(targetCharacters);
+    const target = Number.isSafeInteger(requestedTarget) && requestedTarget > 0 ? requestedTarget : 4000;
     const sections = headingSections(source);
     const drafts = sections.flatMap((section) =>
         chunkText(section.text, target).map((script, partIndex) => ({
@@ -18,7 +19,7 @@ export function splitDramaSource(value: string, targetCharacters = 4000): DramaS
             script,
         })),
     );
-    return drafts.slice(0, 100).map((draft, index) => ({
+    return drafts.map((draft, index) => ({
         title: `第 ${index + 1} 集${draft.sourceTitle ? ` · ${shortTitle(draft.sourceTitle)}` : ""}`,
         script: draft.script,
         sourceRange: draft.sourceRange,

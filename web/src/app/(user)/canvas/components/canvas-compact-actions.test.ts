@@ -12,7 +12,8 @@ describe("Canvas compact actions", () => {
         const section = source.slice(source.indexOf("const resultNodeIds"), source.indexOf('objectField(item.detail, "runId")'));
 
         expect(section).toContain('objectField(item.detail, "taskType") === "text" ? []');
-        expect(section).toContain('className="flex min-w-0 items-center gap-1"');
+        expect(section).toContain('className="flex min-w-0 items-start gap-1"');
+        expect(section).toContain('className="mt-0.5 grid size-7 place-items-center');
         expect(section.indexOf("{item.text}")).toBeLessThan(section.indexOf("{resultNodeIds.map"));
         expect(section).toContain("<Tooltip key={nodeId} title={locateLabel}");
         expect(section).toContain("aria-label={locateLabel}");

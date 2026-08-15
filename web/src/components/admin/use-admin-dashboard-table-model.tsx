@@ -1,97 +1,22 @@
 "use client";
 
-import type { ReactNode } from "react";
-import { useEffect, useMemo, useRef, useState } from "react";
-import { App, Button, Checkbox, DatePicker, Form, Input, InputNumber, Modal, Pagination, Popconfirm, Segmented, Select, Space, Switch, Table, Tag } from "antd";
-import type { TableColumnsType } from "antd";
-import Link from "next/link";
-import { BillingOperations } from "@/app/admin/billing/components/billing-operations";
-import { GenerationOperationsClient } from "@/app/admin/generation-operations/components/generation-operations-client";
-import {
-    formatAdminLogDuration,
-    formatAdminLogTime,
-    formatGenerationLogModel,
-    GenerationLogAssetPreview,
-    GenerationLogDetail,
-    GenerationLogMobileCard,
-    generationKindLabel,
-    generationSourceLabel,
-    generationStatusClass,
-    generationStatusLabel,
-} from "@/components/admin/admin-generation-log";
-import { GenerationConcurrencyPanel, GenerationDefaultsPanel, localAgentReadiness } from "@/components/admin/admin-generation-settings";
-import type { AgentReadiness } from "@/components/admin/admin-generation-settings";
-import { AdminLocalMediaStorage } from "@/components/admin/admin-local-media-storage";
-import { QuotaRuleTable } from "@/components/admin/admin-quota-rules";
-import { AdminOverview, buildOperationsSummary } from "@/components/admin/admin-overview";
-import { AdminLogicalModelManager } from "@/components/admin/admin-logical-model-manager";
-import { Metric, Panel, PanelHeader } from "@/components/admin/admin-panel";
-import { AdminSectionNav, adminSections } from "@/components/admin/admin-section-nav";
+import { formatAdminLogDuration, formatAdminLogTime, formatGenerationLogModel, generationKindLabel, GenerationLogAssetPreview, generationSourceLabel, generationStatusClass, generationStatusLabel } from "@/components/admin/admin-generation-log";
+import { adminSections } from "@/components/admin/admin-section-nav";
 import type { AdminSectionKey } from "@/components/admin/admin-sections";
-import { UpdateCenterPanel } from "@/components/admin/admin-update-center";
-import { LabeledControl, SectionTitle, SettingInlineToggle, SettingToggle } from "@/components/admin/admin-settings-controls";
-import { SiteLogoPreview, SiteSettingStatus, SiteShowcasePreview, siteSocialItems } from "@/components/admin/admin-site-preview";
-import { createDefaultChannelAdvancedConfig, SystemChannelEditor } from "@/components/admin/admin-system-channel-editor";
-import { formatAdminMoney, toNumberOrOne, toNumberOrZero, uniqueList } from "@/components/admin/admin-values";
-import {
-    ArrowRight,
-    Copy,
-    CreditCard,
-    CircleDollarSign,
-    Database,
-    Download,
-    ExternalLink,
-    Eye,
-    Gift,
-    Globe2,
-    Image as ImageIcon,
-    KeyRound,
-    Mail,
-    Menu,
-    PlugZap,
-    Plus,
-    ReceiptText,
-    RefreshCw,
-    Save,
-    Search,
-    Send,
-    ShieldCheck,
-    SlidersHorizontal,
-    Sparkles,
-    Trash2,
-    Upload,
-    UserCog,
-    UserRound,
-    WalletCards,
-} from "lucide-react";
-import dayjs from "dayjs";
-import { nanoid } from "nanoid";
+import { toNumberOrZero } from "@/components/admin/admin-values";
+import type { TableColumnsType } from "antd";
+import { Button, Popconfirm, Space, Tag } from "antd";
+import { Copy, Eye, SlidersHorizontal, Trash2 } from "lucide-react";
+import type { ReactNode } from "react";
 
-import { formatCreditAmount } from "@/constant/credits";
 import { AdminAccountId, AdminUserIdentity } from "@/components/admin/admin-user-identity";
+import { formatCreditAmount } from "@/constant/credits";
+import type { AuthSettings, PublicCdkCode, PublicUser, PublicUserSummary, UserRole, UserStatus } from "@/lib/auth/store";
 import { imagePreviewUrl } from "@/lib/media-image-url";
-import { normalizeDefaultModelsConfig } from "@/lib/model-routing-config";
-import type {
-    AgentSkill,
-    AuthSettings,
-    CreatedCdkCode,
-    PublicAnnouncement,
-    PublicCdkCode,
-    PublicUser,
-    PublicUserSummary,
-    SiteFriendLink,
-    SiteShowcaseItem,
-    SiteSocialKey,
-    SystemChannelAdvancedConfig,
-    SystemModelChannel,
-    UserRole,
-    UserStatus,
-} from "@/lib/auth/store";
-import type { GenerationAssetStats, StoredGenerationLog } from "@/lib/server/generation-log-store";
 import type { AdminSetupSummary } from "@/lib/server/admin-setup-status";
-import type { PaymentConfigSummary } from "@/lib/payment-config-types";
-import type { AdminBillingSummary } from "@/lib/admin-billing-types";
+import type { StoredGenerationLog } from "@/lib/server/generation-log-store";
 import type { Prompt } from "@/services/api/prompts";
+import { cdkStatusLabel, cdkStatusTone } from "./admin-dashboard-elements";
 
 export type AdminDashboardProps = {
     initialUsers: PublicUser[];
@@ -112,48 +37,26 @@ export type PromptFormValue = {
     preview?: string;
 };
 
-export type UserEditorValue = {
-    username?: string;
-    displayName: string;
-    email?: string;
-    password?: string;
-    role: UserRole;
-    status: UserStatus;
-    pointsBalance: number;
-};
-
 export const PROMPT_PAGE_SIZE = 20;
 export const PROMPT_SEARCH_DEBOUNCE_MS = 300;
 export const CDK_PAGE_SIZE = 20;
 export const GENERATION_LOG_PAGE_SIZE = 20;
-import {
-    settingsStatusToneClass,
-    SettingsStatusTile,
-    SettingsAnchorItem,
-    FinanceFlowItem,
-    FinanceMiniRow,
-    createSystemChannel,
-    suggestedChannelModels,
-    requestAdminModels,
-    modelNameFromOption,
-    isCdkExpired,
-    cdkStatusLabel,
-    cdkStatusTone,
-    formatCreatedCdkExport,
-    downloadTextFile,
-    CdkRedemptionDetail,
-    splitTags,
-    clampInteger,
-} from "./admin-dashboard-elements";
 
-import type { AdminDashboardState } from "./use-admin-dashboard-state";
+import { ADMIN_PERMISSION_PRESETS, adminPermissionSummary, hasAdminPermission, hasAllAdminPermissions, normalizeAdminPermissions } from "@/lib/admin-permissions";
 import type { AdminDashboardDataActions } from "./use-admin-dashboard-data-actions";
 import type { AdminDashboardSettingsActions } from "./use-admin-dashboard-settings-actions";
+import type { AdminDashboardState, UserEditorValue } from "./use-admin-dashboard-state";
 
 export function useAdminDashboardTableModel({ state, data, settingsActions }: { state: AdminDashboardState; data: AdminDashboardDataActions; settingsActions: AdminDashboardSettingsActions }) {
     const { currentUser, setupSummary, userForm, settings, updatingUserId, deletingPromptId, setViewingGenerationLog, setViewingCdkCode, editingUser, setEditingUser, creatingUser, setCreatingUser, activeSection } = state;
     const { updateUser, createUser, deleteUser, deletePrompt, deleteGenerationLogsByIds, deleteCdkById, copyCdkPlainCode } = data;
     const {} = settingsActions;
+    const canManageUsers = hasAdminPermission(currentUser, "users.manage");
+    const canManageAdministrators = hasAdminPermission(currentUser, "administrators.manage");
+    const canManageBilling = hasAdminPermission(currentUser, "billing.manage");
+    const canManageAdministratorRecord = (user: PublicUser) => canManageAdministrators && hasAllAdminPermissions(currentUser, user.adminPermissions);
+    const canEditUserRecord = (user: PublicUser) => canManageBilling || (user.role === "admin" ? canManageAdministratorRecord(user) : canManageUsers || canManageAdministrators);
+    const canDeleteUserRecord = (user: PublicUser) => user.id !== currentUser.id && (user.role === "admin" ? canManageAdministratorRecord(user) : canManageUsers);
 
     const openUserEditor = (user: PublicUser) => {
         setCreatingUser(false);
@@ -164,6 +67,8 @@ export function useAdminDashboardTableModel({ state, data, settingsActions }: { 
             email: user.email || "",
             password: "",
             role: user.role,
+            adminPermissions: user.adminPermissions,
+            permissionPreset: ADMIN_PERMISSION_PRESETS.find((preset) => normalizeAdminPermissions(preset.permissions).join() === normalizeAdminPermissions(user.adminPermissions).join())?.key,
             status: user.status,
             pointsBalance: user.permanentPointsBalance,
         });
@@ -172,7 +77,19 @@ export function useAdminDashboardTableModel({ state, data, settingsActions }: { 
     const openCreateUserEditor = () => {
         setEditingUser(null);
         setCreatingUser(true);
-        userForm.setFieldsValue({ username: "", displayName: "", email: "", password: "", role: "user", status: "active", pointsBalance: 0 });
+        const role = canManageUsers ? "user" : "admin";
+        const adminPermissions = role === "admin" ? normalizeAdminPermissions(currentUser.adminPermissions) : [];
+        userForm.setFieldsValue({
+            username: "",
+            displayName: "",
+            email: "",
+            password: "",
+            role,
+            adminPermissions,
+            permissionPreset: ADMIN_PERMISSION_PRESETS.find((preset) => normalizeAdminPermissions(preset.permissions).join() === adminPermissions.join())?.key,
+            status: "active",
+            pointsBalance: 0,
+        });
     };
 
     const closeUserEditor = () => {
@@ -188,13 +105,21 @@ export function useAdminDashboardTableModel({ state, data, settingsActions }: { 
             return;
         }
         if (!editingUser) return;
+        const touchesAdministrator = editingUser.role === "admin" || value.role === "admin";
+        const targetWithinScope = editingUser.role !== "admin" || hasAllAdminPermissions(currentUser, editingUser.adminPermissions);
+        const canEditAccount = touchesAdministrator ? canManageAdministrators && targetWithinScope : canManageUsers;
         const user = await updateUser(editingUser.id, {
-            displayName: value.displayName,
-            email: value.email || "",
-            password: value.password || undefined,
-            role: value.role,
-            status: value.status,
-            pointsBalance: toNumberOrZero(value.pointsBalance),
+            ...(canEditAccount
+                ? {
+                      displayName: value.displayName,
+                      email: value.email || "",
+                      password: value.password || undefined,
+                      role: value.role,
+                      adminPermissions: value.role === "admin" ? value.adminPermissions : [],
+                      status: value.status,
+                  }
+                : {}),
+            ...(canManageBilling ? { pointsBalance: toNumberOrZero(value.pointsBalance) } : {}),
         });
         if (user) closeUserEditor();
     };
@@ -214,6 +139,7 @@ export function useAdminDashboardTableModel({ state, data, settingsActions }: { 
                     <div className="mt-2 flex flex-wrap gap-1 sm:hidden">
                         <Tag color={record.role === "admin" ? "blue" : "default"}>{record.role === "admin" ? "管理员" : "普通用户"}</Tag>
                         <Tag color={record.status === "active" ? "green" : "red"}>{record.status === "active" ? "可用" : "已禁用"}</Tag>
+                        {record.role === "admin" ? <span className="self-center text-xs text-stone-500 dark:text-stone-400">{adminPermissionSummary(record.adminPermissions)}</span> : null}
                     </div>
                     <div className="mt-2 space-y-1 text-xs text-stone-500 sm:hidden dark:text-stone-400">
                         <div>
@@ -243,9 +169,14 @@ export function useAdminDashboardTableModel({ state, data, settingsActions }: { 
         {
             title: "角色",
             dataIndex: "role",
-            width: 120,
+            width: 170,
             responsive: ["sm"],
-            render: (role: UserRole) => <Tag color={role === "admin" ? "blue" : "default"}>{role === "admin" ? "管理员" : "普通用户"}</Tag>,
+            render: (role: UserRole, record) => (
+                <div>
+                    <Tag color={role === "admin" ? "blue" : "default"}>{role === "admin" ? "管理员" : "普通用户"}</Tag>
+                    {role === "admin" ? <div className="mt-1.5 text-xs text-stone-500 dark:text-stone-400">{adminPermissionSummary(record.adminPermissions)}</div> : null}
+                </div>
+            ),
         },
         {
             title: "状态",
@@ -288,24 +219,25 @@ export function useAdminDashboardTableModel({ state, data, settingsActions }: { 
         {
             title: "操作",
             width: 150,
-            render: (_, record) => (
-                <Space size={6}>
-                    <Button size="small" icon={<SlidersHorizontal className="size-3.5" />} loading={updatingUserId === record.id} onClick={() => openUserEditor(record)}>
-                        管理
-                    </Button>
-                    <Popconfirm title="删除该用户？" description="会同时清理该用户会话、积分、额度记录、生成日志和服务器副本。" okText="删除" cancelText="取消" onConfirm={() => void deleteUser(record.id)}>
-                        <Button
-                            size="small"
-                            danger
-                            disabled={record.id === currentUser.id}
-                            loading={updatingUserId === record.id}
-                            icon={<Trash2 className="size-3.5" />}
-                            aria-label={`删除用户 ${record.displayName}`}
-                            title={`删除用户 ${record.displayName}`}
-                        />
-                    </Popconfirm>
-                </Space>
-            ),
+            render: (_, record) => {
+                const canEdit = canEditUserRecord(record);
+                const canDelete = canDeleteUserRecord(record);
+                if (!canEdit && !canDelete) return <span className="text-xs text-stone-400">只读</span>;
+                return (
+                    <Space size={6}>
+                        {canEdit ? (
+                            <Button size="small" icon={<SlidersHorizontal className="size-3.5" />} loading={updatingUserId === record.id} onClick={() => openUserEditor(record)}>
+                                管理
+                            </Button>
+                        ) : null}
+                        {canDelete ? (
+                            <Popconfirm title="删除该用户？" description="会同时清理该用户会话、积分、额度记录、生成日志和服务器副本。" okText="删除" cancelText="取消" onConfirm={() => void deleteUser(record.id)}>
+                                <Button size="small" danger loading={updatingUserId === record.id} icon={<Trash2 className="size-3.5" />} aria-label={`删除用户 ${record.displayName}`} title={`删除用户 ${record.displayName}`} />
+                            </Popconfirm>
+                        ) : null}
+                    </Space>
+                );
+            },
         },
     ];
 

@@ -1,5 +1,9 @@
 .git
 .idea
+.agents
+.codex
+.tmp
+.trellis
 data
 docs/.next
 docs/.source
@@ -7,8 +11,11 @@ docs/node_modules
 docs/out
 web/.next
 web/.data
+web/.e2e-artifacts
+web/.tmp
 web/node_modules
 web/out
+web/playwright-report
 *.log
 .env*
 !.env.example
