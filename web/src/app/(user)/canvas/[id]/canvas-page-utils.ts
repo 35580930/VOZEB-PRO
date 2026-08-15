@@ -181,12 +181,31 @@ export function generationReferenceUrls(context: { referenceImages: ReferenceIma
 export async function resolveMetadataReferences(metadata: CanvasNodeMetadata) {
     if (metadata.generationType !== "edit") return [];
     if (!metadata.references?.length) return null;
+
     const references = await Promise.all(
         metadata.references.map(async (url, index) => {
-            const dataUrl = url.startsWith("image:") ? await resolveImageUrl(url, "") : url;
-            return dataUrl ? { id: `${index}`, name: `reference-${index}.png`, type: "image/png", dataUrl, storageKey: url.startsWith("image:") ? url : undefined } : null;
+            const value = url.trim();
+            const legacyStorageKey = value.startsWith("image:");
+            const serverStorageKey = /^(?:temporary|permanent)\//.test(value);
+
+            const dataUrl = legacyStorageKey
+                ? await resolveImageUrl(value, "")
+                : serverStorageKey
+                  ? await resolveStoredImageDataUrl(value, "")
+                  : value;
+
+            return dataUrl
+                ? {
+                      id: `${index}`,
+                      name: `reference-${index}.png`,
+                      type: "image/png",
+                      dataUrl,
+                      storageKey: legacyStorageKey || serverStorageKey ? value : undefined,
+                  }
+                : null;
         }),
     );
+
     return references.every(Boolean) ? (references as ReferenceImage[]) : null;
 }
 
