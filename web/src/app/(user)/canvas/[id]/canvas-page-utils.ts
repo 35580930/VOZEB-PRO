@@ -3,6 +3,7 @@
 import { browserReadableMediaUrl } from "@/lib/browser-media-url";
 import { readImageMeta } from "@/lib/image-utils";
 import { resolveImageUrl, resolveStoredImageDataUrl, uploadImage, type UploadedImage } from "@/services/image-storage";
+import { parseServerMediaUrl } from "@/services/server-media-storage";
 import { resolveMediaUrl, type UploadedFile } from "@/services/file-storage";
 import { defaultConfig, type AiConfig } from "@/stores/use-config-store";
 import type { ReferenceImage } from "@/types/image";
@@ -33,19 +34,65 @@ export async function uploadCanvasImage(input: string | Blob): Promise<UploadedI
     return { ...image, url: await resolveStoredImageDataUrl(image.storageKey, image.url) };
 }
 
-export async function uploadGeneratedCanvasImage(url: string, remoteFallback = "", serverFallback = ""): Promise<UploadedImage> {
+export async function uploadGeneratedCanvasImage(
+    url: string,
+    remoteFallback = "",
+    serverFallback = "",
+    persisted?: {
+        width?: number;
+        height?: number;
+        bytes?: number;
+        mimeType?: string;
+    },
+): Promise<UploadedImage> {
     const remoteUrl = isRemoteGeneratedUrl(remoteFallback) ? remoteFallback : isRemoteGeneratedUrl(url) ? url : "";
     const serverUrl = isServerGeneratedUrl(serverFallback) ? serverFallback : isServerGeneratedUrl(url) ? url : "";
+
+    // Image generation tasks already persist successful outputs on the server.
+    // Reuse that canonical generation asset directly instead of downloading,
+    // HEAD-checking and uploading the same image again from the browser.
+    const existing = serverUrl ? parseServerMediaUrl(serverUrl) : null;
+    const width = Number(persisted?.width) || 0;
+    const height = Number(persisted?.height) || 0;
+
+    if (
+        existing?.scope === "generation" &&
+        existing.storageKey.startsWith("permanent/") &&
+        width > 0 &&
+        height > 0
+    ) {
+        return {
+            url: existing.url,
+            storageKey: existing.storageKey,
+            remoteUrl: remoteUrl || undefined,
+            serverUrl: existing.url,
+            width,
+            height,
+            bytes: Math.max(0, Number(persisted?.bytes) || 0),
+            mimeType: persisted?.mimeType || "image/png",
+        };
+    }
+
+    // Compatibility fallback for legacy, temporary, data/blob or remote-only results.
     const localUrl = isLocalGeneratedUrl(url) ? url : "";
     const candidates = Array.from(new Set([serverUrl, localUrl, url, remoteUrl].filter(Boolean)));
+
+    let lastError: unknown;
+
     for (const candidate of candidates) {
         try {
             const image = await uploadCanvasImage(candidate);
-            return { ...image, remoteUrl: remoteUrl || undefined, serverUrl: image.serverUrl || serverUrl || image.url };
-        } catch {
-            // Try the next fallback source.
+            return {
+                ...image,
+                remoteUrl: remoteUrl || undefined,
+                serverUrl: image.serverUrl || serverUrl || image.url,
+            };
+        } catch (error) {
+            lastError = error;
         }
     }
+
+    console.error("Canvas generated image persistence failed", lastError);
     throw new Error("图片保存到服务器失败");
 }
 

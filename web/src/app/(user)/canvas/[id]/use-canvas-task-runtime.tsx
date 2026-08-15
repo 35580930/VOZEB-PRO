@@ -234,7 +234,16 @@ export function useCanvasTaskRuntime({ state }: { state: CanvasPageState }) {
     const completeImageTask = useCallback(async (nodeId: string, generationConfig: AiConfig, task: NonNullable<CanvasNodeMetadata["imageTask"]> | ImageGenerationTask, controller: AbortController, prompt?: string) => {
         const result = await waitForImageGenerationTask(generationConfig, task, { signal: controller.signal });
         const outputs = result.results?.length ? result.results : [result];
-        const uploaded = await Promise.all(outputs.map((image) => uploadGeneratedCanvasImage(image.dataUrl, image.remoteUrl, image.serverUrl)));
+        const uploaded = await Promise.all(
+            outputs.map((image) =>
+                uploadGeneratedCanvasImage(
+                    image.dataUrl,
+                    image.remoteUrl,
+                    image.serverUrl,
+                    image,
+                ),
+            ),
+        );
         setNodes((prev) =>
             applyCanvasImageTaskResults(prev, {
                 nodeId,
