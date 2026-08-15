@@ -21,7 +21,7 @@ export function UpdateCenterPanel() {
                     <div className="overflow-hidden rounded-3xl border border-stone-200/80 bg-stone-950 text-white shadow-sm shadow-stone-950/10 dark:border-stone-800 dark:bg-white dark:text-stone-950">
                         <div className="grid gap-3 p-4 sm:gap-6 sm:p-6 lg:grid-cols-[minmax(0,1fr)_220px]">
                             <div className="min-w-0">
-                                <div className="text-xs font-semibold uppercase tracking-[0.16em] text-white/55 dark:text-stone-500">VOZEB PRO Update</div>
+                                <div className="text-xs font-semibold uppercase tracking-[0.16em] text-white/55 dark:text-stone-500">MOCREAI Update</div>
                                 <h3 className="mt-2 text-2xl font-semibold tracking-normal sm:mt-4 sm:text-3xl">可升级，也可回滚。</h3>
                                 <div className="mt-2 max-w-2xl text-xs leading-5 text-white/68 sm:mt-3 sm:text-sm sm:leading-6 dark:text-stone-600">
                                     商业化部署升级前先确认数据库备份、环境变量和变更日志；服务器安装用户可以在这里集中完成版本检查与资料跳转。

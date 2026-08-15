@@ -30,7 +30,7 @@ export async function GET() {
     const exportedAt = new Date().toISOString();
     const data = await readAdminBackupData();
     const backup = {
-        app: "VOZEB PRO",
+        app: "MOCREAI",
         version: 1,
         backupType: "account-config",
         exportedAt,

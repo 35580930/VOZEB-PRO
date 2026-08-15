@@ -64,16 +64,16 @@ const defaultSite: {
     friendLinks: SiteFriendLink[];
     socials: SiteSocialSettings;
 } = {
-    title: "VOZEB PRO",
+    title: "MOCREAI",
     logoUrl: "/logo.svg",
     seoDescription: "面向 Agent、图片、视频、画布与短剧生产的一体化 AI 创作工作台",
-    footerCopyright: "© 2026 VOZEB PRO. All rights reserved.",
+    footerCopyright: "© 2026 MOCREAI. All rights reserved.",
     termsUrl: "/terms",
     privacyUrl: "/privacy",
     homeShowcaseMode: "random",
     homeShowcaseItems: [],
     friendLinks: [
-        { id: "vozeb-pro-home", label: "VOZEB PRO", url: "https://www.vozeb.com/", enabled: true },
+        { id: "vozeb-pro-home", label: "MOCREAI", url: "https://www.vozeb.com/", enabled: true },
         { id: "qq-vozeb-open-source", label: "VOZEB 开源交流 QQ 群", url: VOZEB_QQ_GROUP_URL, enabled: true },
         { id: "linux-do", label: "Linux.do", url: "https://linux.do/", enabled: true },
     ],
@@ -141,7 +141,7 @@ export default function HomePage() {
     const showcaseCards = homeShowcaseItems;
     const previewItems = promptShowcase.filter((item) => item.coverUrl);
     const hasVerifiedUser = sessionReady && Boolean(user);
-    const siteTitle = site.title || "VOZEB PRO";
+    const siteTitle = site.title || "MOCREAI";
 
     const moveNavIndicator = useCallback((index: number) => {
         const item = navItemRefs.current[index];
