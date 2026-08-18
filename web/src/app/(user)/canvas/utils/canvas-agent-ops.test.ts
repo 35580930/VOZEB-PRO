@@ -108,4 +108,20 @@ describe("Agent 产物排版", () => {
         expect(deleted.connections).toEqual([]);
         expect(deleted.selectedNodeIds).toEqual([]);
     });
+    it("places a derived text node directly after its source image", () => {
+        const selected: CanvasAgentSnapshot = {
+            ...snapshot,
+            nodes: [{ id: "reference", type: CanvasNodeType.Image, title: "参考图", position: { x: 120, y: 80 }, width: 340, height: 240 }],
+            selectedNodeIds: ["reference"],
+        };
+        const created = applyCanvasAgentOps(selected, [
+            { type: "add_node", id: "prompt", nodeType: CanvasNodeType.Text, title: "反推提示词", relativeToNodeId: "reference", metadata: { agentRunId: "run", content: "full prompt", status: "success" } },
+            { type: "connect_nodes", fromNodeId: "reference", toNodeId: "prompt" },
+            { type: "select_nodes", ids: ["prompt"] },
+        ]);
+
+        expect(created.nodes.find((node) => node.id === "prompt")).toMatchObject({ position: { x: 496, y: 80 }, metadata: { content: "full prompt" } });
+        expect(created.connections).toEqual([expect.objectContaining({ fromNodeId: "reference", toNodeId: "prompt" })]);
+        expect(created.selectedNodeIds).toEqual(["prompt"]);
+    });
 });

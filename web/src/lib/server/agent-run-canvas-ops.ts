@@ -12,7 +12,8 @@ const ROW_GAP = 300;
 
 export function planToOps(plan: AgentPlan, tasks: AgentRunTask[], runId: string, snapshot: unknown) {
     const snapshotNodeMap = canvasSnapshotNodes(snapshot);
-    if (tasks.length === 1 && tasks[0]?.type === "text" && tasks[0].targetNodeId && snapshotNodeMap.get(tasks[0].targetNodeId)?.type === "text") return [];
+    const singleTextTask = tasks.length === 1 && tasks[0]?.type === "text" ? tasks[0] : undefined;
+    if (singleTextTask && ((singleTextTask.targetNodeId && snapshotNodeMap.get(singleTextTask.targetNodeId)?.type === "text") || derivedTextSourceNodeId(singleTextTask))) return [];
     const briefId = `brief-${runId}`;
     const brandId = `brand-${runId}`;
     const ops: Array<Record<string, unknown>> = [
@@ -81,6 +82,7 @@ export function planToOps(plan: AgentPlan, tasks: AgentRunTask[], runId: string,
 export function taskCanvasEventOps(runId: string, index: number, task: AgentRunTask, eventType: string, childTaskId?: string) {
     if (eventType === "task.completed") return taskResultOps(runId, index, task);
     if (eventType === "task.child.completed" || eventType === "task.child.failed") return taskChildResultOps(runId, index, task, eventType, childTaskId);
+    if (derivedTextSourceNodeId(task)) return { nodeIds: [], ops: [] };
     if (!new Set(["task.running", "task.created", "task.failed"]).has(eventType)) return null;
     const taskNodeId = agentCanvasTaskNodeId(runId, index);
     const nodeIds = task.type === "text" ? [] : agentCanvasOutputNodeIds(runId, index, task);
@@ -144,6 +146,7 @@ function taskChildResultOps(runId: string, index: number, task: AgentRunTask, ev
 export function cancelledRunCanvasOps(runId: string, tasks: AgentRunTask[]) {
     return tasks.flatMap((task, index) => {
         if (task.status !== "cancelled") return [];
+        if (derivedTextSourceNodeId(task)) return [];
         const outputNodeIds = task.type === "text" ? [] : agentCanvasOutputNodeIds(runId, index, task);
         return [
             {
@@ -171,6 +174,26 @@ export function taskResultOps(runId: string, index: number, task: AgentRunTask) 
             ops: [
                 { type: "update_node", id: task.targetNodeId, metadata: { content, prompt: content, status: "success", agentRunId: runId } },
                 { type: "select_nodes", ids: nodeIds },
+            ],
+        };
+    }
+    const sourceNodeId = derivedTextSourceNodeId(task);
+    if (sourceNodeId) {
+        const content = String(results[0]?.content || "").trim();
+        const outputNodeId = `output-${runId}-${index}-0`;
+        return {
+            nodeIds: [outputNodeId],
+            ops: [
+                {
+                    type: "add_node",
+                    id: outputNodeId,
+                    nodeType: "text",
+                    title: task.title,
+                    relativeToNodeId: sourceNodeId,
+                    metadata: { content, status: "success", agentRunId: runId, agentTaskId: task.id, agentTaskType: task.type },
+                },
+                { type: "connect_nodes", fromNodeId: sourceNodeId, toNodeId: outputNodeId },
+                { type: "select_nodes", ids: [outputNodeId] },
             ],
         };
     }
@@ -210,6 +233,10 @@ export function taskResultOps(runId: string, index: number, task: AgentRunTask) 
     ops.push({ type: "update_node", id: taskNodeId, metadata: { agentTaskStatus: "completed", agentTaskOutputNodeIds: nodeIds, agentTaskAttempts: task.attempts, agentTaskError: "" } });
     if (task.type === "text" && nodeIds.length) ops.push({ type: "select_nodes", ids: nodeIds });
     return { nodeIds, ops };
+}
+
+function derivedTextSourceNodeId(task: AgentRunTask) {
+    return task.type === "text" ? task.references?.find((reference) => reference.type === "image" && reference.nodeId)?.nodeId : undefined;
 }
 
 function outputMetadata(runId: string, task: AgentRunTask, status: "loading" | "error") {

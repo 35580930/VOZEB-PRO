@@ -276,4 +276,31 @@ describe("Canvas Agent 事件流", () => {
 
         expect(FakeEventSource.created).toBe(0);
     });
+    it("does not duplicate image-derived text in chat after adding it to the Canvas", async () => {
+        vi.stubGlobal("EventSource", FakeEventSource);
+        const messages: string[] = [];
+        const promise = watchCanvasAgentRun("run", {
+            onPlan: () => undefined,
+            onAssistant: (text) => messages.push(text),
+            onStage: () => undefined,
+            onPaused: () => undefined,
+            onOps: () => undefined,
+        });
+
+        FakeEventSource.instance.emit("task.completed", {
+            data: {
+                message: "「反推提示词」已完成：\nfull cinematic character prompt",
+                outputNodeIds: ["output-run-0-0"],
+                type: "text",
+                ops: [
+                    { type: "add_node", id: "output-run-0-0", nodeType: "text", relativeToNodeId: "selected-image" },
+                    { type: "connect_nodes", fromNodeId: "selected-image", toNodeId: "output-run-0-0" },
+                ],
+            },
+        });
+        FakeEventSource.instance.emit("run.completed", { data: { reply: "提示词已生成并添加到画布。" } });
+        await promise;
+
+        expect(messages).toEqual(["提示词已生成并添加到画布。"]);
+    });
 });

@@ -22,10 +22,10 @@ import { videoFrameAssetIds, type VideoReferenceRole } from "@/lib/video-referen
 import type { AgentFunctionCallResult } from "./agent-function-call";
 import { agentSurfaceImageSize, canvasReferenceContext, canvasReferenceSupportsTask, canvasSnapshotNodes, isMediaReferenceType, resolveAgentTaskRatio, resolveCanvasTaskTargetNodeId, selectedCanvasReferenceNodes } from "./agent-run-task-input";
 import { hasSystemAiCharge, readSystemAiBilling, systemAiBillingHeaders } from "./system-ai-billing";
-import { acceptsMediaReference, mergeTaskReferences, taskImageUrls, taskReferences, textConstraintInstruction } from "./agent-run-execution-helpers";
+import { acceptsMediaReference, buildAgentTextTaskMessages, mergeTaskReferences, taskImageUrls, taskReferences, textConstraintInstruction } from "./agent-run-execution-helpers";
 
 export { planToOps, taskResultOps } from "./agent-run-canvas-ops";
-export { acceptsMediaReference, mergeTaskReferences, requestedTextLimit, reviewCorrection, taskImageUrls, taskReferences, taskResultItems, textConstraintInstruction } from "./agent-run-execution-helpers";
+export { acceptsMediaReference, buildAgentTextTaskMessages, mergeTaskReferences, requestedTextLimit, reviewCorrection, taskImageUrls, taskReferences, taskResultItems, textConstraintInstruction } from "./agent-run-execution-helpers";
 
 class AgentChildTaskTerminalError extends Error {}
 class AgentChildTaskDeferredError extends Error {}
@@ -163,6 +163,7 @@ export function normalizeTasks(
     const nodes = canvasSnapshotNodes(snapshot);
     const selectedNodeIds = new Set(selectedCanvasNodeIds(snapshot).filter((id) => nodes.has(id)));
     const selectedCanvasReferences = surface === "canvas" ? selectedCanvasReferenceNodes(snapshot) : [];
+    const allowsTextImageReference = skills.some((skill) => skill.requiresReference);
     const assets = new Map(referencedAssets.map((asset) => [asset.id, asset]));
     const referenceAliases = creativeAssetReferenceAliases(
         referencedAssets,
@@ -175,7 +176,7 @@ export function normalizeTasks(
         const preferredQuality = item.type === "image" ? generationPreferences?.image?.quality : item.type === "video" ? generationPreferences?.video?.quality : undefined;
         const targetNodeId = surface === "canvas" ? resolveCanvasTaskTargetNodeId(item.targetNodeId, item.type, selectedNodeIds, nodes) : undefined;
         const target = targetNodeId ? nodes.get(targetNodeId) : undefined;
-        const canvasReferences = selectedCanvasReferences.filter((reference) => canvasReferenceSupportsTask(reference.type, item.type));
+        const canvasReferences = selectedCanvasReferences.filter((reference) => canvasReferenceSupportsTask(reference.type, item.type) || (item.type === "text" && reference.type === "image" && allowsTextImageReference));
         const frameIds = item.type === "video" ? videoFrameAssetIds(generationPreferences?.video) : [];
         const frameIdSet = new Set(frameIds);
         const explicitFrameAssets = resolveTaskReferences(frameIds, assets, item.type);
@@ -641,6 +642,7 @@ export async function dispatchTask(task: AgentRunTask, origin: string, cookie: s
     };
     const path = task.type === "image" ? "/api/image-tasks" : task.type === "video" ? "/api/video-generation-tasks" : task.type === "audio" ? "/api/audio-tasks" : "/api/text-tasks";
     const references = taskReferences(task);
+    const textImageUrls = task.type === "text" ? await Promise.all(references.filter((reference) => reference.type === "image").map((reference) => resolveAgentTextImageUrl(reference.url, origin, cookie))) : [];
     const source = run.surface === "canvas" ? "canvas" : run.surface === "drama" ? "drama" : "agent";
     const context = { conversationId: run.conversationId, runId: run.id, surface: run.surface, projectId: run.projectId, parentTaskId: task.id, attemptNo: attempt, clientRequestId: `${run.clientRequestId}:${task.id}:${attempt}` };
     const body =
@@ -658,7 +660,7 @@ export async function dispatchTask(task: AgentRunTask, origin: string, cookie: s
               ? { config, prompt: task.prompt, references: references.map((item) => ({ type: item.type, url: item.url, ...(item.role ? { role: item.role } : {}) })), source, context }
               : task.type === "audio"
                 ? { config, prompt: task.prompt, source, context }
-                : { config, messages: [{ role: "user", content: task.prompt }] };
+                : { config, messages: buildAgentTextTaskMessages(task, textImageUrls) };
     const copies = agentTaskCopies(task.type, task.count);
     const initialChildren = normalizeChildTasks(task);
     const outcomes = await mapWithConcurrency(copies, settings.generationConcurrency[task.type === "image" ? "image" : task.type === "video" ? "video" : task.type === "audio" ? "audio" : "text"], async (index) => {
@@ -727,6 +729,18 @@ async function mapWithConcurrency<R>(count: number, concurrency: number, worker:
         }),
     );
     return results;
+}
+
+async function resolveAgentTextImageUrl(value: string, origin: string, cookie: string) {
+    const url = value.trim();
+    if (/^data:image\//i.test(url) || /^https:\/\//i.test(url)) return url;
+    if (!url.startsWith("/api/")) throw new Error("画布参考图地址无效");
+    const response = await fetchInternalApi(`${origin}${url}`, { headers: runtimeRequestHeaders(cookie), cache: "no-store" });
+    const contentType = response.headers.get("content-type")?.split(";")[0] || "";
+    if (!response.ok || !contentType.startsWith("image/")) throw new Error("无法读取画布参考图");
+    const bytes = Buffer.from(await response.arrayBuffer());
+    if (!bytes.length) throw new Error("画布参考图为空");
+    return `data:${contentType};base64,${bytes.toString("base64")}`;
 }
 
 function normalizeChildTasks(task: AgentRunTask): AgentRunChildTask[] {

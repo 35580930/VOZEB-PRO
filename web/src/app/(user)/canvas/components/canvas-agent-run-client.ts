@@ -126,7 +126,8 @@ export function watchCanvasAgentRun(runId: string, handlers: RunHandlers, option
             const payload = read<{ data?: { message?: string; title?: string; outputNodeIds?: string[]; type?: "text" | "image" | "video" | "audio"; ops?: CanvasAgentOp[] } }>(event);
             if (payload.data?.ops?.length) handlers.onOps(payload.data.ops);
             latestOutput = { nodeIds: payload.data?.outputNodeIds, taskType: payload.data?.type };
-            handlers.onAssistant(payload.data?.message || `「${payload.data?.title || "创作任务"}」已完成，正在继续处理。`, latestOutput);
+            const derivedTextNode = payload.data?.type === "text" && payload.data.ops?.some((op) => op.type === "add_node" && Boolean(op.relativeToNodeId));
+            if (!derivedTextNode) handlers.onAssistant(payload.data?.message || `「${payload.data?.title || "创作任务"}」已完成，正在继续处理。`, latestOutput);
         });
         listen("task.failed", (event) => {
             const payload = read<{ data?: { taskId?: string; title?: string; error?: string; ops?: CanvasAgentOp[] } }>(event);

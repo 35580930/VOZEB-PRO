@@ -208,7 +208,8 @@ export function prepareFailedAgentTaskRetry(run: AgentRun, task: AgentRunTask, s
     const selected = new Set(selectedCanvasNodeIds(run.snapshot).filter((id) => nodes.has(id)));
     const targetNodeId = resolveCanvasTaskTargetNodeId(task.targetNodeId, task.type, selected, nodes);
     const target = targetNodeId ? nodes.get(targetNodeId) : undefined;
-    const selectedReferences = selectedCanvasReferenceNodes(run.snapshot).filter((reference) => canvasReferenceSupportsTask(reference.type, task.type));
+    const retainedImageNodeIds = new Set(task.references?.filter((reference) => reference.type === "image" && reference.nodeId).map((reference) => reference.nodeId));
+    const selectedReferences = selectedCanvasReferenceNodes(run.snapshot).filter((reference) => canvasReferenceSupportsTask(reference.type, task.type) || (task.type === "text" && reference.type === "image" && retainedImageNodeIds.has(reference.nodeId)));
     const references = selectedReferences.length
         ? (selectedReferences.map((reference) => ({ nodeId: reference.nodeId, url: reference.url, type: reference.type })) satisfies AgentRunReference[])
         : target?.url && isMediaReferenceType(target.type)

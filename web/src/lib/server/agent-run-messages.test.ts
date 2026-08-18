@@ -43,6 +43,16 @@ describe("Agent 返回文案", () => {
         expect(agentRunCompletionReply(run)).toBe("声创未来");
     });
 
+    it("keeps image-derived Canvas text completion concise", () => {
+        const reversePrompt = task({
+            title: "反推提示词",
+            result: { content: "full cinematic character prompt" },
+            references: [{ nodeId: "selected-image", type: "image", url: "/api/reference-assets/selected.webp" }],
+        });
+
+        expect(agentRunCompletionReply(agentRun({ tasks: [reversePrompt] }))).toBe("提示词已生成并添加到画布。");
+    });
+
     it("recognizes conversational concise requests and enforces the requested character limit", () => {
         const textTask = task({ result: { content: "科技连接无限未来" } });
         const run = agentRun({ prompt: "直接给我6字以内答案，别啰嗦", tasks: [textTask] });

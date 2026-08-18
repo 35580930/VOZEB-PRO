@@ -11,6 +11,7 @@ export function agentTaskCompletionMessage(task: AgentRunTask, surface: AgentRun
 export function agentRunCompletionReply(run: AgentRun) {
     const completed = run.tasks.filter((task) => task.status === "completed");
     if (!completed.length && run.projectHandoff) return "项目资料已整理完成。";
+    if (run.surface === "canvas" && completed.length === 1 && completed[0].type === "text" && completed[0].references?.some((reference) => reference.type === "image" && reference.nodeId)) return "提示词已生成并添加到画布。";
     if (wantsTextOnly(run.prompt) && completed.length === 1 && completed[0].type === "text") {
         return enforceRequestedLength(conciseTextResult(resultSummary(completed[0].result)), run.prompt) || `「${completed[0].title}」已完成。`;
     }

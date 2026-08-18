@@ -5,7 +5,7 @@ import { CanvasNodeType, type CanvasConnection, type CanvasNodeData, type Canvas
 import { fitNodeAspectRatio, nodeSizeFromRatio } from "./canvas-node-size";
 
 export type CanvasAgentOp =
-    | { type: "add_node"; id?: string; nodeType?: CanvasNodeType; title?: string; position?: { x: number; y: number }; x?: number; y?: number; width?: number; height?: number; metadata?: CanvasNodeMetadata }
+    | { type: "add_node"; id?: string; nodeType?: CanvasNodeType; title?: string; position?: { x: number; y: number }; relativeToNodeId?: string; x?: number; y?: number; width?: number; height?: number; metadata?: CanvasNodeMetadata }
     | { type: "update_node"; id: string; patch?: Partial<CanvasNodeData>; metadata?: CanvasNodeMetadata }
     | { type: "delete_node"; id?: string; ids?: string[]; nodeType?: CanvasNodeType }
     | { type: "delete_connections"; id?: string; ids?: string[]; all?: boolean }
@@ -42,7 +42,8 @@ export function applyCanvasAgentOps(snapshot: CanvasAgentSnapshot, ops?: CanvasA
                 if (!isAgentNode) selectedNodeIds = [existing.id];
                 return;
             }
-            const requestedPosition = op.position || { x: op.x ?? index * 36, y: op.y ?? index * 36 };
+            const relativeNode = op.relativeToNodeId ? nodes.find((node) => node.id === op.relativeToNodeId) : undefined;
+            const requestedPosition = op.position || (relativeNode ? { x: relativeNode.position.x + relativeNode.width + 36, y: relativeNode.position.y } : { x: op.x ?? index * 36, y: op.y ?? index * 36 });
             const metadata = { ...spec.metadata, ...op.metadata };
             const naturalWidth = metadata.naturalWidth;
             const naturalHeight = metadata.naturalHeight;

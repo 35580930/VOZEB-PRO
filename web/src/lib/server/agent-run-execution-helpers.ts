@@ -1,6 +1,17 @@
 import type { CreativeReview } from "@/lib/creative-agent-contract";
 import type { CreativeAsset } from "@/lib/creative-runtime-contract";
 import type { AgentRunReference, AgentRunTask } from "@/lib/server/agent-run-store";
+import type { AiTextMessage } from "@/types/ai";
+
+export function buildAgentTextTaskMessages(task: AgentRunTask, imageUrls: string[]): AiTextMessage[] {
+    if (!imageUrls.length) return [{ role: "user", content: task.prompt }];
+    return [
+        {
+            role: "user",
+            content: [{ type: "text", text: task.prompt }, ...imageUrls.map((url) => ({ type: "image_url" as const, image_url: { url } }))],
+        },
+    ];
+}
 
 export function textConstraintInstruction(prompt: string, type: AgentRunTask["type"]) {
     if (type !== "text") return "";

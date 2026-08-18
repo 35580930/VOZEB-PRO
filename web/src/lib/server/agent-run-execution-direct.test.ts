@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
-import { directAgentPlan, normalizeTasks, planToOps, readFunctionCallResult, taskResultOps } from "./agent-run-execution";
-import { agentSurfaceImageSize, normalizeCanvasPlanForSelection, resolveAgentTaskRatio } from "./agent-run-task-input";
+import { buildAgentTextTaskMessages, directAgentPlan, normalizeTasks, planToOps, readFunctionCallResult, taskResultOps } from "./agent-run-execution";
+import { agentSurfaceImageSize, normalizeCanvasPlanForSelection, prepareFailedAgentTaskRetry, resolveAgentTaskRatio } from "./agent-run-task-input";
 
 describe("directAgentPlan", () => {
     it("使用用户指定的媒体模型创建单任务计划", () => {
@@ -301,6 +301,58 @@ describe("directAgentPlan", () => {
             ops: [
                 { type: "update_node", id: "prompt-one", metadata: { content: "一只紫色毛发的小狗在草地上", prompt: "一只紫色毛发的小狗在草地上", status: "success", agentRunId: "run" } },
                 { type: "select_nodes", ids: ["prompt-one"] },
+            ],
+        });
+    });
+    it("选中图片并使用参考型文本 Skill 时只从原图延伸反推提示词节点", () => {
+        const plan = {
+            intent: "generation",
+            objective: "反推当前图片提示词",
+            reply: "开始反推",
+            skillIds: ["reverse-prompt"],
+            decisions: [],
+            foundation: { complexity: "simple", brief: { objective: "反推当前图片提示词" }, direction: { summary: "忠实还原画面" } },
+            deliverables: [{ id: "reverse", title: "反推提示词", type: "text", model: "text-pro", prompt: "只返回可复用的完整英文提示词", count: 1, dependencies: [] }],
+        };
+        const snapshot = {
+            selectedNodeIds: ["selected-image"],
+            nodes: [{ id: "selected-image", type: "image", title: "人物参考图", metadata: { url: "/api/reference-assets/selected.webp" } }],
+        };
+        const skills = [{ id: "reverse-prompt", name: "反推小能手", description: "反推图片提示词", instructions: "分析参考图片并只输出完整提示词", enabled: true, keywords: ["反推"], workspaces: ["canvas"], requiresReference: true }];
+
+        const [task] = normalizeTasks(plan as never, skills as never, generationSettings() as never, snapshot, "反推", "canvas", []);
+
+        expect(task).toMatchObject({
+            type: "text",
+            targetNodeId: undefined,
+            references: [{ nodeId: "selected-image", type: "image", url: "/api/reference-assets/selected.webp" }],
+        });
+        expect(buildAgentTextTaskMessages(task, ["data:image/webp;base64,cGljdHVyZQ=="])).toEqual([
+            {
+                role: "user",
+                content: [
+                    { type: "text", text: task.prompt },
+                    { type: "image_url", image_url: { url: "data:image/webp;base64,cGljdHVyZQ==" } },
+                ],
+            },
+        ]);
+        expect(prepareFailedAgentTaskRetry({ surface: "canvas", snapshot } as never, { ...task, status: "failed" } as never, generationSettings() as never)).toMatchObject({
+            references: [{ nodeId: "selected-image", type: "image", url: "/api/reference-assets/selected.webp" }],
+        });
+        expect(planToOps(plan as never, [task], "run", snapshot)).toEqual([]);
+        expect(taskResultOps("run", 0, { ...task, status: "completed", attempts: 1, result: { content: "full cinematic character prompt" } })).toEqual({
+            nodeIds: ["output-run-0-0"],
+            ops: [
+                {
+                    type: "add_node",
+                    id: "output-run-0-0",
+                    nodeType: "text",
+                    title: "反推提示词",
+                    relativeToNodeId: "selected-image",
+                    metadata: { content: "full cinematic character prompt", status: "success", agentRunId: "run", agentTaskId: "reverse", agentTaskType: "text" },
+                },
+                { type: "connect_nodes", fromNodeId: "selected-image", toNodeId: "output-run-0-0" },
+                { type: "select_nodes", ids: ["output-run-0-0"] },
             ],
         });
     });
