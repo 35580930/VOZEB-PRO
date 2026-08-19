@@ -15,14 +15,15 @@ export function jsonImageReferenceRequestUrl(reference: ImageTaskReference, orig
 }
 
 export async function publicImageReferenceRequestUrl(reference: ImageTaskReference, origin: string, publicOrigin: string, context: { ownerUserId: string; taskId: string }) {
-    const candidates = referenceRequestUrlCandidates(reference, origin).filter((value) => isExternalPublicMediaUrl(value));
-    if (candidates.length) return candidates[0];
-    const localCandidate = referenceRequestUrlCandidates(reference, origin).find((value) => /\/api\/reference-assets\//.test(value));
+    const requestCandidates = referenceRequestUrlCandidates(reference, origin);
+    const localCandidate = requestCandidates.find((value) => isLocalReferenceAssetUrl(value, origin, publicOrigin));
     if (localCandidate) {
         const signedUrl = signReferenceAssetInputUrl(localCandidate, publicOrigin);
         if (signedUrl !== localCandidate) return signedUrl;
         throw new Error("站内参考素材签名不可用，请配置 VOZEB_PRO_ENCRYPTION_KEY");
     }
+    const candidates = requestCandidates.filter((value) => isExternalPublicMediaUrl(value));
+    if (candidates.length) return candidates[0];
 
     const dataUrl = (reference.dataUrl || "").trim();
     if (!/^data:image\//i.test(dataUrl)) throw new Error("\u53c2\u8003\u56fe\u9700\u8981\u516c\u7f51\u56fe\u7247 URL\uff0c\u8bf7\u91cd\u65b0\u4e0a\u4f20\u53c2\u8003\u56fe");
@@ -32,6 +33,16 @@ export async function publicImageReferenceRequestUrl(reference: ImageTaskReferen
     const signedUrl = createSignedReferenceAssetUrl(asset.token, publicOrigin);
     if (!signedUrl) throw new Error("站内参考素材签名不可用，请配置 VOZEB_PRO_ENCRYPTION_KEY");
     return asset.url || signedUrl;
+}
+
+function isLocalReferenceAssetUrl(value: string, origin: string, publicOrigin: string) {
+    try {
+        const url = new URL(value, origin || publicOrigin);
+        if (!url.pathname.startsWith("/api/reference-assets/")) return false;
+        return [origin, publicOrigin].some((candidate) => normalizePublicOrigin(candidate) === url.origin);
+    } catch {
+        return false;
+    }
 }
 
 export function referenceRequestUrlCandidates(reference: ImageTaskReference, origin = "") {
