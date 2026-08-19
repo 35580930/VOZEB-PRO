@@ -761,7 +761,7 @@ export function linkAgentChildTask(run: AgentRun, task: AgentRunTask, taskId: st
 }
 
 export function directCanvasTextContent(task: AgentRunTask) {
-    if (task.type !== "text") return null;
+    if (task.type !== "text" || taskReferences(task).length) return null;
     const prompt = task.prompt.split(/\n\n(?:严格输出要求|基于画布已有节点|请保持与以下已完成产物一致)：/u)[0]?.trim() || "";
     if (!/(?:文字|文本|内容|文案|标题).{0,16}(?:节点|卡片|便签)|(?:节点|卡片|便签).{0,16}(?:文字|文本|内容|文案|标题)|画布/u.test(prompt)) return null;
     const quoted = prompt.match(/(?:内容|文字|文本|文案|标题)[^“"「『'`]{0,18}(?:写(?:着|成)?|写为|为|是|设置为|设为|改为|改成|填(?:写)?为)[:：\s]*[“"「『'`]([^”"」』'`]{1,500})[”"」』'`]/u);

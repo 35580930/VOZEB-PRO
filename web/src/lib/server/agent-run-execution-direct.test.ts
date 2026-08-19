@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { buildAgentTextTaskMessages, directAgentPlan, normalizeTasks, planToOps, readFunctionCallResult, taskResultOps } from "./agent-run-execution";
+import { buildAgentTextTaskMessages, directAgentPlan, directCanvasTextContent, normalizeTasks, planToOps, readFunctionCallResult, taskResultOps } from "./agent-run-execution";
 import { agentSurfaceImageSize, normalizeCanvasPlanForSelection, prepareFailedAgentTaskRetry, resolveAgentTaskRatio } from "./agent-run-task-input";
 
 describe("directAgentPlan", () => {
@@ -304,6 +304,15 @@ describe("directAgentPlan", () => {
             ],
         });
     });
+    it("带图片引用的画布文本任务不会把占位文案直接写入结果", () => {
+        expect(
+            directCanvasTextContent({
+                type: "text",
+                prompt: "在当前图片旁创建文本节点，内容为“那段可复制的英文 Prompt”",
+                references: [{ nodeId: "selected-image", type: "image", url: "/api/reference-assets/selected.webp" }],
+            } as never),
+        ).toBeNull();
+    });
     it("选中图片并使用参考型文本 Skill 时只从原图延伸反推提示词节点", () => {
         const plan = {
             intent: "generation",
@@ -327,6 +336,7 @@ describe("directAgentPlan", () => {
             targetNodeId: undefined,
             references: [{ nodeId: "selected-image", type: "image", url: "/api/reference-assets/selected.webp" }],
         });
+        expect(task.prompt).toContain("分析参考图片并只输出完整提示词");
         expect(buildAgentTextTaskMessages(task, ["data:image/webp;base64,cGljdHVyZQ=="])).toEqual([
             {
                 role: "user",
