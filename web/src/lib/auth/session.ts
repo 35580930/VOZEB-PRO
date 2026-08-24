@@ -148,13 +148,17 @@ export function serializePublicSettings(settings: AuthSettings) {
                 enabled: true,
                 bindings: model.bindings
                     .filter((binding) => binding.enabled)
-                    .map((binding) => ({
-                        id: binding.id,
-                        channelId: binding.channelId,
-                        upstreamModel: binding.upstreamModel,
-                        enabled: true,
-                        priority: binding.priority,
-                    })),
+                    .map((binding) => {
+                        const capabilityProfile = publicCapabilityProfile(binding.capabilityProfile);
+                        return {
+                            id: binding.id,
+                            channelId: binding.channelId,
+                            upstreamModel: binding.upstreamModel,
+                            enabled: true,
+                            priority: binding.priority,
+                            ...(capabilityProfile ? { capabilityProfile } : {}),
+                        };
+                    }),
             })),
         systemChannels: settings.systemChannels
             .filter((channel) => channel.enabled)
@@ -169,4 +173,17 @@ export function serializePublicSettings(settings: AuthSettings) {
                 hasApiKey: Boolean(channel.apiKey),
             })),
     };
+}
+
+function publicCapabilityProfile(profile: AuthSettings["logicalModels"][number]["bindings"][number]["capabilityProfile"]) {
+    if (!profile) return undefined;
+    const result = {
+        aspectRatios: profile.aspectRatios?.slice(),
+        resolutions: profile.resolutions?.slice(),
+        durationSeconds: profile.durationSeconds?.slice(),
+        minDurationSeconds: profile.minDurationSeconds,
+        maxDurationSeconds: profile.maxDurationSeconds,
+        maxBatchSize: profile.maxBatchSize,
+    };
+    return Object.values(result).some((value) => value !== undefined && (!Array.isArray(value) || value.length)) ? result : undefined;
 }

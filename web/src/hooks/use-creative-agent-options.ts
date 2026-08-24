@@ -6,6 +6,7 @@ import type { CreativeAgentModelOption } from "@/components/agent/creative-agent
 import type { AgentSkillWorkspace } from "@/lib/auth/store-types";
 import { listAgentSkills, type AgentSkillSummary } from "@/services/api/agent-skills";
 import { modelOptionLabel, selectableModelsByCapability, type AiConfig, useConfigStore } from "@/stores/use-config-store";
+import { creativeModelProfileForLogicalModel } from "@/lib/creative-model-capabilities";
 
 export function useCreativeAgentModels(capabilities: CreativeAgentModelOption["capability"][] = ["image", "video", "audio"]) {
     const config = useConfigStore((state) => state.config);
@@ -14,7 +15,12 @@ export function useCreativeAgentModels(capabilities: CreativeAgentModelOption["c
 }
 
 export function creativeAgentModelsFromConfig(config: AiConfig, capabilities: CreativeAgentModelOption["capability"][] = ["image", "video", "audio"]) {
-    return Array.from(new Set(capabilities)).flatMap((capability) => selectableModelsByCapability(config, capability).map((id) => ({ id, name: modelOptionLabel(config, id), capability })));
+    return Array.from(new Set(capabilities)).flatMap((capability) =>
+        selectableModelsByCapability(config, capability).map((id) => {
+            const capabilityProfile = creativeModelProfileForLogicalModel(config.logicalModels.find((model) => model.id.toLowerCase() === id.toLowerCase()));
+            return { id, name: modelOptionLabel(config, id), capability, ...(capabilityProfile ? { capabilityProfile } : {}) };
+        }),
+    );
 }
 
 export function useCreativeAgentOptions(workspace: AgentSkillWorkspace, capabilities: CreativeAgentModelOption["capability"][] = ["image", "video", "audio"]) {

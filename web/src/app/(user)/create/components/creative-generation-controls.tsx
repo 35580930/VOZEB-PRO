@@ -10,8 +10,9 @@ import { cn } from "@/lib/utils";
 import { creativeComposerPopoverOverflow, type CreativeComposerPopoverPlacement } from "@/components/creative-composer-popover";
 import { creativeComposerToolButtonClass } from "@/components/creative-composer-styles";
 import { CreativeGenerationPreferences as GenerationPreferencesControl, mediaCapabilityLabel, type MediaCapability } from "@/components/creative-generation-preferences";
+import { creativeSelectedModelProfile, type CreativeModelCapabilityOption } from "@/lib/creative-model-capabilities";
 
-export type CreativeModelOption = { id: string; name: string; capability: MediaCapability };
+export type CreativeModelOption = CreativeModelCapabilityOption;
 
 export function CreativeGenerationControls({
     models,
@@ -43,6 +44,7 @@ export function CreativeGenerationControls({
     const modelCapabilities = creationMode === "agent" ? (["image", "video", "audio"] as const).filter((capability) => models.some((model) => model.capability === capability)) : [creationMode];
     const activeCapability = creationMode === "agent" ? (modelCapabilities.includes(preferredCapability) ? preferredCapability : selectedModels[0]?.capability || modelCapabilities[0] || "image") : creationMode;
     const preferenceCapabilities = creationMode === "agent" ? (modelCapabilities.length ? modelCapabilities : [activeCapability]) : [creationMode];
+    const capabilityProfile = creativeSelectedModelProfile(selectedModels, activeCapability);
     const modelSummary = selectedModels.length === 0 ? (smartPlanning ? "智能模型" : "选择模型") : selectedModels.length === 1 ? selectedModels[0].name : `${selectedModels[0].name} +${selectedModels.length - 1}`;
 
     return (
@@ -159,13 +161,14 @@ export function CreativeGenerationControls({
                 capability={activeCapability}
                 capabilities={preferenceCapabilities}
                 preferences={generationPreferences}
+                capabilityProfile={capabilityProfile}
                 triggerLabel={creationMode === "agent" ? "生成参数" : undefined}
                 placement={placement}
                 onCapabilityChange={(capability) => {
                     setPreferredCapability(capability);
                     onCapabilityChange(capability);
                 }}
-                onChange={(patch) => onChangeGenerationPreference(creationMode === "agent" ? preferredCapability : activeCapability, patch as Record<string, string | number | boolean>)}
+                onChange={(patch) => onChangeGenerationPreference(activeCapability, patch as Record<string, string | number | boolean>)}
             />
         </>
     );

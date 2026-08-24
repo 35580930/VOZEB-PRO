@@ -3,7 +3,6 @@
 import type { FormEvent, ReactNode } from "react";
 import { useState } from "react";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
 import { ArrowLeft, ArrowRight, Gift, LockKeyhole, Mail, ShieldCheck, UserRound } from "lucide-react";
 import { App, Button, Checkbox, Input } from "antd";
 
@@ -46,7 +45,6 @@ export function AuthForm({
     referralSource = "registration-form",
     inviteError,
 }: AuthFormProps) {
-    const router = useRouter();
     const { message } = App.useApp();
     const site = usePublicSessionStore((state) => state.payload?.settings?.site) || { title: DEFAULT_SITE_TITLE, logoUrl: "/logo.svg" };
     const siteTitle = resolveSiteTitle(site.title);
@@ -101,8 +99,7 @@ export function AuthForm({
             } else {
                 message.success(isRegister ? "注册成功" : "登录成功");
             }
-            router.replace(nextPath);
-            router.refresh();
+            window.location.replace(nextPath);
         } catch (error) {
             message.error(error instanceof Error ? error.message : isRegister ? "注册失败" : "登录失败");
         } finally {

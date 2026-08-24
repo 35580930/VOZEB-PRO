@@ -2,11 +2,13 @@ import axios from "axios";
 
 import { dataUrlToFile } from "@/lib/image-utils";
 import { browserReadableMediaUrl } from "@/lib/browser-media-url";
+import { originalImageSourceUrl } from "@/lib/media-image-url";
 import { resolveGeneratedMediaUrl } from "@/lib/media-url";
 import { getMediaBlob, readStoredMediaFile, uploadGeneratedMediaFile, type UploadedFile } from "@/services/file-storage";
 import { GENERATION_TASK_NEEDS_REVIEW_MESSAGE, GenerationTaskNeedsReviewError, type GenerationTaskExecutionState } from "@/services/api/generation-task-state";
-import { GenerationTaskRequestError } from "@/services/api/generation-task-request-error";
+import { GenerationTaskRequestError, readGenerationRetryAfterMs } from "@/services/api/generation-task-request-error";
 import { imageToDataUrl } from "@/services/image-storage";
+import { parseServerMediaUrl, serverMediaUrl, type ServerMediaType } from "@/services/server-media-storage";
 import { refreshUserPointsIfSystem, syncUserPointsFromHeaders } from "@/services/api/points";
 import { throwIfClientSessionExpired } from "@/services/api/session-expiration";
 import { boolConfig, buildSeedancePromptText, isSeedanceVideoConfig, normalizeSeedanceDuration, normalizeSeedanceRatio, normalizeSeedanceResolution, seedanceVideoReferenceError, SEEDANCE_REFERENCE_LIMITS } from "@/lib/seedance-video";
@@ -143,9 +145,9 @@ export async function createServerVideoGenerationTask(
     const selectedModel = (config.model || config.videoModel).trim();
     const requestConfig = resolveModelRequestConfig(config, selectedModel);
     const serverReferences = await Promise.all([
-        ...references.map(async (item) => ({ type: "image", role: item.videoRole || "reference", url: isPublicMediaUrl(item.url || item.dataUrl) ? item.url || item.dataUrl : await publishReferenceMedia("image", await imageToDataUrl(item)) })),
-        ...videoReferences.map(async (item) => ({ type: "video", role: "reference", url: isPublicMediaUrl(item.url) ? item.url : await publishReferenceMedia("video", await referenceBlobDataUrl(item.storageKey, item.url)) })),
-        ...audioReferences.map(async (item) => ({ type: "audio", role: "reference", url: isPublicMediaUrl(item.url) ? item.url : await publishReferenceMedia("audio", await referenceBlobDataUrl(item.storageKey, item.url)) })),
+        ...references.map(async (item) => ({ type: "image", role: item.videoRole || "reference", url: await providerImageReferenceUrl(item) })),
+        ...videoReferences.map(async (item) => ({ type: "video", role: "reference", url: await providerMediaReferenceUrl("video", item) })),
+        ...audioReferences.map(async (item) => ({ type: "audio", role: "reference", url: await providerMediaReferenceUrl("audio", item) })),
     ]);
     const response = await fetch("/api/video-generation-tasks", {
         method: "POST",
@@ -172,9 +174,27 @@ export async function createServerVideoGenerationTask(
     });
     throwIfClientSessionExpired(response);
     const payload = (await response.json().catch(() => ({}))) as { task?: { id?: string; model?: string; durationSeconds?: number }; error?: string; canRetry?: boolean };
-    if (!response.ok) throw new GenerationTaskRequestError(payload.error || "后台视频任务创建失败", response.status, payload.canRetry === true);
+    if (!response.ok) throw new GenerationTaskRequestError(payload.error || "后台视频任务创建失败", response.status, payload.canRetry === true, readGenerationRetryAfterMs(response.headers));
     if (!payload.task?.id) throw new Error(payload.error || "后台视频任务创建失败");
     return { id: payload.task.id, provider: "generation", model: payload.task.model || selectedModel, pollPath: "server", serverTaskId: payload.task.id, durationSeconds: payload.task.durationSeconds };
+}
+
+async function providerImageReferenceUrl(image: ReferenceImage) {
+    const sources = [image.serverUrl, image.remoteUrl, image.url, image.dataUrl].map((value) => originalImageSourceUrl(value || "")).filter(Boolean);
+    const managed = sources.find((value) => parseServerMediaUrl(value));
+    if (managed) return managed;
+    const publicSource = sources.find(isPublicMediaUrl);
+    if (publicSource) return publicSource;
+    return publishReferenceMedia("image", await imageToDataUrl({ ...image, dataUrl: originalImageSourceUrl(image.dataUrl), url: originalImageSourceUrl(image.url || ""), serverUrl: originalImageSourceUrl(image.serverUrl || "") }));
+}
+
+async function providerMediaReferenceUrl(type: Exclude<ServerMediaType, "image">, media: ReferenceVideo | ReferenceAudio) {
+    const managed = parseServerMediaUrl(media.url) || parseServerMediaUrl(serverMediaUrl(media.storageKey, media.url));
+    if (managed) return managed.url;
+    const proxiedSource = proxiedMediaSourceUrl(media.url);
+    if (isPublicMediaUrl(proxiedSource)) return proxiedSource;
+    if (isPublicMediaUrl(media.url)) return media.url;
+    return publishReferenceMedia(type, await referenceBlobDataUrl(media.storageKey, media.url));
 }
 
 export function taskContext(options?: RequestOptions) {
@@ -252,11 +272,56 @@ export async function pollServerVideoTask(task: VideoGenerationTask, options?: R
     const response = await fetch(`/api/video-tasks/${encodeURIComponent(task.serverTaskId || task.id)}`, { cache: "no-store", signal: options?.signal });
     throwIfClientSessionExpired(response);
     syncUserPointsFromHeaders(response.headers, "system");
-    const payload = (await response.json().catch(() => ({}))) as { task?: GenerationTaskExecutionState & { status?: string; result?: VideoGenerationResult; error?: string; canRetry?: boolean }; error?: string };
+    const payload = (await response.json().catch(() => ({}))) as ServerVideoTaskPayload;
     if (!response.ok) throw new Error(payload.error || "后台视频任务查询失败");
-    if (payload.task?.needsReview) return { status: "failed", error: payload.task.reviewReason || GENERATION_TASK_NEEDS_REVIEW_MESSAGE, needsReview: true };
-    if (payload.task?.status === "success") return { status: "completed", result: payload.task.result || {} };
-    if (payload.task?.status === "error" || payload.task?.status === "cancelled") return { status: "failed", error: payload.task.error || "视频生成失败", canRetry: payload.task.canRetry === true };
+    return serverVideoTaskState(payload.task);
+}
+
+export async function recoverVideoGenerationTask(task: VideoGenerationTask, options?: RequestOptions): Promise<VideoGenerationTask> {
+    const taskId = task.serverTaskId || task.id;
+    const response = await fetch(`/api/video-tasks/${encodeURIComponent(taskId)}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "recover" }),
+        signal: options?.signal,
+    });
+    throwIfClientSessionExpired(response);
+    syncUserPointsFromHeaders(response.headers, "system");
+    const payload = (await response.json().catch(() => ({}))) as ServerVideoTaskPayload;
+    if (!response.ok || !payload.task) throw new Error(payload.error || "重新检查视频任务失败");
+    const state = serverVideoTaskState(payload.task);
+    if (state.status === "failed") {
+        if (state.needsReview) throw new GenerationTaskNeedsReviewError(state.error);
+        throw new VideoGenerationUpstreamError(state.error, state.canRetry !== false);
+    }
+    return {
+        ...task,
+        id: payload.task.id || taskId,
+        provider: "generation",
+        model: payload.task.model || task.model,
+        pollPath: "server",
+        serverTaskId: payload.task.id || taskId,
+        durationSeconds: payload.task.durationSeconds || task.durationSeconds,
+    };
+}
+
+type ServerVideoTaskPayload = {
+    task?: GenerationTaskExecutionState & {
+        id?: string;
+        model?: string;
+        status?: string;
+        durationSeconds?: number;
+        result?: VideoGenerationResult;
+        error?: string;
+        canRetry?: boolean;
+    };
+    error?: string;
+};
+
+function serverVideoTaskState(task?: ServerVideoTaskPayload["task"]): VideoGenerationTaskState {
+    if (task?.needsReview) return { status: "failed", error: task.reviewReason || GENERATION_TASK_NEEDS_REVIEW_MESSAGE, needsReview: true };
+    if (task?.status === "success") return { status: "completed", result: task.result || {} };
+    if (task?.status === "error" || task?.status === "cancelled") return { status: "failed", error: task.error || "视频生成失败", canRetry: task.canRetry === true };
     return { status: "pending" };
 }
 

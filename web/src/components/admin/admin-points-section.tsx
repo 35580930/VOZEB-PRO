@@ -40,12 +40,12 @@ export function AdminPointsSection({ controller }: { controller: AdminDashboardC
                         title="保存积分规则"
                         onClick={() =>
                             saveSettings(
-                                {
-                                    freeDailyPointsEnabled: settings.freeDailyPointsEnabled,
-                                    freeDailyPoints: settings.freeDailyPoints,
-                                    modelPointCosts: settings.modelPointCosts,
-                                    generationPointMultipliers: settings.generationPointMultipliers,
-                                },
+                                (current) => ({
+                                    freeDailyPointsEnabled: current.freeDailyPointsEnabled,
+                                    freeDailyPoints: current.freeDailyPoints,
+                                    modelPointCosts: current.modelPointCosts,
+                                    generationPointMultipliers: current.generationPointMultipliers,
+                                }),
                                 "积分规则已保存",
                             )
                         }

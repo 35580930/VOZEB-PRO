@@ -21,6 +21,7 @@ import { channelConnectionReady, protocolAuthHeaders, resolveChannelModelConfig 
 import { normalizeYumengModelCenterBaseUrl } from "@/lib/yumeng-model-center";
 import { authorizedWorkerUserId } from "@/lib/server/maintenance-auth";
 import { authorizeGenerationMediaProxyRequest } from "@/lib/server/generation-media-access";
+import { SYSTEM_PROXY_JSON_BODY_MAX_BYTES } from "@/lib/server/system-proxy-request-limits";
 import { userOwnsGenerationUpstreamTask } from "@/lib/server/generation-task-authorization";
 import { authorizeSystemAiProxyRequest } from "@/lib/server/system-ai-proxy-policy";
 
@@ -35,7 +36,6 @@ type RouteContext = {
 };
 type PointsRequest = { model: string; amount: number; usageKind: PointUsageKind };
 type ProxyRequestBody = { body?: BodyInit; pointsPayload?: ArrayBuffer | Record<string, unknown>; bodyDigest: string };
-const MAX_PROXY_BODY_BYTES = 4 * 1024 * 1024;
 const MAX_PROXY_MULTIPART_BYTES = 25 * 1024 * 1024;
 const SYSTEM_MEDIA_TIMEOUT_MS = 30 * 1000;
 const MAX_SYSTEM_MEDIA_REDIRECTS = 4;
@@ -207,18 +207,43 @@ async function proxySystemRequest(request: Request, context: RouteContext) {
     if (isRedirectStatus(upstream.status)) {
         return NextResponse.json({ error: "上游接口不允许重定向，请检查后台渠道地址" }, { status: 502, headers: responseHeaders(new Headers(), null, refundedPointsRemaining) });
     }
-    if (upstream.ok) pointsSettled = true;
     if (globalAdaptation && upstream.ok) {
         const payload = await upstream.json().catch(() => null);
-        if (!payload) return NextResponse.json({ error: "上游文本接口返回了无效 JSON" }, { status: 502, headers: responseHeaders(upstream.headers, pointsResult, refundedPointsRemaining, target) });
+        if (!payload || typeof payload !== "object" || Array.isArray(payload)) {
+            await refundConsumedPoints();
+            pointsResult = null;
+            return NextResponse.json({ error: "上游文本接口返回了无效 JSON" }, { status: 502, headers: responseHeaders(upstream.headers, null, refundedPointsRemaining, target) });
+        }
+        pointsSettled = true;
         return NextResponse.json(adaptGlobalAiOpcTextResponse(globalAdaptation.adapter, payload), { status: upstream.status, headers: responseHeaders(upstream.headers, pointsResult, refundedPointsRemaining, target) });
     }
+    if (isJsonResponse(upstream)) {
+        try {
+            const body = await upstream.arrayBuffer();
+            if (upstream.ok) pointsSettled = true;
+            return new Response(body, {
+                status: upstream.status,
+                statusText: upstream.statusText,
+                headers: responseHeaders(upstream.headers, pointsResult, refundedPointsRemaining, target),
+            });
+        } catch (error) {
+            await refundConsumedPoints();
+            pointsResult = null;
+            console.error("System API proxy response body failed", error instanceof Error ? error.message : error);
+            return NextResponse.json({ error: DEFAULT_CHANNEL_CONNECT_ERROR }, { status: 502, headers: responseHeaders(new Headers(), null, refundedPointsRemaining) });
+        }
+    }
+    if (upstream.ok) pointsSettled = true;
 
     return new Response(upstream.body, {
         status: upstream.status,
         statusText: upstream.statusText,
         headers: responseHeaders(upstream.headers, pointsResult, refundedPointsRemaining, target),
     });
+}
+
+function isJsonResponse(response: Response) {
+    return /^\s*(?:application|text)\/(?:[a-z0-9.+-]+\+)?json\b/i.test(response.headers.get("content-type") || "");
 }
 
 function channelHasModel(models: string[], requested: string) {
@@ -277,7 +302,7 @@ async function proxySystemMediaRequest(request: Request, channel: SystemMediaCha
             permit.release();
             return response;
         }
-        return withMediaConcurrency(response, permit);
+        return withMediaConcurrency(response, permit, request.signal);
     } catch (error) {
         permit.release();
         if (error instanceof UnsupportedMediaContentError || error instanceof MediaProxyResponseError) return NextResponse.json({ error: error.message }, { status: error.status });
@@ -356,7 +381,7 @@ function mediaResponseHeaders(headers: Headers, mimeType: string) {
 
 async function readProxyRequestBody(request: Request, isMultipart: boolean): Promise<ProxyRequestBody> {
     if (request.method === "GET" || request.method === "HEAD") return { bodyDigest: emptyBodyDigest() };
-    const bytes = await readRequestBodyBytes(request, isMultipart ? MAX_PROXY_MULTIPART_BYTES : MAX_PROXY_BODY_BYTES);
+    const bytes = await readRequestBodyBytes(request, isMultipart ? MAX_PROXY_MULTIPART_BYTES : SYSTEM_PROXY_JSON_BODY_MAX_BYTES);
     if (!isMultipart) {
         const body = bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength);
         return { body, pointsPayload: body, bodyDigest: digestBytes(bytes) };

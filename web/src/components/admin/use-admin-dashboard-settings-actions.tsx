@@ -6,13 +6,13 @@ import { toNumberOrOne, toNumberOrZero, uniqueList } from "@/components/admin/ad
 import { channelProtocolDefinition, channelSupportsModelCatalog, normalizeStrictProtocolModelConfig } from "@/lib/channel-protocol-registry";
 import { nanoid } from "nanoid";
 import type { ReactNode } from "react";
-import { useEffect, useRef } from "react";
 
 import type { AuthSettings, PublicUser, PublicUserSummary, SiteFriendLink, SiteSocialKey, SystemChannelAdvancedConfig, SystemModelChannel } from "@/lib/auth/store";
 import { buildGlobalAiOpcSelection } from "@/lib/globalaiopc-catalog";
 import { normalizeDefaultModelsConfig, synchronizeLogicalModelsWithChannels } from "@/lib/model-routing-config";
 import type { AdminSetupSummary } from "@/lib/server/admin-setup-status";
 import { clampInteger, createSystemChannel, requestAdminModels, type AdminModelsResult } from "./admin-dashboard-elements";
+import { removeChannelFromWorkspace } from "./channels/admin-channel-workspace-model";
 
 export type AdminDashboardProps = {
     initialUsers: PublicUser[];
@@ -42,22 +42,16 @@ import type { AdminDashboardDataActions } from "./use-admin-dashboard-data-actio
 import type { AdminDashboardState } from "./use-admin-dashboard-state";
 
 export function useAdminDashboardSettingsActions({ state, data }: { state: AdminDashboardState; data: AdminDashboardDataActions }) {
-    const { message, settings, setSettings, setMailTestLoading, mailTestTo, setFetchingModelId, customPointModel, setCustomPointModel } = state;
+    const { message, setSettings, getSettings, setMailTestLoading, mailTestTo, setFetchingModelId, customPointModel, setCustomPointModel } = state;
     const { saveSettings } = data;
-    const latestSettingsRef = useRef(settings);
-
-    useEffect(() => {
-        latestSettingsRef.current = settings;
-    }, [settings]);
 
     const updateSite = (update: (site: AuthSettings["site"]) => AuthSettings["site"]) => {
-        const current = latestSettingsRef.current;
+        const current = getSettings();
         const next = { ...current, site: update(current.site) };
-        latestSettingsRef.current = next;
         setSettings(next);
     };
-    const getLatestSiteSettings = () => latestSettingsRef.current.site;
-    const getLatestSettings = () => latestSettingsRef.current;
+    const getLatestSiteSettings = () => getSettings().site;
+    const getLatestSettings = getSettings;
 
     const updateChannel = (id: string, patch: Partial<SystemModelChannel>) => {
         setSettings((current) => {
@@ -81,10 +75,7 @@ export function useAdminDashboardSettingsActions({ state, data }: { state: Admin
     };
 
     const deleteChannel = async (id: string) => {
-        const systemChannels = settings.systemChannels.filter((channel) => channel.id !== id);
-        const logicalModels = synchronizeLogicalModelsWithChannels(settings.logicalModels, systemChannels);
-        const defaultModels = normalizeDefaultModelsConfig(settings.defaultModels, logicalModels, systemChannels);
-        return saveSettings({ systemChannels, logicalModels, defaultModels }, "渠道已删除");
+        return saveSettings((current) => removeChannelFromWorkspace(current, id), "渠道已删除");
     };
 
     const updateFreeDailyPoints = (value: number | null) => {
@@ -122,7 +113,7 @@ export function useAdminDashboardSettingsActions({ state, data }: { state: Admin
     };
 
     const updateDataLifecycle = (key: keyof AuthSettings["dataLifecycle"], value: boolean | number) => {
-        const current = latestSettingsRef.current;
+        const current = getSettings();
         const next = {
             ...current,
             dataLifecycle: {
@@ -130,7 +121,6 @@ export function useAdminDashboardSettingsActions({ state, data }: { state: Admin
                 [key]: key === "maintenanceBatchSize" ? clampInteger(value, 1, 500, current.dataLifecycle.maintenanceBatchSize) : value,
             },
         };
-        latestSettingsRef.current = next;
         setSettings(next);
     };
 
@@ -171,7 +161,7 @@ export function useAdminDashboardSettingsActions({ state, data }: { state: Admin
             message.warning("请输入模型名称");
             return;
         }
-        updateModelPointCost(model, settings.modelPointCosts[model] ?? 1);
+        updateModelPointCost(model, getSettings().modelPointCosts[model] ?? 1);
         setCustomPointModel("");
     };
 
@@ -193,7 +183,7 @@ export function useAdminDashboardSettingsActions({ state, data }: { state: Admin
             const response = await fetch("/api/admin/mail/test", {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ mail: settings.mail, to: mailTestTo }),
+                body: JSON.stringify({ mail: getSettings().mail, to: mailTestTo }),
             });
             const payload = (await response.json()) as { error?: string };
             if (!response.ok) throw new Error(payload.error || "测试邮件发送失败");
@@ -292,7 +282,7 @@ export function useAdminDashboardSettingsActions({ state, data }: { state: Admin
     };
 
     const fetchAllModels = async () => {
-        const runnable = settings.systemChannels.filter((channel) => channel.baseUrl.trim() && channelSupportsModelCatalog(channel));
+        const runnable = getSettings().systemChannels.filter((channel) => channel.baseUrl.trim() && channelSupportsModelCatalog(channel));
         if (!runnable.length) {
             message.warning("当前没有可同步模型目录的渠道；请先配置目录，或手动维护模型 ID");
             return;

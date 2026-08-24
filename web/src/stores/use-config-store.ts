@@ -9,6 +9,7 @@ import type { GlobalAiOpcPresetId } from "@/lib/globalaiopc-catalog";
 import { resolveChannelModelAdvancedConfig } from "@/lib/channel-protocol-registry";
 import { inferModelCapability, normalizeModelId } from "@/lib/model-capability";
 import { materializeLogicalModelPointCosts } from "@/lib/model-point-cost";
+import type { LogicalModelCapabilityProfile } from "@/lib/auth/store-types";
 
 type ApiCallFormat = "openai" | "gemini";
 type SystemChannelProtocol = "auto" | "openai" | "yumeng" | "gemini" | "sub2api" | "newapi" | "vozeb-recommended" | "globalaiopc" | "seedance" | "stable-diffusion" | "volcengine-video" | "seedance-special" | "custom" | "compatible";
@@ -72,7 +73,7 @@ type LogicalModel = {
     name: string;
     capability: ModelCapability;
     enabled: boolean;
-    bindings: Array<{ id: string; channelId: string; upstreamModel: string; enabled: boolean; priority: number }>;
+    bindings: Array<{ id: string; channelId: string; upstreamModel: string; enabled: boolean; priority: number; capabilityProfile?: LogicalModelCapabilityProfile }>;
 };
 
 export type AiConfig = {

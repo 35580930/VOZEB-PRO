@@ -2,7 +2,7 @@
 
 import { App, Empty, Modal, Spin } from "antd";
 import { BadgeCheck, Sparkles, X } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import { BillingPlanGrid } from "@/components/billing/billing-plan-grid";
 import { listBillingProducts, type BillingProduct } from "@/services/api/billing";
@@ -11,15 +11,17 @@ export function BillingPlansModal({ open, onClose, onSelect }: { open: boolean; 
     const { message } = App.useApp();
     const [products, setProducts] = useState<BillingProduct[]>([]);
     const [loading, setLoading] = useState(false);
+    const loadedRef = useRef(false);
 
     useEffect(() => {
-        if (!open || products.length || loading) return;
+        if (!open || loadedRef.current) return;
+        loadedRef.current = true;
         setLoading(true);
         void listBillingProducts()
             .then((payload) => setProducts(payload.products || []))
             .catch((error) => message.error(error instanceof Error ? error.message : "套餐加载失败"))
             .finally(() => setLoading(false));
-    }, [loading, message, open, products.length]);
+    }, [message, open]);
 
     return (
         <Modal

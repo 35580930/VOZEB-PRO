@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
-import { DEFAULT_CHANNEL_CONNECT_ERROR, toSafeGenerationErrorMessage } from "./generation-errors";
+import { GenerationSubmissionUncertainError } from "./generation-submission-error";
+import { DEFAULT_CHANNEL_CONNECT_ERROR, UNKNOWN_SUBMISSION_REVIEW_ERROR, toSafeGenerationErrorMessage, toSafeGenerationReviewReason } from "./generation-errors";
 
 describe("generation error messages", () => {
     it("keeps actionable business errors", () => {
@@ -13,5 +14,9 @@ describe("generation error messages", () => {
         expect(toSafeGenerationErrorMessage(new Error("POST http://localhost:3000 failed"), "生成失败")).toBe(DEFAULT_CHANNEL_CONNECT_ERROR);
         expect(toSafeGenerationErrorMessage(new Error("参考图需要公网图片 URL，请配置 NEXT_PUBLIC_SITE_URL"), "生成失败")).toBe("参考素材暂时无法提交给当前生成渠道，请重新上传或稍后重试。");
         expect(toSafeGenerationErrorMessage(new Error("<html><head><title>502 Bad Gateway</title></head><body><center><h1>502 Bad Gateway</h1></center><hr><center>nginx</center></body></html>"), "生成失败")).toBe(DEFAULT_CHANNEL_CONNECT_ERROR);
+    });
+
+    it("does not mislabel an uncertain upstream submission as a missing reference", () => {
+        expect(toSafeGenerationReviewReason(new GenerationSubmissionUncertainError("参考图处理失败：https://provider.example/images/edits"), "图片任务创建结果未知")).toBe(UNKNOWN_SUBMISSION_REVIEW_ERROR);
     });
 });

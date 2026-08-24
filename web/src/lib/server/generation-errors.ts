@@ -1,7 +1,9 @@
 import { hasInsufficientPointsError } from "@/lib/creative-generation-status";
 import { readProviderError } from "@/lib/server/provider-task-config";
+import { GenerationSubmissionUncertainError } from "@/lib/server/generation-submission-error";
 
 export const DEFAULT_CHANNEL_CONNECT_ERROR = "生成渠道暂时无法连接，请稍后重试或联系管理员。";
+export const UNKNOWN_SUBMISSION_REVIEW_ERROR = "上游提交结果不确定，未取得可查询的任务 ID；为避免重复生成和扣费，系统已停止自动重试。";
 
 export function toSafeGenerationErrorMessage(error: unknown, fallback: string) {
     const message = generationErrorMessage(error);
@@ -11,6 +13,11 @@ export function toSafeGenerationErrorMessage(error: unknown, fallback: string) {
     if (isHtmlGatewayError(message)) return DEFAULT_CHANNEL_CONNECT_ERROR;
     if (containsInfrastructureDetails(message)) return /参考|素材|公网/i.test(message) ? "参考素材暂时无法提交给当前生成渠道，请重新上传或稍后重试。" : DEFAULT_CHANNEL_CONNECT_ERROR;
     return message || fallback;
+}
+
+export function toSafeGenerationReviewReason(error: unknown, fallback: string) {
+    if (error instanceof GenerationSubmissionUncertainError) return UNKNOWN_SUBMISSION_REVIEW_ERROR;
+    return toSafeGenerationErrorMessage(error, fallback);
 }
 
 function generationErrorMessage(error: unknown) {

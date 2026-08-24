@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="web/public/logo.svg?v=0.0.6" width="108" alt="VOZEB PRO logo">
+  <img src="web/public/logo.svg?v=0.0.7" width="108" alt="VOZEB PRO logo">
 </p>
 
 <h1 align="center">VOZEB PRO</h1>
@@ -8,7 +8,7 @@
 
 <p align="center">
   <a href="https://github.com/csyqlz/VOZEB-PRO"><img src="https://img.shields.io/github/stars/csyqlz/VOZEB-PRO?style=flat-square&logo=github" alt="GitHub stars"></a>
-  <a href="VERSION"><img src="https://img.shields.io/badge/version-v0.0.6-2563eb?style=flat-square" alt="Version"></a>
+  <a href="VERSION"><img src="https://img.shields.io/badge/version-v0.0.7-2563eb?style=flat-square" alt="Version"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-AGPL--3.0-f97316?style=flat-square" alt="License"></a>
   <a href="https://nextjs.org/"><img src="https://img.shields.io/badge/Next.js-16.2-000000?style=flat-square&logo=nextdotjs" alt="Next.js"></a>
   <a href="https://www.postgresql.org/"><img src="https://img.shields.io/badge/PostgreSQL-16-4169e1?style=flat-square&logo=postgresql" alt="PostgreSQL"></a>
@@ -17,10 +17,12 @@
 <p align="center">
   <a href="https://www.vozeb.com">演示站</a> ·
   <a href="docs/index.md">文档索引</a> ·
-  <a href="docs/content/docs/overview/configuration.mdx">0.0.6 发布说明</a> ·
+  <a href="docs/content/docs/overview/configuration.mdx">0.0.7 发布说明</a> ·
   <a href="#目录与文件用途">目录与文件用途</a> ·
   <a href="docs/content/docs/overview/page-gallery.mdx">页面图册</a> ·
   <a href="https://linux.do">LINUX DO</a> ·
+  <a href="COMMERCIAL_LICENSE.md">商业授权</a> ·
+  <a href="DISCLAIMER.md">免责声明</a> ·
   <a href="CONTRIBUTING.md">参与贡献</a> ·
   <a href="CHANGELOG.md">更新记录</a>
 </p>
@@ -39,6 +41,19 @@ VOZEB PRO 把统一创作 Agent、画布、短剧生产、素材库和商业运�
 - **持久生成**：独立 Worker 负责图片、视频、音频和 Agent 任务续取，页面关闭或实例切换后继续查询原上游任务，并在生成运维中处理异常任务。
 - **商业后台**：用户、套餐、促销、优惠券、邀请奖励、积分、CDK、订单、支付、退款、对账、财务流水、作品治理、公告、提示词和审计日志。
 - **存储与备份**：本地媒体、S3 兼容对象存储、引用保护、对象迁移和脱敏业务数据导入导出。
+
+## 开源与商业授权
+
+VOZEB PRO 社区版采用 AGPL-3.0。完整履行 AGPL-3.0 的源代码公开和声明保留义务时，可以免费使用和商用；企业只运营自己的产品且不希望公开受协议约束的代码时，可以申请自营闭源商业授权。
+
+| 授权方案                    |               价格 | 源码公开要求                     | 更新范围                       | 使用范围                                       |
+| --------------------------- | -----------------: | -------------------------------- | ------------------------------ | ---------------------------------------------- |
+| AGPL-3.0 社区版             |               免费 | 按 AGPL-3.0 履行对应源码义务     | 可使用公开版本                 | 协议允许范围内使用、修改、联网运行、分发和商用 |
+| 企业自营闭源年度授权        | 人民币 3,299 元/年 | 授权范围内可闭源                 | 授权期内书面确认纳入的版本     | 一个主体、一个自营产品、受控开发/测试/生产环境 |
+| 企业自营闭源永久授权        |    人民币 7,999 元 | 授权书列明版本可永久闭源         | 不自动包含后续版本、支持或 SLA | 一个主体、一个自营产品、授权书列明版本         |
+| OEM / 贴牌 / 第三方闭源交付 |     不在标准方案内 | 未取得单独书面授权前不得闭源交付 | 以另行签署的合同或授权书为准   | 转售、源码销售、授权码销售和转授权均不默认包含 |
+
+自营闭源授权包含授权主体控制的开发、测试和生产环境，以及向该自有产品最终用户收费的权利；不包含转让、转授权、多个独立产品、VOZEB PRO 品牌权、第三方组件或服务费用、部署实施、定制开发、技术支持和 SLA。完整边界见[商业授权说明](COMMERCIAL_LICENSE.md)，签约可使用[商业授权协议模板](COMMERCIAL_LICENSE_AGREEMENT.md)。
 
 ## 项目功能流程
 
@@ -385,7 +400,7 @@ VOZEB PRO 调用外部 AI 模型，不要求 GPU。服务器主要承担 Web、P
 
 ## 快速开始
 
-> 安装过 0.0.2 的用户必须先删除旧数据库或数据库卷，再重新安装 0.0.6，并通过 `/install` 重新初始化数据库；不支持沿用旧数据库或原地升级。
+> 安装过 0.0.2 的用户必须先删除旧数据库或数据库卷，再重新安装 0.0.7，并通过 `/install` 重新初始化数据库；不支持沿用旧数据库或原地升级。
 
 ### Docker Compose
 
@@ -494,7 +509,10 @@ pnpm run dev
 | `.env.example`                              | 数据库、站点、加密、代理、媒体、模型、支付和部署变量模板                   |
 | `Dockerfile` / `docker-compose*.yml`        | standalone 生产镜像，以及标准、源码、宝塔、外部数据库和低内存部署拓扑      |
 | `VERSION` / `CHANGELOG.md`                  | 当前版本号和版本级变更记录                                                 |
-| `LICENSE` / `CLA.md` / `SECURITY.md`        | AGPL-3.0 协议、贡献者授权和漏洞提交规则                                    |
+| `LICENSE` / `COMMERCIAL_LICENSE.md`         | AGPL-3.0 社区协议，以及企业自营闭源商业授权说明                            |
+| `COMMERCIAL_LICENSE_AGREEMENT.md`           | 商业授权协议参考模板；只有双方完成信息并签署后才产生合同效力               |
+| `DISCLAIMER.md` / `LEGAL_NOTICE.md`         | 软件与 AI 内容免责声明，以及公开授权和合规警示                             |
+| `CLA.md` / `SECURITY.md`                    | 贡献者授权和漏洞提交规则                                                   |
 | `AGENTS.md` / `CONTRIBUTING.md`             | 项目工程约束，以及开发者提交 Issue、代码和文档的流程                       |
 
 更完整的目录树、关键源码入口、Service、Route Handler、Repository 和任务 Store 职责见[项目结构与流程](docs/content/docs/overview/project-structure.mdx)。
@@ -550,6 +568,10 @@ pnpm run build
 - [参与贡献](CONTRIBUTING.md)
 - [安全策略](SECURITY.md)
 - [AGPL-3.0](LICENSE)
+- [商业授权说明](COMMERCIAL_LICENSE.md)
+- [商业授权协议模板](COMMERCIAL_LICENSE_AGREEMENT.md)
+- [免责声明](DISCLAIMER.md)
+- [授权与合规警示](LEGAL_NOTICE.md)
 - [贡献者协议](CLA.md)
 
 ## 社区交流

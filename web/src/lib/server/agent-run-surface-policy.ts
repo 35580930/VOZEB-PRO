@@ -1,10 +1,12 @@
 import type { AuthSettings } from "@/lib/auth/store";
 import type { CreativeAsset, CreativeConversationContext, CreativeSurface } from "@/lib/creative-runtime-contract";
 import { creativeAssetReferenceAliases, orderCreativeAssetsByIds } from "@/lib/creative-asset-references";
+import { resolveSiteTitle } from "@/lib/site-brand";
 import type { AgentRun, AgentRunPlannerContextSummary, AgentRunTask } from "@/lib/server/agent-run-store";
 import type { AgentPlan } from "@/lib/server/agent-run-validation";
 import { resolveAgentPlanningProfile } from "@/lib/server/agent-run-planning-profile";
 import { canvasSnapshotPlannerView, selectedCanvasNodeIds } from "./agent-run-canvas-snapshot";
+import { resolveDramaPlannerSnapshot } from "./agent-context-resolver";
 
 export function availableAgentSkills(settings: AuthSettings, surface: CreativeSurface) {
     const workspaces = surface === "canvas" ? new Set(["canvas"]) : surface === "drama" ? new Set(["drama"]) : new Set(["image", "video", "drama"]);
@@ -20,13 +22,14 @@ export function plannerAgentSkills(settings: AuthSettings, run: Pick<AgentRun, "
     return selectAgentSkills(settings, run.surface, run.selectedSkillIds || []);
 }
 
-export function agentPlannerSystemPrompt(surface: CreativeSurface, fallbackExample: string) {
+export function agentPlannerSystemPrompt(surface: CreativeSurface, fallbackExample: string, siteTitle: string) {
+    const brand = resolveSiteTitle(siteTitle);
     const identity =
         surface === "canvas"
-            ? "你是 MOCREAI 画布创作 Agent，也能进行普通对话。"
+            ? `你是 ${brand} 画布创作 Agent，也能进行普通对话。`
             : surface === "drama"
-              ? "你是 MOCREAI 短剧项目创作 Agent，负责围绕当前项目规划文本、图片、视频和音频产物，也能进行普通对话。"
-              : "你是 MOCREAI 统一创作 Agent，负责通过一个对话入口规划并生成文本、图片、视频和音频产物，也能进行普通对话。";
+              ? `你是 ${brand} 短剧项目创作 Agent，负责围绕当前项目规划文本、图片、视频和音频产物，也能进行普通对话。`
+              : `你是 ${brand} 统一创作 Agent，负责通过一个对话入口规划并生成文本、图片、视频和音频产物，也能进行普通对话。`;
     const surfaceRules =
         surface === "canvas"
             ? "明确要求创建、修改、删除、移动、连接画布节点，或生成媒体产物时为 generation。用户要求修改已有画布产物时必须填写该节点真实 targetNodeId。选中文本/提示词节点并要求修改、优化或改写时，只规划一个 type=text 的原位编辑任务，targetNodeId 必须是该文本节点；除非用户同时明确要求生成媒体，否则禁止规划图片、视频或音频任务。canvasSnapshot.selectedNodeIds 是用户本轮明确选中并展示在输入框中的附件：非空时，当前编辑任务必须优先且只能从这些节点选择 targetNodeId，禁止被 conversationContext 的上一张、旧主体或其他未选中画布节点覆盖；只有本轮没有选中节点时，才允许结合会话记忆选择旧节点。"
@@ -123,7 +126,7 @@ export function compactCanvasSnapshot(snapshot: unknown) {
 }
 
 function compactProjectSnapshot(snapshot: unknown) {
-    return { ...record(snapshot) };
+    return resolveDramaPlannerSnapshot(snapshot);
 }
 
 function defaultPlannerModelIds(settings: AuthSettings, capabilities: Set<string>) {
